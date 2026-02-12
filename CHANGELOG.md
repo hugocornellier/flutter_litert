@@ -1,3 +1,6 @@
+## 0.1.2
+* Fix Linux: build and bundle custom ops library (libtflite_custom_ops.so) so MediaPipe models with custom ops (e.g. selfie segmentation) work on Linux
+
 ## 0.1.1
 * Update AndroidManifest.xml
 
