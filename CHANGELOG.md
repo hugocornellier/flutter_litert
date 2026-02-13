@@ -1,3 +1,6 @@
+## 0.1.4
+* Bundle `libtensorflowlite_c-win.dll` from flutter_litert Windows plugin instead of downstream packages
+
 ## 0.1.3
 * Fix Windows: build and bundle custom ops DLL (tflite_custom_ops.dll) for MediaPipe models
 * Fix heap corruption crash when switching between segmentation models (custom op name string was freed prematurely)

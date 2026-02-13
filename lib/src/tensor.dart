@@ -158,10 +158,8 @@ class Tensor {
   }
 
   void setTo(Object src) {
-    print('[Tensor] setTo: shape=$shape, type=$type, tensorBytes=${numBytes()}');
     Uint8List bytes = _convertObjectToBytes(src);
     int size = bytes.length;
-    print('[Tensor] setTo: converted src to $size bytes');
     final ptr = calloc<Uint8>(size);
     checkState(isNotNull(ptr), message: 'unallocated');
     final externalTypedData = ptr.asTypedList(size);
@@ -175,24 +173,19 @@ class Tensor {
     } finally {
       calloc.free(ptr);
     }
-    print('[Tensor] setTo: done');
   }
 
   Object copyTo(Object dst) {
-    print('[Tensor] copyTo: shape=$shape, type=$type');
     int size = tfliteBinding.TfLiteTensorByteSize(_tensor);
-    print('[Tensor] copyTo: tensorByteSize=$size, dst type=${dst.runtimeType}');
     final ptr = calloc<Uint8>(size);
     checkState(isNotNull(ptr), message: 'unallocated');
     final externalTypedData = ptr.asTypedList(size);
-    print('[Tensor] copyTo: calling TfLiteTensorCopyToBuffer...');
     checkState(
         tfliteBinding.TfLiteTensorCopyToBuffer(_tensor, ptr.cast(), size) ==
             TfLiteStatus.kTfLiteOk);
     // Clone the data, because once `free(ptr)`, `externalTypedData` will be
     // volatile
     final bytes = externalTypedData.sublist(0);
-    print('[Tensor] copyTo: writing back to tensor data...');
     data = bytes;
     late Object obj;
     if (dst is Uint8List) {
@@ -204,17 +197,14 @@ class Tensor {
       }
       obj = bdata.buffer;
     } else {
-      print('[Tensor] copyTo: converting bytes to object (shape=$shape)...');
       obj = _convertBytesToObject(bytes);
     }
     calloc.free(ptr);
     if (obj is List && dst is List) {
-      print('[Tensor] copyTo: duplicating list, obj.shape=${(obj as List).shape}, dst.shape=${(dst as List).shape}');
       _duplicateList(obj, dst);
     } else {
       dst = obj;
     }
-    print('[Tensor] copyTo: done');
     return obj;
   }
 

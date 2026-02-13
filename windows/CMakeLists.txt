@@ -54,15 +54,19 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_BINARY_DI
 # List of absolute paths to libraries that should be bundled with the plugin.
 # This list could contain prebuilt libraries, or libraries created by an
 # external build triggered from this build file.
+set(FLUTTER_LITERT_TFLITE_DLL "${CMAKE_CURRENT_SOURCE_DIR}/libtensorflowlite_c-win.dll")
+
 set(flutter_tflite_bundled_libraries
+  "${FLUTTER_LITERT_TFLITE_DLL}"
   "$<TARGET_FILE:tflite_custom_ops>"
   PARENT_SCOPE
 )
 
 # Flutter's generated_plugins.cmake references plugins by their directory name
 # (flutter_litert), not by PROJECT_NAME (flutter_tflite). Set both to ensure
-# the custom ops library gets bundled.
+# bundled native libraries are included.
 set(flutter_litert_bundled_libraries
+  "${FLUTTER_LITERT_TFLITE_DLL}"
   "$<TARGET_FILE:tflite_custom_ops>"
   PARENT_SCOPE
 )
