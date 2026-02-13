@@ -143,6 +143,7 @@ class Interpreter {
   /// calls when used across isolate boundaries.
   factory Interpreter.fromAddress(int address,
       {bool allocated = true, bool deleted = false}) {
+    print('[Interpreter] fromAddress: 0x${address.toRadixString(16)}, allocated=$allocated, deleted=$deleted');
     final interpreter = Pointer<TfLiteInterpreter>.fromAddress(address);
     return Interpreter._(interpreter, skipAllocate: allocated)
       .._deleted = deleted
@@ -151,23 +152,30 @@ class Interpreter {
 
   /// Destroys the interpreter instance.
   void close() {
+    print('[Interpreter] close: 0x${_interpreter.address.toRadixString(16)}, already_deleted=$_deleted');
     checkState(!_deleted, message: 'Interpreter already deleted.');
+    print('[Interpreter] close: calling TfLiteInterpreterDelete...');
     tfliteBinding.TfLiteInterpreterDelete(_interpreter);
     _deleted = true;
+    print('[Interpreter] close: done');
   }
 
   /// Updates allocations for all tensors.
   void allocateTensors() {
+    print('[Interpreter] allocateTensors: 0x${_interpreter.address.toRadixString(16)}, deleted=$_deleted');
     checkState(tfliteBinding.TfLiteInterpreterAllocateTensors(_interpreter) ==
         TfLiteStatus.kTfLiteOk);
     _allocated = true;
+    print('[Interpreter] allocateTensors: done');
   }
 
   /// Runs inference for the loaded graph.
   void invoke() {
+    print('[Interpreter] invoke: 0x${_interpreter.address.toRadixString(16)}, deleted=$_deleted, allocated=$_allocated');
     checkState(_allocated, message: 'Interpreter not allocated.');
     checkState(tfliteBinding.TfLiteInterpreterInvoke(_interpreter) ==
         TfLiteStatus.kTfLiteOk);
+    print('[Interpreter] invoke: done');
   }
 
   /// Run for single input and output
@@ -191,6 +199,7 @@ class Interpreter {
 
   /// Just run inference
   void runInference(List<Object> inputs) {
+    print('[Interpreter] runInference: 0x${_interpreter.address.toRadixString(16)}, deleted=$_deleted, allocated=$_allocated, numInputs=${inputs.length}');
     if (inputs.isEmpty) {
       throw ArgumentError('Input error: Inputs should not be null or empty.');
     }
@@ -201,17 +210,20 @@ class Interpreter {
       var tensor = inputTensors.elementAt(i);
       final newShape = tensor.getInputShapeIfDifferent(inputs[i]);
       if (newShape != null) {
+        print('[Interpreter] runInference: resizing input $i to $newShape');
         resizeInputTensor(i, newShape);
       }
     }
 
     if (!_allocated) {
+      print('[Interpreter] runInference: allocating tensors...');
       allocateTensors();
       _allocated = true;
     }
 
     inputTensors = getInputTensors();
     for (int i = 0; i < inputs.length; i++) {
+      print('[Interpreter] runInference: setting input $i...');
       inputTensors.elementAt(i).setTo(inputs[i]);
     }
 
@@ -219,6 +231,7 @@ class Interpreter {
     invoke();
     _lastNativeInferenceDurationMicroSeconds =
         DateTime.now().microsecondsSinceEpoch - inferenceStartNanos;
+    print('[Interpreter] runInference: done in ${_lastNativeInferenceDurationMicroSeconds}µs');
   }
 
   /// Gets all input tensors associated with the model.
@@ -242,10 +255,17 @@ class Interpreter {
       return _outputTensors!;
     }
 
+    print('[Interpreter] getOutputTensors: 0x${_interpreter.address.toRadixString(16)}, deleted=$_deleted');
+    final count = tfliteBinding.TfLiteInterpreterGetOutputTensorCount(_interpreter);
+    print('[Interpreter] getOutputTensors: count=$count');
     var tensors = List.generate(
-        tfliteBinding.TfLiteInterpreterGetOutputTensorCount(_interpreter),
-        (i) => Tensor(
-            tfliteBinding.TfLiteInterpreterGetOutputTensor(_interpreter, i)),
+        count,
+        (i) {
+          final t = Tensor(
+              tfliteBinding.TfLiteInterpreterGetOutputTensor(_interpreter, i));
+          print('[Interpreter] getOutputTensors[$i]: shape=${t.shape}, type=${t.type}');
+          return t;
+        },
         growable: false);
 
     return tensors;

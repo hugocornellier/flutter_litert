@@ -1,3 +1,7 @@
+## 0.1.3
+* Fix Windows: build and bundle custom ops DLL (tflite_custom_ops.dll) for MediaPipe models
+* Fix heap corruption crash when switching between segmentation models (custom op name string was freed prematurely)
+
 ## 0.1.2
 * Fix Linux: build and bundle custom ops library (libtflite_custom_ops.so) so MediaPipe models with custom ops (e.g. selfie segmentation) work on Linux
 

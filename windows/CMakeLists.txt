@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 3.14)
 
 # Project-level configuration.
 set(PROJECT_NAME "flutter_tflite")
-project(${PROJECT_NAME} LANGUAGES CXX)
+project(${PROJECT_NAME} LANGUAGES CXX C)
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -48,11 +48,22 @@ target_include_directories(${PLUGIN_NAME} INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin)
 
+# Build the TFLite custom ops library (e.g., Convolution2DTransposeBias for MediaPipe)
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_BINARY_DIR}/custom_ops")
+
 # List of absolute paths to libraries that should be bundled with the plugin.
 # This list could contain prebuilt libraries, or libraries created by an
 # external build triggered from this build file.
 set(flutter_tflite_bundled_libraries
-  ""
+  "$<TARGET_FILE:tflite_custom_ops>"
+  PARENT_SCOPE
+)
+
+# Flutter's generated_plugins.cmake references plugins by their directory name
+# (flutter_litert), not by PROJECT_NAME (flutter_tflite). Set both to ensure
+# the custom ops library gets bundled.
+set(flutter_litert_bundled_libraries
+  "$<TARGET_FILE:tflite_custom_ops>"
   PARENT_SCOPE
 )
 

@@ -21,7 +21,7 @@ set_target_properties(tflite_custom_ops PROPERTIES
     C_VISIBILITY_PRESET default
 )
 
-# Android-specific settings
+# Platform-specific settings
 if(ANDROID)
     set_target_properties(tflite_custom_ops PROPERTIES
         OUTPUT_NAME "tflite_custom_ops"
@@ -30,5 +30,10 @@ if(ANDROID)
     # Ensure the library is built with proper symbol visibility
     target_compile_options(tflite_custom_ops PRIVATE
         -fvisibility=default
+    )
+elseif(WIN32)
+    set_target_properties(tflite_custom_ops PROPERTIES
+        OUTPUT_NAME "tflite_custom_ops"
+        SUFFIX ".dll"
     )
 endif()

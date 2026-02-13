@@ -28,6 +28,10 @@ class TransposeConvBiasOp {
   static Pointer<TfLiteRegistration>? _registration;
   static bool _isRegistered = false;
 
+  /// Persistent native string for the op name — must outlive all interpreters
+  /// because TfLiteInterpreterOptionsAddCustomOp stores the pointer, not a copy.
+  static Pointer<Char>? _opName;
+
   /// Returns whether the custom op has been successfully loaded.
   static bool get isLoaded => _registration != null;
 
@@ -68,15 +72,14 @@ class TransposeConvBiasOp {
       throw StateError('Custom op registration not available');
     }
 
-    final opName = 'Convolution2DTransposeBias'.toNativeUtf8().cast<Char>();
+    _opName ??= 'Convolution2DTransposeBias'.toNativeUtf8().cast<Char>();
     tfliteBinding.TfLiteInterpreterOptionsAddCustomOp(
       options,
-      opName,
+      _opName!,
       _registration!,
       1, // min_version
       1, // max_version
     );
-    calloc.free(opName);
 
     _isRegistered = true;
   }

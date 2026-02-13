@@ -32,6 +32,7 @@ class IsolateInterpreter {
     required int address,
     String debugName = 'TfLiteInterpreterIsolate',
   }) async {
+    print('[IsolateInterpreter] create: address=0x${address.toRadixString(16)}, debugName=$debugName');
     final interpreter = IsolateInterpreter._(
       address: address,
       debugName: debugName,
@@ -39,6 +40,7 @@ class IsolateInterpreter {
 
     await interpreter._init(); // Initialize the instance.
 
+    print('[IsolateInterpreter] create: done');
     return interpreter;
   }
 
@@ -50,6 +52,7 @@ class IsolateInterpreter {
   final ReceivePort _receivePort = ReceivePort();
   late final SendPort _sendPort;
   late final Isolate _isolate;
+  bool _closed = false;
 
   // Controller to handle state changes.
   final StreamController<IsolateInterpreterState> _stateChanges =
@@ -69,6 +72,7 @@ class IsolateInterpreter {
 
   // Initialize the isolate and set up communication.
   Future<void> _init() async {
+    print('[IsolateInterpreter] _init: spawning isolate...');
     _isolate = await Isolate.spawn(
       _mainIsolate,
       _receivePort.sendPort,
@@ -87,13 +91,17 @@ class IsolateInterpreter {
       }
     });
 
+    print('[IsolateInterpreter] _init: waiting for SendPort...');
     await sendPortCompleter.future;
 
+    print('[IsolateInterpreter] _init: creating _callerInterpreter from address 0x${address.toRadixString(16)}');
     _callerInterpreter = Interpreter.fromAddress(address);
+    print('[IsolateInterpreter] _init: done');
   }
 
   // Main function for the spawned isolate.
   static Future<void> _mainIsolate(SendPort sendPort) async {
+    print('[IsolateInterpreter:isolate] started');
     final port = ReceivePort();
 
     sendPort.send(port.sendPort);
@@ -102,14 +110,19 @@ class IsolateInterpreter {
     int? cachedAddress;
 
     await for (final _IsolateInterpreterData data in port) {
+      print('[IsolateInterpreter:isolate] received data, address=0x${data.address.toRadixString(16)}');
       if (cachedInterpreter == null || cachedAddress != data.address) {
+        print('[IsolateInterpreter:isolate] creating interpreter from address 0x${data.address.toRadixString(16)}');
         cachedInterpreter = Interpreter.fromAddress(data.address);
         cachedAddress = data.address;
       }
       sendPort.send(IsolateInterpreterState.loading);
+      print('[IsolateInterpreter:isolate] running inference...');
       cachedInterpreter.runInference(data.inputs);
+      print('[IsolateInterpreter:isolate] inference done, sending idle');
       sendPort.send(IsolateInterpreterState.idle);
     }
+    print('[IsolateInterpreter:isolate] port closed, exiting');
   }
 
   /// Run TensorFlow model for single input and output.
@@ -125,7 +138,15 @@ class IsolateInterpreter {
     List<Object> inputs,
     Map<int, Object> outputs,
   ) async {
-    if (state == IsolateInterpreterState.loading) return;
+    print('[IsolateInterpreter] runForMultipleInputs: state=$state, closed=$_closed, address=0x${address.toRadixString(16)}');
+    if (_closed) {
+      print('[IsolateInterpreter] runForMultipleInputs: SKIPPING - already closed!');
+      return;
+    }
+    if (state == IsolateInterpreterState.loading) {
+      print('[IsolateInterpreter] runForMultipleInputs: SKIPPING - still loading');
+      return;
+    }
     _state = IsolateInterpreterState.loading;
 
     final data = _IsolateInterpreterData(
@@ -133,13 +154,18 @@ class IsolateInterpreter {
       inputs: inputs,
     );
 
+    print('[IsolateInterpreter] runForMultipleInputs: sending data to isolate...');
     _sendPort.send(data);
+    print('[IsolateInterpreter] runForMultipleInputs: waiting for idle...');
     await _wait();
+    print('[IsolateInterpreter] runForMultipleInputs: isolate is idle, reading output tensors...');
 
     final outputTensors = _callerInterpreter.getOutputTensors();
     for (var i = 0; i < outputTensors.length; i++) {
+      print('[IsolateInterpreter] runForMultipleInputs: copying output tensor $i (shape=${outputTensors[i].shape}, bytes=${outputTensors[i].numBytes()})...');
       outputTensors[i].copyTo(outputs[i]!);
     }
+    print('[IsolateInterpreter] runForMultipleInputs: done');
   }
 
   // Wait for the state to change to idle.
@@ -152,10 +178,26 @@ class IsolateInterpreter {
   }
 
   // Close resources and terminate the isolate.
+  //
+  // IMPORTANT: _isolate.kill() must happen BEFORE any await, so that even
+  // if close() is called without await (e.g. from a synchronous dispose()),
+  // the background isolate is killed immediately. Otherwise the native
+  // interpreter can be freed (TfLiteInterpreterDelete) while the background
+  // isolate's thread still holds references to its memory → crash.
   Future<void> close() async {
-    await _stateSubscription.cancel();
-    await _stateChanges.close();
+    print('[IsolateInterpreter] close: starting, address=0x${address.toRadixString(16)}, closed=$_closed');
+    if (_closed) {
+      print('[IsolateInterpreter] close: already closed, returning');
+      return;
+    }
+    _closed = true;
+    print('[IsolateInterpreter] close: killing isolate FIRST...');
     _isolate.kill();
+    print('[IsolateInterpreter] close: cancelling state subscription...');
+    await _stateSubscription.cancel();
+    print('[IsolateInterpreter] close: closing state changes stream...');
+    await _stateChanges.close();
+    print('[IsolateInterpreter] close: done');
   }
 }
 

@@ -24,6 +24,84 @@
 #include <string.h>
 #include <stdint.h>
 
+// --- Windows CRT heap fix ---
+// On Windows, each DLL has its own CRT heap. TfLiteIntArray allocated with
+// malloc() in this DLL will be freed by TFLite's free() in a different DLL,
+// causing heap corruption. We dynamically resolve TfLiteIntArrayCreate from
+// the already-loaded TFLite DLL so allocations use TFLite's heap.
+// On Linux/macOS all .so/.dylib share one allocator, so plain malloc is fine.
+#if defined(_WIN32)
+#include <windows.h>
+#include <stdio.h>
+typedef TfLiteIntArray* (*TfLiteIntArrayCreateFn)(int size);
+static TfLiteIntArrayCreateFn g_intArrayCreate = NULL;
+static int g_intArrayCreateResolved = 0;
+
+static TfLiteIntArrayCreateFn ResolveTfLiteIntArrayCreate(void) {
+    HMODULE mod = GetModuleHandleA("libtensorflowlite_c-win.dll");
+    if (!mod) {
+        mod = GetModuleHandleA("tensorflowlite_c-win.dll");
+    }
+
+    if (!mod) {
+        HMODULE self_mod = NULL;
+        if (GetModuleHandleExA(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                (LPCSTR)(void*)&ResolveTfLiteIntArrayCreate,
+                &self_mod) &&
+            self_mod) {
+            char self_path[MAX_PATH];
+            DWORD len = GetModuleFileNameA(self_mod, self_path, MAX_PATH);
+            if (len > 0 && len < MAX_PATH) {
+                char* slash = strrchr(self_path, '\\');
+                if (slash) {
+                    *(slash + 1) = '\0';
+                    char candidate[MAX_PATH];
+                    int wrote = snprintf(
+                        candidate,
+                        MAX_PATH,
+                        "%slibtensorflowlite_c-win.dll",
+                        self_path);
+                    if (wrote > 0 && wrote < MAX_PATH) {
+                        mod = LoadLibraryA(candidate);
+                    }
+                }
+            }
+        }
+    }
+
+    if (!mod) {
+        return NULL;
+    }
+
+    return (TfLiteIntArrayCreateFn)GetProcAddress(mod, "TfLiteIntArrayCreate");
+}
+#endif
+
+static TfLiteIntArray* CreateIntArray(int size) {
+#if defined(_WIN32)
+    if (!g_intArrayCreateResolved) {
+        g_intArrayCreate = ResolveTfLiteIntArrayCreate();
+        g_intArrayCreateResolved = 1;
+    }
+    if (g_intArrayCreate) {
+        return g_intArrayCreate(size);
+    }
+
+    // Fallback when TfLiteIntArrayCreate is not exported by the runtime DLL.
+    // Keep layout identical to TfLiteIntArray and set size explicitly.
+    TfLiteIntArray* arr = (TfLiteIntArray*)malloc(sizeof(int) + sizeof(int) * size);
+    if (arr) arr->size = size;
+    return arr;
+#else
+    // Linux/macOS/Android share allocator boundaries for this usage.
+    TfLiteIntArray* arr = (TfLiteIntArray*)malloc(sizeof(int) + sizeof(int) * size);
+    if (arr) arr->size = size;
+    return arr;
+#endif
+}
+
 // Tensor indices for the custom op
 #define kDataInputTensor 0
 #define kWeightsTensor 1
@@ -162,22 +240,27 @@ static TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
 
     output_height = stride_height * (in_height - 1) + filter_height - padding_height;
     output_width = stride_width * (in_width - 1) + filter_width - padding_width;
-
-    // Resize output tensor
-    // Allocate TfLiteIntArray manually to avoid linking against TFLite runtime
-    // (TfLiteIntArrayCreate is not available when building as a standalone .so)
-    TfLiteIntArray* output_shape = (TfLiteIntArray*)malloc(sizeof(int) + sizeof(int) * 4);
-    if (!output_shape) {
-        context->ReportError(context, "Failed to allocate output shape");
+    // Avoid ResizeTensor ownership/allocation in this custom op path.
+    // The model's graph already defines output dims; validate them here.
+    if (output->dims == NULL || output->dims->size != 4) {
+        context->ReportError(context, "Output must be 4D");
         return kTfLiteError;
     }
-    output_shape->size = 4;
-    output_shape->data[0] = input->dims->data[0];  // batch
-    output_shape->data[1] = output_height;
-    output_shape->data[2] = output_width;
-    output_shape->data[3] = weights->dims->data[0];  // output channels
+    if (output->dims->data[0] != input->dims->data[0] ||
+        output->dims->data[1] != output_height ||
+        output->dims->data[2] != output_width ||
+        output->dims->data[3] != weights->dims->data[0]) {
+        context->ReportError(
+            context,
+            "Unexpected output shape [%d,%d,%d,%d], expected [%d,%d,%d,%d]",
+            output->dims->data[0], output->dims->data[1],
+            output->dims->data[2], output->dims->data[3],
+            input->dims->data[0], output_height, output_width,
+            weights->dims->data[0]);
+        return kTfLiteError;
+    }
 
-    return context->ResizeTensor(context, output, output_shape);
+    return kTfLiteOk;
 }
 
 static TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
@@ -288,3 +371,4 @@ static TfLiteRegistration g_registration = {
 TFLITE_CUSTOM_OPS_EXPORT TfLiteRegistration* TfLiteFlutter_RegisterConvolution2DTransposeBias(void) {
     return &g_registration;
 }
+
