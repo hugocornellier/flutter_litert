@@ -58,7 +58,7 @@ jobs:
             --copt=-fvisibility=hidden \
             --strip=always \
             --config=macos \
-            --config=macos_arm64 \
+            --cpu=darwin_arm64 \
             --local_ram_resources=HOST_RAM*0.7 \
             --jobs=4 \
             //tensorflow/lite/delegates/gpu:tensorflow_lite_gpu_dylib
