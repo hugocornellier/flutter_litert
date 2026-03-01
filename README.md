@@ -404,10 +404,159 @@ By default, `initializeWeb()` loads the TFLite.js / TensorFlow.js scripts from a
 
 - **Same API as tflite_flutter.** Drop-in replacement with no code changes needed.
 - **Auto-bundled native libraries.** Works out of the box on Android, iOS, macOS, Windows, and Linux (plus web support via `initializeWeb()`).
-- **GPU acceleration.** Metal delegate on iOS, GPU delegate on Android, XNNPACK on supported native platforms.
-- **CoreML delegate.** Available on iOS and macOS for Neural Engine acceleration.
+- **GPU acceleration.** Metal delegate on iOS, GPU delegate on Android, XNNPACK on all native platforms — [See delegates](#delegates).
+- **CoreML delegate.** Available on iOS for Neural Engine acceleration — [See delegates](#delegates).
 - **Custom ops.** MediaPipe's `Convolution2DTransposeBias` op is built and included on all platforms.
 - **Isolate support.** Run inference on a background thread with `IsolateInterpreter` on native platforms (web provides a compatibility wrapper).
+
+## Delegates
+
+Delegates accelerate inference by offloading computation to specialized hardware (GPU, Neural Engine, etc.). All delegates are passed to the interpreter via `InterpreterOptions.addDelegate()`:
+
+```dart
+final options = InterpreterOptions();
+options.addDelegate(XNNPackDelegate());
+final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
+```
+
+### Delegate availability
+
+| Delegate | Platform | Hardware | Class |
+|----------|----------|----------|-------|
+| XNNPACK | Android, iOS, macOS, Windows, Linux | CPU (optimized SIMD) | `XNNPackDelegate` |
+| GPU (Android) | Android | GPU (OpenGL / OpenCL) | `GpuDelegateV2` |
+| Metal | iOS | GPU (Metal) | `GpuDelegate` |
+| CoreML | iOS | Neural Engine / GPU / CPU | `CoreMlDelegate` |
+| Flex | Android, iOS, macOS, Windows, Linux | CPU (TensorFlow ops) | `FlexDelegate` |
+
+### XNNPACK (all native platforms)
+
+XNNPACK is a CPU delegate that uses SIMD instructions for faster inference. It works on every native platform and is a good default accelerator.
+
+```dart
+final options = InterpreterOptions();
+options.addDelegate(XNNPackDelegate(
+  options: XNNPackDelegateOptions(numThreads: 4),
+));
+final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
+```
+
+XNNPACK options:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `numThreads` | `int` | `1` | Number of threads for parallel computation |
+| `flags` | `int` | `0` | Bitmask of `TfLiteXNNPackDelegateFlags` (QS8, QU8, FORCE_FP16, etc.) |
+| `weightCacheFilePath` | `String?` | `null` | Path to cache packed weights on disk for faster subsequent loads |
+
+Weight caching example:
+
+```dart
+final cacheDir = await getApplicationSupportDirectory();
+final options = InterpreterOptions();
+options.addDelegate(XNNPackDelegate(
+  options: XNNPackDelegateOptions(
+    numThreads: 4,
+    weightCacheFilePath: '${cacheDir.path}/xnnpack_cache.bin',
+  ),
+));
+```
+
+### GPU delegate (Android)
+
+The Android GPU delegate uses OpenGL ES or OpenCL for GPU-accelerated inference.
+
+```dart
+final options = InterpreterOptions();
+options.addDelegate(GpuDelegateV2());
+final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
+```
+
+> **Note:** GPU delegate initialization on Android can take several seconds on first run as GPU kernels are compiled. Use serialization caching (below) to eliminate this overhead on subsequent runs.
+
+#### GPU kernel serialization (Android)
+
+Compiled GPU kernels can be cached to disk so initialization is near-instant after the first run:
+
+```dart
+final cacheDir = await getApplicationSupportDirectory();
+final options = InterpreterOptions();
+options.addDelegate(GpuDelegateV2(
+  options: GpuDelegateOptionsV2(
+    serializationDir: cacheDir.path,
+    modelToken: 'my_model_v1',
+    experimentalFlags: [
+      TfLiteGpuExperimentalFlags.TFLITE_GPU_EXPERIMENTAL_FLAGS_ENABLE_QUANT,
+      TfLiteGpuExperimentalFlags.TFLITE_GPU_EXPERIMENTAL_FLAGS_ENABLE_SERIALIZATION,
+    ],
+  ),
+));
+```
+
+GPU delegate options:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `isPrecisionLossAllowed` | `bool` | `false` | Allow FP16 quantization for performance |
+| `inferencePreference` | `int` | `FAST_SINGLE_ANSWER` | `TfLiteGpuInferenceUsage` value |
+| `inferencePriority1/2/3` | `int` | `MAX_PRECISION, AUTO, AUTO` | Ordered `TfLiteGpuInferencePriority` values |
+| `experimentalFlags` | `List<int>` | `[ENABLE_QUANT]` | `TfLiteGpuExperimentalFlags` values |
+| `maxDelegatePartitions` | `int` | `1` | Max graph partitions delegated to GPU |
+| `serializationDir` | `String?` | `null` | Directory for kernel cache (requires `ENABLE_SERIALIZATION` flag) |
+| `modelToken` | `String?` | `null` | Unique model identifier for cache namespace |
+
+### Metal delegate (iOS)
+
+The Metal delegate uses Apple's Metal API for GPU-accelerated inference on iOS.
+
+```dart
+final options = InterpreterOptions();
+options.addDelegate(GpuDelegate());
+final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
+```
+
+Metal delegate options:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `allowPrecisionLoss` | `bool` | `false` | Allow FP16 for performance |
+| `waitType` | `int` | `Passive` | `TFLGpuDelegateWaitType` value (Passive, Active, DoNotWait, Aggressive) |
+| `enableQuantization` | `bool` | `true` | Enable quantized model support |
+
+### CoreML delegate (iOS)
+
+The CoreML delegate uses Apple's CoreML framework, which can dispatch to the Neural Engine, GPU, or CPU depending on the model and device.
+
+```dart
+final options = InterpreterOptions();
+options.addDelegate(CoreMlDelegate(
+  options: CoreMlDelegateOptions(
+    enabledDevices: TfLiteCoreMlDelegateEnabledDevices
+        .TfLiteCoreMlDelegateDevicesWithNeuralEngine,
+  ),
+));
+final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
+```
+
+CoreML delegate options:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabledDevices` | `int` | `DevicesWithNeuralEngine` | Which devices to use (`AllDevices` or `DevicesWithNeuralEngine`) |
+| `coremlVersion` | `int` | `0` | CoreML version to target (0 = latest available) |
+| `maxDelegatedPartitions` | `int` | `0` | Max partitions (0 = unlimited) |
+| `minNodesPerPartition` | `int` | `2` | Minimum nodes per delegated partition |
+
+### Platform recommendations
+
+| Platform | Recommended delegate | Notes |
+|----------|---------------------|-------|
+| Android | `XNNPackDelegate` | Safe default. `GpuDelegateV2` is faster for large models but has slow first-run init — use serialization caching to mitigate. |
+| iOS | `GpuDelegate` (Metal) | Best general performance. Add `CoreMlDelegate` for Neural Engine models. |
+| macOS | `XNNPackDelegate` | Metal delegate is not available on macOS. |
+| Windows | `XNNPackDelegate` | XNNPACK symbols are bundled in the DLL. |
+| Linux | `XNNPackDelegate` | XNNPACK symbols are bundled in the shared library. |
+| Web | None needed | Delegates are no-ops on web. The WASM runtime handles optimization internally. |
 
 ## Custom ops
 

@@ -13,10 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import '../web/delegate.dart';
+
 /// CoreMl Delegate (no-op on web)
-class CoreMlDelegate {
+class CoreMlDelegate extends Delegate {
   CoreMlDelegate({CoreMlDelegateOptions? options});
 
+  @override
   void delete() {}
 }
 

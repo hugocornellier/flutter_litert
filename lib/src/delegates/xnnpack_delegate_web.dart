@@ -13,16 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import '../web/delegate.dart';
+
 /// XNNPack Delegate (no-op on web)
-class XNNPackDelegate {
+class XNNPackDelegate extends Delegate {
   XNNPackDelegate({XNNPackDelegateOptions? options});
 
+  @override
   void delete() {}
 }
 
 /// XNNPackDelegate Options (no-op on web)
 class XNNPackDelegateOptions {
-  XNNPackDelegateOptions({int numThreads = 1});
+  XNNPackDelegateOptions({
+    int numThreads = 1,
+    int flags = 0,
+    String? weightCacheFilePath,
+  });
 
   void delete() {}
 }

@@ -14,8 +14,10 @@
  * limitations under the License.
  */
 
+import '../web/delegate.dart';
+
 /// FlexDelegate (no-op on web)
-class FlexDelegate {
+class FlexDelegate extends Delegate {
   FlexDelegate();
 
   /// Always returns false on web.
@@ -24,5 +26,6 @@ class FlexDelegate {
   /// No-op on web.
   static Future<void> download({String version = '1.0.0'}) async {}
 
+  @override
   void delete() {}
 }

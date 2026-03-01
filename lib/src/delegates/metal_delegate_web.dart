@@ -13,11 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import '../web/delegate.dart';
+
 /// Metal Delegate for iOS (no-op on web)
-class GpuDelegate {
+class GpuDelegate extends Delegate {
   GpuDelegate({GpuDelegateOptions? options});
 
+  @override
   void delete() {}
+
+  /// Binds a Metal buffer to an input or output tensor (no-op on web).
+  bool bindMetalBufferToTensor(int tensorIndex, int metalBuffer) => false;
 }
 
 /// Metal Delegate options (no-op on web)

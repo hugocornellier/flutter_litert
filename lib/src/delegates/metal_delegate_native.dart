@@ -44,6 +44,23 @@ class GpuDelegate implements Delegate {
     tfliteBinding.TFLGpuDelegateDelete(_delegate);
     _deleted = true;
   }
+
+  /// Binds a Metal buffer to an input or output tensor.
+  ///
+  /// The bound buffer must have sufficient storage for all tensor elements.
+  /// For quantized models, the buffer is bound to the internal dequantized
+  /// float32 tensor.
+  ///
+  /// Must be called *after* the delegate has been applied to the interpreter.
+  /// Returns true on success.
+  bool bindMetalBufferToTensor(int tensorIndex, int metalBuffer) {
+    checkState(!_deleted, message: 'TfLiteGpuDelegate already deleted.');
+    return tfliteBinding.TFLGpuDelegateBindMetalBufferToTensor(
+      _delegate,
+      tensorIndex,
+      metalBuffer,
+    );
+  }
 }
 
 /// Metal Delegate options
@@ -61,7 +78,7 @@ class GpuDelegateOptions {
     bool enableQuantization = true,
   }) {
     final options = calloc<TFLGpuDelegateOptions>();
-
+    options.ref = tfliteBinding.TFLGpuDelegateOptionsDefault();
     options.ref
       ..allow_precision_loss = allowPrecisionLoss
       ..wait_type = waitType
