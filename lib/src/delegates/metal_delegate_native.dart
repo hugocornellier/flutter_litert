@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 import 'dart:ffi';
+import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 import 'package:quiver/check.dart';
@@ -21,8 +22,25 @@ import '../bindings/bindings.dart';
 import '../bindings/tensorflow_lite_bindings_generated.dart';
 import '../native/delegate.dart';
 
-/// Metal Delegate for iOS
+/// Lazily loaded Metal-specific binding.
+///
+/// On iOS the Metal symbols live in the main process (statically linked from
+/// TensorFlowLiteCMetal.xcframework), so we reuse [tfliteBinding].
+///
+/// On macOS the core TFLite dylib has no Metal symbols. A separate
+/// `libtensorflowlite_gpu-mac.dylib` must be loaded.
+final TensorFlowLiteBindings _metalBinding = () {
+  if (Platform.isIOS) return tfliteBinding;
+  if (Platform.isMacOS) return TensorFlowLiteBindings(_openMetalLibrary());
+  throw UnsupportedError(
+    'Metal GPU delegate is not supported on ${Platform.operatingSystem}',
+  );
+}();
+
+/// Metal Delegate for iOS and macOS
 class GpuDelegate implements Delegate {
+  static DynamicLibrary? _metalLib;
+
   Pointer<TfLiteDelegate> _delegate;
   bool _deleted = false;
 
@@ -33,15 +51,15 @@ class GpuDelegate implements Delegate {
 
   factory GpuDelegate({GpuDelegateOptions? options}) {
     if (options == null) {
-      return GpuDelegate._(tfliteBinding.TFLGpuDelegateCreate(nullptr));
+      return GpuDelegate._(_metalBinding.TFLGpuDelegateCreate(nullptr));
     }
-    return GpuDelegate._(tfliteBinding.TFLGpuDelegateCreate(options.base));
+    return GpuDelegate._(_metalBinding.TFLGpuDelegateCreate(options.base));
   }
 
   @override
   void delete() {
     checkState(!_deleted, message: 'TfLiteGpuDelegate already deleted.');
-    tfliteBinding.TFLGpuDelegateDelete(_delegate);
+    _metalBinding.TFLGpuDelegateDelete(_delegate);
     _deleted = true;
   }
 
@@ -55,11 +73,105 @@ class GpuDelegate implements Delegate {
   /// Returns true on success.
   bool bindMetalBufferToTensor(int tensorIndex, int metalBuffer) {
     checkState(!_deleted, message: 'TfLiteGpuDelegate already deleted.');
-    return tfliteBinding.TFLGpuDelegateBindMetalBufferToTensor(
+    return _metalBinding.TFLGpuDelegateBindMetalBufferToTensor(
       _delegate,
       tensorIndex,
       metalBuffer,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Static API (macOS download — iOS always has Metal available)
+  // ---------------------------------------------------------------------------
+
+  /// Whether the Metal GPU delegate library is available locally.
+  ///
+  /// Always returns `true` on iOS (statically linked).
+  /// On macOS, checks the environment variable, user cache, and app bundle.
+  static bool get isAvailable {
+    if (Platform.isIOS) return true;
+    if (!Platform.isMacOS) return false;
+
+    if (_metalLib != null) return true;
+
+    final envPath = Platform.environment['TFLITE_METAL_PATH'];
+    if (envPath != null && envPath.isNotEmpty && File(envPath).existsSync()) {
+      return true;
+    }
+
+    if (File('${_cacheDir.path}/$_libName').existsSync()) {
+      return true;
+    }
+
+    return _bundlePaths.any((p) => File(p).existsSync());
+  }
+
+  /// Downloads the Metal GPU delegate dylib from GitHub Releases (macOS only).
+  ///
+  /// The library is cached locally. Subsequent calls are no-ops if the
+  /// library already exists. No-op on iOS (Metal is statically linked).
+  ///
+  /// After downloading, run `pod install` in your app's `macos/` directory
+  /// to pick up the library for the next build.
+  static Future<void> download({String version = '1.0.0'}) async {
+    if (Platform.isIOS) return;
+    if (isAvailable) return;
+
+    final dir = _cacheDir;
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+
+    final libName = _libName;
+    final url = Uri.parse(
+      'https://github.com/hugocornellier/flutter_litert/releases/download/'
+      'metal-v$version/$libName',
+    );
+
+    final client = HttpClient();
+    try {
+      final request = await client.getUrl(url);
+      final response = await request.close();
+
+      if (response.statusCode != 200) {
+        throw StateError(
+          'Failed to download Metal GPU delegate library: '
+          'HTTP ${response.statusCode} from $url',
+        );
+      }
+
+      // Write to a temp file and rename for atomicity.
+      final tmpFile = File('${dir.path}/$libName.tmp');
+      final sink = tmpFile.openWrite();
+      await response.pipe(sink);
+      await tmpFile.rename('${dir.path}/$libName');
+    } finally {
+      client.close();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Library loading (private)
+  // ---------------------------------------------------------------------------
+
+  static String get _libName => 'libtensorflowlite_gpu-mac.dylib';
+
+  static Directory get _cacheDir {
+    return Directory(
+      '${Platform.environment['HOME']}/Library/Caches/flutter_litert',
+    );
+  }
+
+  /// Paths where the library may exist inside a built app bundle.
+  static List<String> get _bundlePaths {
+    final libName = _libName;
+    final appBundle = Directory(Platform.resolvedExecutable).parent.parent;
+    return [
+      '${appBundle.path}/Resources/$libName',
+      '${appBundle.path}/Frameworks/flutter_litert.framework/Versions/A/Resources/$libName',
+      '${appBundle.path}/Frameworks/flutter_litert.framework/Resources/$libName',
+      '${appBundle.path}/Resources/flutter_litert_flutter_litert.bundle/Contents/Resources/$libName',
+    ];
   }
 }
 
@@ -78,7 +190,7 @@ class GpuDelegateOptions {
     bool enableQuantization = true,
   }) {
     final options = calloc<TFLGpuDelegateOptions>();
-    options.ref = tfliteBinding.TFLGpuDelegateOptionsDefault();
+    options.ref = _metalBinding.TFLGpuDelegateOptionsDefault();
     options.ref
       ..allow_precision_loss = allowPrecisionLoss
       ..wait_type = waitType
@@ -92,4 +204,58 @@ class GpuDelegateOptions {
     calloc.free(_options);
     _deleted = true;
   }
+}
+
+/// Opens the Metal GPU delegate dylib on macOS.
+DynamicLibrary _openMetalLibrary() {
+  if (GpuDelegate._metalLib != null) return GpuDelegate._metalLib!;
+
+  final List<String> attemptedPaths = [];
+
+  // Strategy 1: Environment variable override
+  final envPath = Platform.environment['TFLITE_METAL_PATH'];
+  if (envPath != null && envPath.isNotEmpty) {
+    attemptedPaths.add('TFLITE_METAL_PATH: $envPath');
+    try {
+      final lib = DynamicLibrary.open(envPath);
+      GpuDelegate._metalLib = lib;
+      return lib;
+    } catch (e) {
+      // Continue
+    }
+  }
+
+  final libName = GpuDelegate._libName;
+
+  // Strategy 2: Cache directory
+  final cachedPath = '${GpuDelegate._cacheDir.path}/$libName';
+  attemptedPaths.add('Cache path: $cachedPath');
+  try {
+    final lib = DynamicLibrary.open(cachedPath);
+    GpuDelegate._metalLib = lib;
+    return lib;
+  } catch (e) {
+    // Continue
+  }
+
+  // Strategy 3: App bundle paths
+  for (final path in GpuDelegate._bundlePaths) {
+    attemptedPaths.add(path);
+    try {
+      final lib = DynamicLibrary.open(path);
+      GpuDelegate._metalLib = lib;
+      return lib;
+    } catch (e) {
+      // Continue
+    }
+  }
+
+  throw UnsupportedError(
+    'Metal GPU delegate library not found. Attempted paths:\n'
+    '${attemptedPaths.map((p) => '  - $p').join('\n')}\n\n'
+    'Solutions:\n'
+    '  1. Call await GpuDelegate.download() first\n'
+    '  2. Set TFLITE_METAL_PATH environment variable to the library path\n'
+    '  3. The Metal GPU delegate requires macOS on Apple Silicon (arm64)\n',
+  );
 }

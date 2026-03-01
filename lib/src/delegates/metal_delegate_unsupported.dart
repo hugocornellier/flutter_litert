@@ -14,9 +14,17 @@
  * limitations under the License.
  */
 
-/// Metal Delegate for iOS (unsupported platform)
+/// Metal Delegate for iOS/macOS (unsupported platform)
 class GpuDelegate {
   GpuDelegate({GpuDelegateOptions? options}) {
+    throw UnsupportedError('GpuDelegate is not supported on this platform');
+  }
+
+  /// Always returns false on unsupported platforms.
+  static bool get isAvailable => false;
+
+  /// Throws on unsupported platforms.
+  static Future<void> download({String version = '1.0.0'}) async {
     throw UnsupportedError('GpuDelegate is not supported on this platform');
   }
 

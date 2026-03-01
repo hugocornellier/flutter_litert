@@ -15,9 +15,15 @@
  */
 import '../web/delegate.dart';
 
-/// Metal Delegate for iOS (no-op on web)
+/// Metal Delegate for iOS/macOS (no-op on web)
 class GpuDelegate extends Delegate {
   GpuDelegate({GpuDelegateOptions? options});
+
+  /// Always returns false on web.
+  static bool get isAvailable => false;
+
+  /// No-op on web.
+  static Future<void> download({String version = '1.0.0'}) async {}
 
   @override
   void delete() {}

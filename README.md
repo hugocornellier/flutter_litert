@@ -378,7 +378,7 @@ By default, `initializeWeb()` loads the TFLite.js / TensorFlow.js scripts from a
 
 - **Same API as tflite_flutter.** Drop-in replacement with no code changes needed.
 - **Auto-bundled native libraries.** Works out of the box on Android, iOS, macOS, Windows, and Linux (plus web support via `initializeWeb()`).
-- **GPU acceleration.** Metal delegate on iOS, GPU delegate on Android, XNNPACK on all native platforms — [See delegates](#delegates).
+- **GPU acceleration.** Metal delegate on iOS and macOS, GPU delegate on Android, XNNPACK on all native platforms — [See delegates](#delegates).
 - **CoreML delegate.** Available on iOS for Neural Engine acceleration — [See delegates](#delegates).
 - **Custom ops.** MediaPipe's `Convolution2DTransposeBias` op is built and included on all platforms.
 - **Isolate support.** Run inference on a background thread with `IsolateInterpreter` on native platforms (web provides a compatibility wrapper).
@@ -546,7 +546,7 @@ CoreML delegate options:
 |----------|---------------------|-------|
 | Android | `XNNPackDelegate` | Safe default. `GpuDelegateV2` is faster for large models but has slow first-run init — use serialization caching to mitigate. |
 | iOS | `GpuDelegate` (Metal) | Best general performance. Add `CoreMlDelegate` for Neural Engine models. |
-| macOS | `XNNPackDelegate` | Metal delegate is not available on macOS. |
+| macOS | `GpuDelegate` (Metal) | ~3.4x faster than XNNPACK on Apple Silicon. Requires one-time `GpuDelegate.download()`. Falls back to `XNNPackDelegate` on Intel Macs. |
 | Windows | `XNNPackDelegate` | XNNPACK symbols are bundled in the DLL. |
 | Linux | `XNNPackDelegate` | XNNPACK symbols are bundled in the shared library. |
 | Web | None needed | Delegates are no-ops on web. The WASM runtime handles optimization internally. |
