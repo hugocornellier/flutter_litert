@@ -264,14 +264,12 @@ Verify the release now lists the asset:
 gh release view flex-v1.0.0 --repo hugocornellier/flutter_litert
 ```
 
-Once uploaded, `FlexDelegate.download()` will fetch it from:
+Once uploaded, the `flutter_litert_flex` package will download it at build time from:
 ```
 https://github.com/hugocornellier/flutter_litert/releases/download/flex-v1.0.0/libtensorflowlite_flex-linux.so
 ```
 
-It gets cached to `$XDG_CACHE_HOME/flutter_litert/` (or `~/.cache/flutter_litert/`) and is
-automatically bundled into Linux app builds at compile time via CMake (already configured in
-`linux/CMakeLists.txt`).
+It is automatically bundled into Linux app builds via CMake when `flutter_litert_flex` is added to pubspec.yaml.
 
 ## Troubleshooting
 

@@ -262,8 +262,7 @@ See `scripts/generate_training_model_flex.py` for a complete working example.
 #### Save/restore in Dart
 
 ```dart
-// Ensure the Flex delegate is available (no-op if already bundled in the app)
-await FlexDelegate.download();
+// Requires flutter_litert_flex in pubspec.yaml
 final options = InterpreterOptions();
 options.addDelegate(FlexDelegate());
 final interpreter = Interpreter.fromFile(model, options: options);
@@ -283,7 +282,6 @@ save.close();
 
 ```dart
 // On next app launch — restore from checkpoint
-await FlexDelegate.download(); // no-op if already bundled
 final options = InterpreterOptions();
 options.addDelegate(FlexDelegate());
 final interpreter = Interpreter.fromFile(model, options: options);
@@ -326,39 +324,6 @@ final interpreter = Interpreter.fromFile(model, options: options);
 ```
 
 > **Note:** Dense-only models (linear regression, MLP classifiers) do not need the Flex delegate — their gradient ops decompose into TFLite builtins. The Flex delegate is only needed when training convolutional or batch-normalized layers.
-
-<details>
-<summary>Alternative: manual setup without flutter_litert_flex</summary>
-
-**Desktop (macOS, Linux, Windows):**
-
-Call `download()` once during development to fetch the library:
-
-```dart
-await FlexDelegate.download();
-```
-
-The library is cached locally and automatically bundled into your app on the next build.
-
-> **macOS note:** After calling `download()`, run `pod install` in your app's `macos/` directory to pick up the library.
-
-**Android:**
-
-Add the Maven dependency to `android/app/build.gradle`:
-
-```gradle
-dependencies {
-    implementation 'org.tensorflow:tensorflow-lite-select-tf-ops:+'
-}
-```
-
-**Environment variable override:**
-
-```bash
-TFLITE_FLEX_PATH=/path/to/libtensorflowlite_flex-mac.dylib flutter run
-```
-
-</details>
 
 ## Platform support
 
@@ -434,7 +399,7 @@ final interpreter = await Interpreter.fromAsset('model.tflite', options: options
 |----------|----------|----------|-------|
 | XNNPACK | Android, iOS, macOS, Windows, Linux | CPU (optimized SIMD) | `XNNPackDelegate` |
 | GPU (Android) | Android | GPU (OpenGL / OpenCL) | `GpuDelegateV2` |
-| Metal | iOS | GPU (Metal) | `GpuDelegate` |
+| Metal | iOS, macOS | GPU (Metal) | `GpuDelegate` |
 | CoreML | iOS | Neural Engine / GPU / CPU | `CoreMlDelegate` |
 | Flex | Android, iOS, macOS, Windows, Linux | CPU (TensorFlow ops) | `FlexDelegate` |
 
@@ -514,14 +479,33 @@ GPU delegate options:
 | `serializationDir` | `String?` | `null` | Directory for kernel cache (requires `ENABLE_SERIALIZATION` flag) |
 | `modelToken` | `String?` | `null` | Unique model identifier for cache namespace |
 
-### Metal delegate (iOS)
+### Metal delegate (iOS and macOS)
 
-The Metal delegate uses Apple's Metal API for GPU-accelerated inference on iOS.
+The Metal delegate uses Apple's Metal API for GPU-accelerated inference. On iOS, Metal is bundled automatically. On macOS, it requires a one-time download (~20 MB).
+
+**iOS** — works out of the box:
 
 ```dart
 final options = InterpreterOptions();
 options.addDelegate(GpuDelegate());
 final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
+```
+
+**macOS** — download once during development, then use identically:
+
+```dart
+// One-time download (cached locally, auto-bundled into app on next build)
+await GpuDelegate.download();
+```
+
+After downloading, run `pod install` in your app's `macos/` directory to pick up the library. Then use `GpuDelegate()` the same as iOS.
+
+> **macOS note:** The Metal delegate requires Apple Silicon (arm64). Benchmarks show **~3.4x faster** inference than XNNPACK on M-series chips (MobileNet V1: 2.7ms Metal vs 9.1ms XNNPACK 4-thread on M1).
+
+You can also set `TFLITE_METAL_PATH` to point to a local copy of the dylib:
+
+```bash
+TFLITE_METAL_PATH=/path/to/libtensorflowlite_gpu-mac.dylib flutter run
 ```
 
 Metal delegate options:

@@ -1,6 +1,7 @@
 ## 1.0.4
-* Add Linux FlexDelegate support: `FlexDelegate.download()` now works on Linux x86_64, fetching `libtensorflowlite_flex-linux.so` from GitHub Releases (built from TF 2.20.0 source). Auto-bundled into Linux app builds via CMake (already configured). All three desktop platforms (macOS, Windows, Linux) now fully support on-device training with `SELECT_TF_OPS` models and checkpoint save/restore.
-* Add Linux CI job (`ubuntu-latest`) alongside the existing macOS job, with FlexDelegate library caching.
+* **Breaking**: Remove `FlexDelegate.download()` — FlexDelegate is now provided exclusively by the `flutter_litert_flex` package. Add `flutter_litert_flex: ^0.0.1` to your pubspec.yaml to use FlexDelegate.
+* Add Linux FlexDelegate support via `flutter_litert_flex` (Linux x86_64, built from TF 2.20.0 source). All three desktop platforms (macOS, Windows, Linux) now fully support on-device training with `SELECT_TF_OPS` models and checkpoint save/restore.
+* Add Linux CI job (`ubuntu-latest`) alongside the existing macOS job.
 * Add `scripts/build_flex_delegate_linux.md` build guide.
 
 ## 1.0.3

@@ -30,32 +30,21 @@ LiteRT (formerly TensorFlow Lite) Flutter plugin with MediaPipe custom operation
     'flutter_litert/Sources/flutter_litert/Resources/libtflite_custom_ops.dylib',
   ]
 
-  # FlexDelegate auto-bundling: if the developer has previously called
-  # FlexDelegate.download(), detect the cached library and copy it into
+  # Metal GPU delegate auto-bundling: if the developer has previously called
+  # GpuDelegate.download(), detect the cached library and copy it into
   # Resources so it gets bundled with the app. No-op if not downloaded.
-  # Skip if flutter_litert_flex is present (it bundles its own copy).
-  flex_lib = 'libtensorflowlite_flex-mac.dylib'
-  flex_cache = File.expand_path("~/Library/Caches/flutter_litert/#{flex_lib}")
-  flex_res = File.join(__dir__, 'flutter_litert', 'Sources', 'flutter_litert', 'Resources')
-  flex_dest = File.join(flex_res, flex_lib)
+  metal_lib = 'libtensorflowlite_gpu-mac.dylib'
+  metal_cache = File.expand_path("~/Library/Caches/flutter_litert/#{metal_lib}")
+  metal_res = File.join(__dir__, 'flutter_litert', 'Sources', 'flutter_litert', 'Resources')
+  metal_dest = File.join(metal_res, metal_lib)
 
-  # Detect if flutter_litert_flex plugin is installed (it handles bundling itself)
-  flex_plugin_present = Dir.glob(File.join(__dir__, '..', 'flutter_litert_flex*')).any? ||
-    Dir.glob(File.join(__dir__, '..', '.symlinks', 'plugins', 'flutter_litert_flex*')).any?
+  if File.exist?(metal_cache) && !File.exist?(metal_dest)
+    puts "[flutter_litert] Bundling Metal GPU delegate from cache (#{metal_cache})..."
+    FileUtils.cp(metal_cache, metal_dest)
+  end
 
-  if flex_plugin_present
-    puts '[flutter_litert] flutter_litert_flex detected — skipping auto-bundle from cache.'
-    # Clean up any previously cached copy to avoid shipping duplicates
-    File.delete(flex_dest) if File.exist?(flex_dest)
-  else
-    if File.exist?(flex_cache) && !File.exist?(flex_dest)
-      puts "[flutter_litert] Bundling FlexDelegate from cache (#{flex_cache})..."
-      FileUtils.cp(flex_cache, flex_dest)
-    end
-
-    if File.exist?(flex_dest)
-      resources << "flutter_litert/Sources/flutter_litert/Resources/#{flex_lib}"
-    end
+  if File.exist?(metal_dest)
+    resources << "flutter_litert/Sources/flutter_litert/Resources/#{metal_lib}"
   end
 
   s.resources = resources

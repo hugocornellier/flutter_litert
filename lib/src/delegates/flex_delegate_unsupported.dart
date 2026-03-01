@@ -23,11 +23,6 @@ class FlexDelegate {
   /// Always returns false on unsupported platforms.
   static bool get isAvailable => false;
 
-  /// Throws on unsupported platforms.
-  static Future<void> download({String version = '1.0.0'}) async {
-    throw UnsupportedError('FlexDelegate is not supported on this platform');
-  }
-
   void delete() {
     throw UnsupportedError('FlexDelegate is not supported on this platform');
   }

@@ -14,7 +14,6 @@ File get _flexModelFile =>
 
 void main() {
   test('save/restore signatures and checkpoint round-trip', () async {
-    await FlexDelegate.download();
     var flex = FlexDelegate();
     var opts = InterpreterOptions();
     opts.addDelegate(flex);

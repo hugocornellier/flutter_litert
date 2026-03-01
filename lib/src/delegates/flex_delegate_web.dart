@@ -23,9 +23,6 @@ class FlexDelegate extends Delegate {
   /// Always returns false on web.
   static bool get isAvailable => false;
 
-  /// No-op on web.
-  static Future<void> download({String version = '1.0.0'}) async {}
-
   @override
   void delete() {}
 }

@@ -187,9 +187,9 @@ All 8 tests should pass, including download, delegate creation, inference, and t
 
 ## What this enables
 
-Once uploaded, `FlexDelegate.download()` on Windows will fetch the DLL from:
+Once uploaded, the `flutter_litert_flex` package will download it at build time from:
 ```
 https://github.com/hugocornellier/flutter_litert/releases/download/flex-v1.0.0/libtensorflowlite_flex-win.dll
 ```
 
-It gets cached to `%LOCALAPPDATA%\flutter_litert\cache\` and is automatically bundled into Windows app builds via CMake (already configured in `windows/CMakeLists.txt`).
+It is automatically bundled into Windows app builds via CMake when `flutter_litert_flex` is added to pubspec.yaml.
