@@ -307,27 +307,40 @@ restore.close();
 
 ### FlexDelegate for complex model training
 
-The weight persistence approach above works with any model using only TFLite builtins. However, training models with layers like `Conv2D` or `BatchNormalization` generates gradient ops (e.g., `Conv2DBackpropFilter`) that require `SELECT_TF_OPS`. For these models, you need the **Flex delegate** — a separate native library (~123 MB per platform).
+The weight persistence approach above works with any model using only TFLite builtins. However, training models with layers like `Conv2D` or `BatchNormalization` generates gradient ops (e.g., `Conv2DBackpropFilter`) that require `SELECT_TF_OPS`. For these models, you need the **Flex delegate** — a separate native library (~123-492 MB per platform).
+
+Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex) to your `pubspec.yaml`:
+
+```yaml
+dependencies:
+  flutter_litert: ^1.0.3
+  flutter_litert_flex: ^0.0.1
+```
+
+That's it. The native library is downloaded automatically on the first build for all platforms. Then use the delegate:
+
+```dart
+final options = InterpreterOptions();
+options.addDelegate(FlexDelegate());
+final interpreter = Interpreter.fromFile(model, options: options);
+```
+
+> **Note:** Dense-only models (linear regression, MLP classifiers) do not need the Flex delegate — their gradient ops decompose into TFLite builtins. The Flex delegate is only needed when training convolutional or batch-normalized layers.
+
+<details>
+<summary>Alternative: manual setup without flutter_litert_flex</summary>
 
 **Desktop (macOS, Linux, Windows):**
 
 Call `download()` once during development to fetch the library:
 
 ```dart
-// One-time download during development
 await FlexDelegate.download();
 ```
 
-The library is cached locally and **automatically bundled into your app** on the next build. The build systems (CocoaPods on macOS, CMake on Linux/Windows) detect the cached library and include it in the app bundle. End users never need to download anything.
+The library is cached locally and automatically bundled into your app on the next build.
 
-```dart
-// Use like any other delegate
-final options = InterpreterOptions();
-options.addDelegate(FlexDelegate());
-final interpreter = Interpreter.fromFile(model, options: options);
-```
-
-> **macOS note:** After calling `download()`, run `pod install` in your app's `macos/` directory to pick up the library. Subsequent builds will include it automatically.
+> **macOS note:** After calling `download()`, run `pod install` in your app's `macos/` directory to pick up the library.
 
 **Android:**
 
@@ -339,17 +352,13 @@ dependencies {
 }
 ```
 
-Then use `FlexDelegate()` directly — no download needed.
-
 **Environment variable override:**
-
-Set `TFLITE_FLEX_PATH` to point to a local copy of the flex library:
 
 ```bash
 TFLITE_FLEX_PATH=/path/to/libtensorflowlite_flex-mac.dylib flutter run
 ```
 
-> **Note:** Dense-only models (linear regression, MLP classifiers) do not need the Flex delegate — their gradient ops decompose into TFLite builtins. The Flex delegate is only needed when training convolutional or batch-normalized layers.
+</details>
 
 ## Platform support
 

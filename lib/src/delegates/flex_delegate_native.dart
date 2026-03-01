@@ -27,35 +27,26 @@ import '../native/delegate.dart';
 /// TFLite builtins. This is required for training models whose gradient ops
 /// cannot be expressed as builtins (e.g., Conv2D, BatchNormalization).
 ///
-/// The Flex delegate requires a separate native library (~123 MB per platform)
-/// that is not bundled with the package. On desktop platforms, call [download]
-/// once during development to fetch it from GitHub Releases:
+/// Add the [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex)
+/// package to your `pubspec.yaml` to bundle the native library automatically
+/// on all platforms:
+///
+/// ```yaml
+/// dependencies:
+///   flutter_litert: ^1.0.3
+///   flutter_litert_flex: ^0.0.1
+/// ```
+///
+/// Then use the delegate:
 ///
 /// ```dart
-/// // One-time download during development
-/// await FlexDelegate.download();
-///
-/// // Use like any other delegate
 /// final options = InterpreterOptions();
 /// options.addDelegate(FlexDelegate());
 /// final interpreter = Interpreter.fromFile(model, options: options);
 /// ```
 ///
-/// Once downloaded, the library is automatically bundled into your app at
-/// build time (via CocoaPods on macOS, CMake on Linux/Windows). End users
-/// never need to download anything — the library ships inside the app bundle.
-///
-/// **iOS:** Add the `flutter_litert_flex` package to your `pubspec.yaml`:
-/// ```yaml
-/// dependencies:
-///   flutter_litert: ^1.0.3
-///   flutter_litert_flex: ^1.0.0
-/// ```
-///
-/// **Android:** Add the Maven dependency:
-/// ```gradle
-/// implementation 'org.tensorflow:tensorflow-lite-select-tf-ops:+'
-/// ```
+/// Alternatively, on desktop call [download] to fetch the library manually,
+/// or on Android add the Maven dependency directly.
 class FlexDelegate implements Delegate {
   static DynamicLibrary? _flexLib;
 
@@ -340,8 +331,9 @@ class FlexDelegate implements Delegate {
       'FlexDelegate library not found. Attempted paths:\n'
       '${attemptedPaths.map((p) => '  - $p').join('\n')}\n\n'
       'Solutions:\n'
-      '  1. Call await FlexDelegate.download() first\n'
-      '  2. Set TFLITE_FLEX_PATH environment variable to the library path\n',
+      '  1. Add flutter_litert_flex to your pubspec.yaml (recommended)\n'
+      '  2. Call await FlexDelegate.download() first\n'
+      '  3. Set TFLITE_FLEX_PATH environment variable to the library path\n',
     );
   }
 }
