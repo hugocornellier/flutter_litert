@@ -58,6 +58,15 @@ jobs:
           # Create flex_delegate_plugin.cc
           cat > tensorflow/lite/delegates/flex/flex_delegate_plugin.cc << 'CPPEOF'
           #include "tensorflow/lite/delegates/flex/delegate.h"
+          #include <map>
+          #include <mutex>
+
+          namespace {
+          // FlexDelegate::Create() returns a TfLiteDelegateUniquePtr with a custom
+          // deleter. We must preserve the unique_ptr so the deleter runs on destroy.
+          std::mutex g_mu;
+          std::map<TfLiteDelegate*, tflite::TfLiteDelegateUniquePtr> g_delegates;
+          }
 
           extern "C" {
 
@@ -68,12 +77,16 @@ jobs:
               size_t num_options,
               void (*report_error)(const char*)) {
             auto delegate = tflite::FlexDelegate::Create();
-            return delegate.release();
+            auto* raw = delegate.get();
+            std::lock_guard<std::mutex> lock(g_mu);
+            g_delegates.emplace(raw, std::move(delegate));
+            return raw;
           }
 
           __attribute__((visibility("default")))
           void tflite_plugin_destroy_delegate(TfLiteDelegate* delegate) {
-            delete reinterpret_cast<tflite::FlexDelegate*>(delegate);
+            std::lock_guard<std::mutex> lock(g_mu);
+            g_delegates.erase(delegate);
           }
 
           }  // extern "C"

@@ -55,20 +55,35 @@ class XNNPackDelegate implements Delegate {
 class XNNPackDelegateOptions {
   Pointer<TfLiteXNNPackDelegateOptions> _options;
   bool _deleted = false;
+  Pointer<Utf8>? _nativeWeightCacheFilePath;
 
   Pointer<TfLiteXNNPackDelegateOptions> get base => _options;
 
-  XNNPackDelegateOptions._(this._options);
+  XNNPackDelegateOptions._(this._options, this._nativeWeightCacheFilePath);
 
-  factory XNNPackDelegateOptions({int numThreads = 1}) {
+  factory XNNPackDelegateOptions({
+    int numThreads = 1,
+    int flags = 0,
+    String? weightCacheFilePath,
+  }) {
     final options = calloc<TfLiteXNNPackDelegateOptions>();
     options.ref.num_threads = numThreads;
+    options.ref.flags = flags;
 
-    return XNNPackDelegateOptions._(options);
+    Pointer<Utf8>? nativePath;
+    if (weightCacheFilePath != null) {
+      nativePath = weightCacheFilePath.toNativeUtf8();
+      options.ref.weight_cache_file_path = nativePath.cast<Char>();
+    }
+
+    return XNNPackDelegateOptions._(options, nativePath);
   }
 
   void delete() {
     checkState(!_deleted, message: 'XNNPackDelegate already deleted.');
+    if (_nativeWeightCacheFilePath != null) {
+      malloc.free(_nativeWeightCacheFilePath!);
+    }
     calloc.free(_options);
     _deleted = true;
   }

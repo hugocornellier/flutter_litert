@@ -1,0 +1,171 @@
+name: Build TFLite CoreML dylib (macOS)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 300
+    env:
+      TF_VERSION: v2.20.0
+      BAZEL_VERSION: 7.4.1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          echo "Before cleanup:"
+          df -h /
+          sudo rm -rf /usr/local/share/powershell /usr/local/.ghcup \
+            /usr/local/lib/android /usr/local/share/chromium 2>/dev/null || true
+          echo "After cleanup:"
+          df -h /
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install numpy
+          brew install bazelisk
+
+      - name: Clone TensorFlow
+        run: |
+          git clone --depth 1 --branch $TF_VERSION \
+            https://github.com/tensorflow/tensorflow.git ~/tf-src
+
+      - name: Download and patch coremltools proto imports
+        run: |
+          cd /tmp
+          curl -L -o coremltools.tar.gz https://github.com/apple/coremltools/archive/8.0.tar.gz
+          mkdir -p coremltools-local
+          tar xzf coremltools.tar.gz -C coremltools-local --strip-components=1
+
+          # Patch proto files: bare imports -> mlmodel/format/ prefixed
+          cd coremltools-local/mlmodel/format
+          for f in *.proto; do
+            sed -i '' 's|import "\([A-Za-z].*\.proto\)"|import "mlmodel/format/\1"|g' "$f"
+            sed -i '' 's|import public "\([A-Za-z].*\.proto\)"|import public "mlmodel/format/\1"|g' "$f"
+          done
+
+          echo "=== Sample patched imports ==="
+          grep 'import' /tmp/coremltools-local/mlmodel/format/CategoricalMapping.proto || true
+
+          # Create WORKSPACE marker so Bazel recognizes it as a repo
+          touch /tmp/coremltools-local/WORKSPACE
+
+          # Write BUILD.bazel for the patched coremltools
+          {
+            echo 'load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")'
+            echo ''
+            echo 'package(default_visibility = ["//visibility:public"])'
+            echo ''
+            echo 'licenses(["notice"])'
+            echo ''
+            echo 'exports_files(["LICENSE.txt"])'
+            echo ''
+            echo 'proto_library('
+            echo '    name = "mlmodel_proto",'
+            echo '    srcs = glob(["mlmodel/format/*.proto"]),'
+            echo ')'
+            echo ''
+            echo 'cc_proto_library('
+            echo '    name = "mlmodel_cc_proto",'
+            echo '    deps = [":mlmodel_proto"],'
+            echo ')'
+          } > /tmp/coremltools-local/BUILD.bazel
+
+          echo "=== BUILD.bazel ==="
+          cat /tmp/coremltools-local/BUILD.bazel
+
+      - name: Patch CoreML BUILD to add macos_dylib target
+        run: |
+          cd ~/tf-src
+          {
+            echo ''
+            echo 'load("@build_bazel_rules_apple//apple:macos.bzl", "macos_dylib")'
+            echo ''
+            echo 'macos_dylib('
+            echo '    name = "tensorflow_lite_coreml_dylib",'
+            echo '    linkopts = ['
+            echo '        "-all_load",'
+            echo '        "-dead_strip",'
+            echo '    ],'
+            echo '    minimum_os_version = "12.0",'
+            echo '    tags = ['
+            echo '        "manual",'
+            echo '        "nobuilder",'
+            echo '        "notap",'
+            echo '    ],'
+            echo '    deps = ['
+            echo '        ":coreml_delegate",'
+            echo '    ],'
+            echo ')'
+          } >> tensorflow/lite/delegates/coreml/BUILD
+
+          echo "=== Patched CoreML BUILD (tail) ==="
+          tail -20 tensorflow/lite/delegates/coreml/BUILD
+
+      - name: Configure TensorFlow
+        run: |
+          cd ~/tf-src
+          PYTHON_BIN_PATH=$(which python3) \
+          TF_NEED_CUDA=0 TF_NEED_ROCM=0 TF_NEED_TENSORRT=0 \
+          CC_OPT_FLAGS="-march=native" \
+          python3 configure.py
+
+      - name: Build CoreML dylib (arm64)
+        run: |
+          cd ~/tf-src
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk build -c opt \
+            --copt=-Os \
+            --copt=-fvisibility=hidden \
+            --strip=always \
+            --config=macos \
+            --cpu=darwin_arm64 \
+            --local_ram_resources=HOST_RAM*0.7 \
+            --jobs=4 \
+            --override_repository=coremltools=/tmp/coremltools-local \
+            //tensorflow/lite/delegates/coreml:tensorflow_lite_coreml_dylib
+
+      - name: Verify symbols
+        run: |
+          echo "=== CoreML delegate symbols ==="
+          nm -gU ~/tf-src/bazel-bin/tensorflow/lite/delegates/coreml/tensorflow_lite_coreml_dylib.dylib \
+            | grep -E "TfLiteCoreM" | head -10
+          echo ""
+          echo "=== File info ==="
+          ls -lh ~/tf-src/bazel-bin/tensorflow/lite/delegates/coreml/tensorflow_lite_coreml_dylib.dylib
+          file ~/tf-src/bazel-bin/tensorflow/lite/delegates/coreml/tensorflow_lite_coreml_dylib.dylib
+
+      - name: Rename
+        run: |
+          cp ~/tf-src/bazel-bin/tensorflow/lite/delegates/coreml/tensorflow_lite_coreml_dylib.dylib \
+            ~/libtensorflowlite_coreml-mac.dylib
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtensorflowlite_coreml-mac
+          path: ~/libtensorflowlite_coreml-mac.dylib
+          retention-days: 30
+
+      - name: Create release and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create coreml-v1.0.0 \
+            --title "CoreML Delegate v1.0.0 (macOS arm64)" \
+            --notes "CoreML delegate dylib for macOS (arm64 only). Built from TensorFlow v2.20.0." \
+            --repo ${{ github.repository }} || true
+          gh release upload coreml-v1.0.0 \
+            ~/libtensorflowlite_coreml-mac.dylib \
+            --repo ${{ github.repository }} \
+            --clobber

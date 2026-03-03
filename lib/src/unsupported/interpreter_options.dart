@@ -26,17 +26,6 @@ class InterpreterOptions {
     'InterpreterOptions.threads is not supported on this platform',
   );
 
-  /// TensorFlow version >= v2.2
-  /// Set true to use NnApi Delegate for Android
-  set useNnApiForAndroid(bool useNnApi) => throw UnsupportedError(
-    'InterpreterOptions.useNnApiForAndroid is not supported on this platform',
-  );
-
-  /// Set true to use Metal Delegate for iOS
-  set useMetalDelegateForIOS(bool useMetal) => throw UnsupportedError(
-    'InterpreterOptions.useMetalDelegateForIOS is not supported on this platform',
-  );
-
   /// Adds delegate to Interpreter Options
   void addDelegate(Delegate delegate) => throw UnsupportedError(
     'InterpreterOptions.addDelegate is not supported on this platform',

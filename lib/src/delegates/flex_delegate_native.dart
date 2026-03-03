@@ -17,6 +17,7 @@
 import 'dart:ffi';
 import 'dart:io';
 
+import 'package:flutter/services.dart' hide Size;
 import 'package:quiver/check.dart';
 import '../bindings/tensorflow_lite_bindings_generated.dart';
 import '../native/delegate.dart';
@@ -27,34 +28,21 @@ import '../native/delegate.dart';
 /// TFLite builtins. This is required for training models whose gradient ops
 /// cannot be expressed as builtins (e.g., Conv2D, BatchNormalization).
 ///
-/// The Flex delegate requires a separate native library (~123 MB per platform)
-/// that is not bundled with the package. On desktop platforms, call [download]
-/// once during development to fetch it from GitHub Releases:
+/// Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex)
+/// to your `pubspec.yaml` to bundle the native library on all platforms:
 ///
-/// ```dart
-/// // One-time download during development
-/// await FlexDelegate.download();
-///
-/// // Use like any other delegate
-/// final options = InterpreterOptions();
-/// options.addDelegate(FlexDelegate());
-/// final interpreter = Interpreter.fromFile(model, options: options);
-/// ```
-///
-/// Once downloaded, the library is automatically bundled into your app at
-/// build time (via CocoaPods on macOS, CMake on Linux/Windows). End users
-/// never need to download anything — the library ships inside the app bundle.
-///
-/// **iOS:** Add the `flutter_litert_flex` package to your `pubspec.yaml`:
 /// ```yaml
 /// dependencies:
 ///   flutter_litert: ^1.0.3
-///   flutter_litert_flex: ^1.0.0
+///   flutter_litert_flex: ^0.0.1
 /// ```
 ///
-/// **Android:** Add the Maven dependency:
-/// ```gradle
-/// implementation 'org.tensorflow:tensorflow-lite-select-tf-ops:+'
+/// Then use the delegate:
+///
+/// ```dart
+/// final options = InterpreterOptions();
+/// options.addDelegate(FlexDelegate());
+/// final interpreter = Interpreter.fromFile(model, options: options);
 /// ```
 class FlexDelegate implements Delegate {
   static DynamicLibrary? _flexLib;
@@ -69,22 +57,40 @@ class FlexDelegate implements Delegate {
 
   static void Function(Pointer<TfLiteDelegate>)? _destroyFn;
 
+  /// Method channel for Android delegate creation via Java API.
+  static const _channel = MethodChannel('flutter_litert_flex');
+
   Pointer<TfLiteDelegate> _delegate;
   bool _deleted = false;
+  bool _isAndroid = false;
 
   @override
   Pointer<TfLiteDelegate> get base => _delegate;
 
-  FlexDelegate._(this._delegate);
+  FlexDelegate._(this._delegate, {bool isAndroid = false})
+    : _isAndroid = isAndroid;
 
   /// Creates a [FlexDelegate] for SELECT_TF_OPS support.
   ///
-  /// The flex native library must be available before calling this constructor.
-  /// On desktop, call [download] first to ensure it is cached.
-  /// On Android, add the tensorflow-lite-select-tf-ops Maven dependency.
+  /// Requires `flutter_litert_flex` in your `pubspec.yaml`.
+  ///
+  /// On Android this is an async operation internally (method channel),
+  /// so use [FlexDelegate.create] for explicit async construction.
+  /// This synchronous constructor uses a cached delegate on Android.
   ///
   /// Throws [UnsupportedError] if the library cannot be loaded.
   factory FlexDelegate() {
+    if (Platform.isAndroid) {
+      if (_androidDelegatePtr == null) {
+        throw UnsupportedError(
+          'On Android, call FlexDelegate.create() instead of FlexDelegate().\n'
+          'The Android FlexDelegate requires async initialization via method channel.',
+        );
+      }
+      final ptr = Pointer<TfLiteDelegate>.fromAddress(_androidDelegatePtr!);
+      _androidDelegatePtr = null;
+      return FlexDelegate._(ptr, isAndroid: true);
+    }
     _loadLibrary();
     final delegate = _createFn!(nullptr, nullptr, 0, nullptr);
     checkArgument(
@@ -94,10 +100,38 @@ class FlexDelegate implements Delegate {
     return FlexDelegate._(delegate);
   }
 
+  /// Creates a [FlexDelegate] asynchronously.
+  ///
+  /// This is required on Android where the delegate is created via a method
+  /// channel to the Java FlexDelegate API. On other platforms this behaves
+  /// identically to the synchronous constructor.
+  static Future<FlexDelegate> create() async {
+    if (Platform.isAndroid) {
+      final handle = await _channel.invokeMethod<int>('createFlexDelegate');
+      if (handle == null || handle == 0) {
+        throw UnsupportedError(
+          'FlexDelegate not available on Android.\n'
+          'Add flutter_litert_flex to your pubspec.yaml.',
+        );
+      }
+      return FlexDelegate._(
+        Pointer<TfLiteDelegate>.fromAddress(handle),
+        isAndroid: true,
+      );
+    }
+    return FlexDelegate();
+  }
+
+  static int? _androidDelegatePtr;
+
   @override
   void delete() {
     checkState(!_deleted, message: 'FlexDelegate already deleted.');
-    _destroyFn!(_delegate);
+    if (_isAndroid) {
+      _channel.invokeMethod<void>('deleteFlexDelegate', _delegate.address);
+    } else {
+      _destroyFn!(_delegate);
+    }
     _deleted = true;
   }
 
@@ -105,17 +139,16 @@ class FlexDelegate implements Delegate {
   // Static API
   // ---------------------------------------------------------------------------
 
-  /// Whether the Flex delegate library is available locally.
+  /// Whether the Flex delegate library is available.
   ///
-  /// Returns `true` if the library can be loaded right now (without
-  /// triggering a download). Checks the environment variable, user cache,
-  /// and app bundle paths. On Android this attempts a system library load.
+  /// Returns `true` if the library can be loaded — i.e., `flutter_litert_flex`
+  /// is in the project's dependencies.
   static bool get isAvailable {
     if (_flexLib != null) return true;
 
     if (Platform.isAndroid) {
       try {
-        DynamicLibrary.open(_libName);
+        DynamicLibrary.open('libtensorflowlite_flex_jni.so');
         return true;
       } catch (_) {
         return false;
@@ -134,107 +167,27 @@ class FlexDelegate implements Delegate {
       }
     }
 
-    final envPath = Platform.environment['TFLITE_FLEX_PATH'];
-    if (envPath != null && envPath.isNotEmpty && File(envPath).existsSync()) {
-      return true;
-    }
-
-    if (File('${_cacheDir.path}/$_libName').existsSync()) {
-      return true;
-    }
-
-    // Check app bundle paths (library may be auto-bundled at build time).
+    // Desktop: check app bundle paths (bundled by flutter_litert_flex).
     return _bundlePaths.any((p) => File(p).existsSync());
   }
 
-  /// Downloads the Flex delegate native library from GitHub Releases.
-  ///
-  /// The library is cached locally. Subsequent calls are no-ops if the
-  /// library already exists. This is a no-op on Android where the library
-  /// comes from the Maven dependency.
-  static Future<void> download({String version = '1.0.0'}) async {
-    if (Platform.isAndroid) return;
-    if (isAvailable) return;
-
-    final dir = _cacheDir;
-    if (!dir.existsSync()) {
-      dir.createSync(recursive: true);
-    }
-
-    final libName = _libName;
-    final url = Uri.parse(
-      'https://github.com/hugocornellier/flutter_litert/releases/download/'
-      'flex-v$version/$libName',
-    );
-
-    final client = HttpClient();
-    try {
-      final request = await client.getUrl(url);
-      final response = await request.close();
-
-      if (response.statusCode != 200) {
-        throw StateError(
-          'Failed to download FlexDelegate library: '
-          'HTTP ${response.statusCode} from $url',
-        );
-      }
-
-      // Write to a temp file and rename for atomicity.
-      final tmpFile = File('${dir.path}/$libName.tmp');
-      final sink = tmpFile.openWrite();
-      await response.pipe(sink);
-      await tmpFile.rename('${dir.path}/$libName');
-    } finally {
-      client.close();
-    }
-  }
-
   // ---------------------------------------------------------------------------
-  // Library loading
+  // Library loading (non-Android)
   // ---------------------------------------------------------------------------
-
-  static String get _libName {
-    if (Platform.isMacOS) return 'libtensorflowlite_flex-mac.dylib';
-    if (Platform.isLinux) return 'libtensorflowlite_flex-linux.so';
-    if (Platform.isWindows) return 'libtensorflowlite_flex-win.dll';
-    if (Platform.isAndroid) return 'libtensorflowlite_flex.so';
-    throw UnsupportedError(
-      'FlexDelegate is not supported on ${Platform.operatingSystem}',
-    );
-  }
-
-  static Directory get _cacheDir {
-    if (Platform.isMacOS) {
-      return Directory(
-        '${Platform.environment['HOME']}/Library/Caches/flutter_litert',
-      );
-    }
-    if (Platform.isLinux) {
-      final xdgCache = Platform.environment['XDG_CACHE_HOME'];
-      final base = xdgCache ?? '${Platform.environment['HOME']}/.cache';
-      return Directory('$base/flutter_litert');
-    }
-    if (Platform.isWindows) {
-      final localAppData = Platform.environment['LOCALAPPDATA']!;
-      return Directory('$localAppData\\flutter_litert\\cache');
-    }
-    throw UnsupportedError(
-      'FlexDelegate cache is not supported on ${Platform.operatingSystem}',
-    );
-  }
 
   /// Paths where the library may exist inside a built app bundle.
   static List<String> get _bundlePaths {
-    final libName = _libName;
+    final libName = _desktopLibName;
     if (Platform.isMacOS) {
       final appBundle = Directory(Platform.resolvedExecutable).parent.parent;
       return [
+        '${appBundle.path}/Frameworks/flutter_litert_flex.framework/Versions/A/Resources/$libName',
+        '${appBundle.path}/Frameworks/flutter_litert_flex.framework/Resources/$libName',
+        '${appBundle.path}/Resources/flutter_litert_flex_flutter_litert_flex.bundle/Contents/Resources/$libName',
         '${appBundle.path}/Resources/$libName',
         '${appBundle.path}/Frameworks/flutter_litert.framework/Versions/A/Resources/$libName',
         '${appBundle.path}/Frameworks/flutter_litert.framework/Resources/$libName',
         '${appBundle.path}/Resources/flutter_litert_flutter_litert.bundle/Contents/Resources/$libName',
-        // flutter_litert_flex bundle path
-        '${appBundle.path}/Resources/flutter_litert_flex_flutter_litert_flex.bundle/Contents/Resources/$libName',
       ];
     }
     if (Platform.isLinux) {
@@ -246,6 +199,15 @@ class FlexDelegate implements Delegate {
       return ['${Directory(Platform.resolvedExecutable).parent.path}/$libName'];
     }
     return [];
+  }
+
+  static String get _desktopLibName {
+    if (Platform.isMacOS) return 'libtensorflowlite_flex-mac.dylib';
+    if (Platform.isLinux) return 'libtensorflowlite_flex-linux.so';
+    if (Platform.isWindows) return 'libtensorflowlite_flex-win.dll';
+    throw UnsupportedError(
+      'FlexDelegate desktop lib is not supported on ${Platform.operatingSystem}',
+    );
   }
 
   static void _loadLibrary() {
@@ -277,8 +239,6 @@ class FlexDelegate implements Delegate {
   }
 
   static DynamicLibrary _openLibrary() {
-    final List<String> attemptedPaths = [];
-
     // iOS: symbols are statically linked into the app binary.
     if (Platform.isIOS) {
       try {
@@ -286,47 +246,13 @@ class FlexDelegate implements Delegate {
       } catch (e) {
         throw UnsupportedError(
           'FlexDelegate not available on iOS.\n'
-          'Add flutter_litert_flex to your pubspec.yaml to bundle it.',
+          'Add flutter_litert_flex to your pubspec.yaml.',
         );
       }
     }
 
-    // Android: load from system (Maven dependency)
-    if (Platform.isAndroid) {
-      try {
-        return DynamicLibrary.open(_libName);
-      } catch (e) {
-        throw UnsupportedError(
-          'FlexDelegate library not available on Android.\n'
-          'Add to android/app/build.gradle:\n'
-          "  implementation 'org.tensorflow:tensorflow-lite-select-tf-ops:+'",
-        );
-      }
-    }
-
-    // Desktop: check environment variable override
-    final envPath = Platform.environment['TFLITE_FLEX_PATH'];
-    if (envPath != null && envPath.isNotEmpty) {
-      attemptedPaths.add('TFLITE_FLEX_PATH: $envPath');
-      try {
-        return DynamicLibrary.open(envPath);
-      } catch (e) {
-        // Continue to fallback paths
-      }
-    }
-
-    final libName = _libName;
-
-    // Desktop: check cache directory
-    final cachedPath = '${_cacheDir.path}/$libName';
-    attemptedPaths.add('Cache path: $cachedPath');
-    try {
-      return DynamicLibrary.open(cachedPath);
-    } catch (e) {
-      // Continue
-    }
-
-    // Desktop: try production app bundle paths (auto-bundled at build time)
+    // Desktop: try app bundle paths (bundled by flutter_litert_flex).
+    final List<String> attemptedPaths = [];
     for (final path in _bundlePaths) {
       attemptedPaths.add(path);
       try {
@@ -337,11 +263,10 @@ class FlexDelegate implements Delegate {
     }
 
     throw UnsupportedError(
-      'FlexDelegate library not found. Attempted paths:\n'
-      '${attemptedPaths.map((p) => '  - $p').join('\n')}\n\n'
-      'Solutions:\n'
-      '  1. Call await FlexDelegate.download() first\n'
-      '  2. Set TFLITE_FLEX_PATH environment variable to the library path\n',
+      'FlexDelegate library not found.\n'
+      'Add flutter_litert_flex to your pubspec.yaml.\n\n'
+      'Attempted paths:\n'
+      '${attemptedPaths.map((p) => '  - $p').join('\n')}',
     );
   }
 }

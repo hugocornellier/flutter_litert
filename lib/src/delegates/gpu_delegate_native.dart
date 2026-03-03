@@ -56,6 +56,8 @@ class GpuDelegateV2 implements Delegate {
 class GpuDelegateOptionsV2 {
   Pointer<TfLiteGpuDelegateOptionsV2> _options;
   bool _deleted = false;
+  Pointer<Utf8> _serializationDirPtr = nullptr;
+  Pointer<Utf8> _modelTokenPtr = nullptr;
 
   Pointer<TfLiteGpuDelegateOptionsV2> get base => _options;
   GpuDelegateOptionsV2._(this._options);
@@ -106,6 +108,16 @@ class GpuDelegateOptionsV2 {
   /// delegated to the GPU.
   /// This limits the maximum number of partitions to be delegated. By default,
   /// it's set to 1 in TfLiteGpuDelegateOptionsV2Default().
+  ///
+  /// [serializationDir] Directory path for GPU kernel serialization cache.
+  /// When provided together with [modelToken], compiled GPU kernels are cached
+  /// to disk, which reduces initialization time on subsequent runs.
+  /// You must also include
+  /// [TfLiteGpuExperimentalFlags.TFLITE_GPU_EXPERIMENTAL_FLAGS_ENABLE_SERIALIZATION]
+  /// in [experimentalFlags] to activate serialization.
+  ///
+  /// [modelToken] Unique identifier for the model used as a serialization
+  /// namespace. Required when [serializationDir] is set.
   factory GpuDelegateOptionsV2({
     bool isPrecisionLossAllowed = false,
     int inferencePreference = TfLiteGpuInferenceUsage
@@ -120,6 +132,8 @@ class GpuDelegateOptionsV2 {
       TfLiteGpuExperimentalFlags.TFLITE_GPU_EXPERIMENTAL_FLAGS_ENABLE_QUANT,
     ],
     int maxDelegatePartitions = 1,
+    String? serializationDir,
+    String? modelToken,
   }) {
     final options = calloc<TfLiteGpuDelegateOptionsV2>();
     options.ref
@@ -133,11 +147,30 @@ class GpuDelegateOptionsV2 {
       )
       ..max_delegated_partitions = maxDelegatePartitions;
 
-    return GpuDelegateOptionsV2._(options);
+    final result = GpuDelegateOptionsV2._(options);
+
+    if (serializationDir != null) {
+      result._serializationDirPtr = serializationDir.toNativeUtf8();
+      options.ref.serialization_dir = result._serializationDirPtr.cast<Char>();
+    }
+    if (modelToken != null) {
+      result._modelTokenPtr = modelToken.toNativeUtf8();
+      options.ref.model_token = result._modelTokenPtr.cast<Char>();
+    }
+
+    return result;
   }
 
   void delete() {
     checkState(!_deleted, message: 'TfLiteGpuDelegateV2 already deleted.');
+    if (_serializationDirPtr != nullptr) {
+      malloc.free(_serializationDirPtr);
+      _serializationDirPtr = nullptr;
+    }
+    if (_modelTokenPtr != nullptr) {
+      malloc.free(_modelTokenPtr);
+      _modelTokenPtr = nullptr;
+    }
     calloc.free(_options);
     _deleted = true;
   }
@@ -148,6 +181,7 @@ class _TfLiteGpuExperimentalFlagsUtil {
   static const int enableQuant = 1 << 0;
   static const int clOnly = 1 << 1;
   static const int glOnly = 1 << 2;
+  static const int enableSerialization = 1 << 3;
 
   static int value(int flag) {
     switch (flag) {
@@ -158,6 +192,9 @@ class _TfLiteGpuExperimentalFlagsUtil {
         return clOnly;
       case TfLiteGpuExperimentalFlags.TFLITE_GPU_EXPERIMENTAL_FLAGS_GL_ONLY:
         return glOnly;
+      case TfLiteGpuExperimentalFlags
+          .TFLITE_GPU_EXPERIMENTAL_FLAGS_ENABLE_SERIALIZATION:
+        return enableSerialization;
       default:
         return none;
     }

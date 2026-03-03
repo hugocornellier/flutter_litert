@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-/// Metal Delegate for iOS (unsupported platform)
+/// Metal Delegate for iOS/macOS (unsupported platform)
 class GpuDelegate {
   GpuDelegate({GpuDelegateOptions? options}) {
     throw UnsupportedError('GpuDelegate is not supported on this platform');

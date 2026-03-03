@@ -69,15 +69,6 @@ set(flutter_litert_bundled_libraries
   "$<TARGET_FILE:tflite_custom_ops>"
 )
 
-# FlexDelegate auto-bundling: if the developer has called FlexDelegate.download(),
-# detect the cached library and bundle it in the app.
-set(_FLEX_CACHE_PATH "$ENV{LOCALAPPDATA}/flutter_litert/cache/libtensorflowlite_flex-win.dll")
-if(EXISTS "${_FLEX_CACHE_PATH}")
-  message(STATUS "[flutter_litert] Bundling FlexDelegate from ${_FLEX_CACHE_PATH}")
-  list(APPEND flutter_tflite_bundled_libraries "${_FLEX_CACHE_PATH}")
-  list(APPEND flutter_litert_bundled_libraries "${_FLEX_CACHE_PATH}")
-endif()
-
 set(flutter_tflite_bundled_libraries ${flutter_tflite_bundled_libraries} PARENT_SCOPE)
 set(flutter_litert_bundled_libraries ${flutter_litert_bundled_libraries} PARENT_SCOPE)
 

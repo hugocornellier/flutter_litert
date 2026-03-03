@@ -1,0 +1,99 @@
+name: Build TFLite Metal GPU dylib (macOS)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 360
+    env:
+      TF_VERSION: v2.20.0
+      BAZEL_VERSION: 7.4.1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          echo "Before cleanup:"
+          df -h /
+          sudo rm -rf /usr/local/share/powershell /usr/local/.ghcup \
+            /usr/local/lib/android /usr/local/share/chromium 2>/dev/null || true
+          echo "After cleanup:"
+          df -h /
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install numpy
+          brew install bazelisk
+
+      - name: Clone TensorFlow
+        run: |
+          git clone --depth 1 --branch $TF_VERSION \
+            https://github.com/tensorflow/tensorflow.git ~/tf-src
+
+      - name: Configure TensorFlow
+        run: |
+          cd ~/tf-src
+          PYTHON_BIN_PATH=$(which python3) \
+          TF_NEED_CUDA=0 TF_NEED_ROCM=0 TF_NEED_TENSORRT=0 \
+          CC_OPT_FLAGS="-march=native" \
+          python3 configure.py
+
+      - name: Build Metal GPU dylib (arm64)
+        run: |
+          cd ~/tf-src
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk build -c opt \
+            --copt=-Os \
+            --copt=-DTFLITE_GPU_BINARY_RELEASE \
+            --copt=-fvisibility=hidden \
+            --strip=always \
+            --config=macos \
+            --cpu=darwin_arm64 \
+            --local_ram_resources=HOST_RAM*0.7 \
+            --jobs=4 \
+            //tensorflow/lite/delegates/gpu:tensorflow_lite_gpu_dylib
+
+      - name: Verify symbols
+        run: |
+          echo "=== Metal GPU delegate symbols ==="
+          nm -gU ~/tf-src/bazel-bin/tensorflow/lite/delegates/gpu/tensorflow_lite_gpu_dylib.dylib \
+            | grep -E "TFLGpuDelegate" | head -10
+          echo ""
+          echo "=== File info ==="
+          ls -lh ~/tf-src/bazel-bin/tensorflow/lite/delegates/gpu/tensorflow_lite_gpu_dylib.dylib
+          file ~/tf-src/bazel-bin/tensorflow/lite/delegates/gpu/tensorflow_lite_gpu_dylib.dylib
+
+      - name: Rename
+        run: |
+          cp ~/tf-src/bazel-bin/tensorflow/lite/delegates/gpu/tensorflow_lite_gpu_dylib.dylib \
+            ~/libtensorflowlite_gpu-mac.dylib
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtensorflowlite_gpu-mac
+          path: ~/libtensorflowlite_gpu-mac.dylib
+          retention-days: 30
+
+      - name: Create release and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create metal-v1.0.0 \
+            --title "Metal GPU Delegate v1.0.0 (macOS arm64)" \
+            --notes "Metal GPU delegate dylib for macOS (arm64 only). Built from TensorFlow v2.20.0." \
+            --repo ${{ github.repository }} || true
+          gh release upload metal-v1.0.0 \
+            ~/libtensorflowlite_gpu-mac.dylib \
+            --repo ${{ github.repository }} \
+            --clobber

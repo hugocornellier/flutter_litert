@@ -13,10 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+import '../web/delegate.dart';
+
 /// GPU delegate for Android (no-op on web)
-class GpuDelegateV2 {
+class GpuDelegateV2 extends Delegate {
   GpuDelegateV2({GpuDelegateOptionsV2? options});
 
+  @override
   void delete() {}
 }
 
@@ -30,6 +33,8 @@ class GpuDelegateOptionsV2 {
     int inferencePriority3 = 0,
     List<int> experimentalFlags = const [],
     int maxDelegatePartitions = 1,
+    String? serializationDir,
+    String? modelToken,
   });
 
   void delete() {}

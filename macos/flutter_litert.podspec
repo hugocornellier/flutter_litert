@@ -22,30 +22,13 @@ LiteRT (formerly TensorFlow Lite) Flutter plugin with MediaPipe custom operation
   s.swift_version = '5.0'
 
   # Bundle the TFLite libraries as resources.
-  # These dylibs are small enough (~13 MB) to ship in the pub package,
+  # These dylibs are small enough to ship in the pub package,
   # so they are always present — both for app builds (CocoaPods) and `flutter test`.
   # Dylibs live inside the SPM source tree so both SPM and CocoaPods share one copy.
-  resources = [
+  s.resources = [
     'flutter_litert/Sources/flutter_litert/Resources/libtensorflowlite_c-mac.dylib',
     'flutter_litert/Sources/flutter_litert/Resources/libtflite_custom_ops.dylib',
+    'flutter_litert/Sources/flutter_litert/Resources/libtensorflowlite_gpu-mac.dylib',
+    'flutter_litert/Sources/flutter_litert/Resources/libtensorflowlite_coreml-mac.dylib',
   ]
-
-  # FlexDelegate auto-bundling: if the developer has previously called
-  # FlexDelegate.download(), detect the cached library and copy it into
-  # Resources so it gets bundled with the app. No-op if not downloaded.
-  flex_lib = 'libtensorflowlite_flex-mac.dylib'
-  flex_cache = File.expand_path("~/Library/Caches/flutter_litert/#{flex_lib}")
-  flex_res = File.join(__dir__, 'flutter_litert', 'Sources', 'flutter_litert', 'Resources')
-  flex_dest = File.join(flex_res, flex_lib)
-
-  if File.exist?(flex_cache) && !File.exist?(flex_dest)
-    puts "[flutter_litert] Bundling FlexDelegate from cache (#{flex_cache})..."
-    FileUtils.cp(flex_cache, flex_dest)
-  end
-
-  if File.exist?(flex_dest)
-    resources << "flutter_litert/Sources/flutter_litert/Resources/#{flex_lib}"
-  end
-
-  s.resources = resources
 end

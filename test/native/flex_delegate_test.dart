@@ -8,48 +8,12 @@ import 'package:flutter_litert/flutter_litert.dart';
 File get _modelFile =>
     File('${Directory.current.path}/test/assets/training_model.tflite');
 
-File get _flexCacheFile {
-  if (Platform.isMacOS) {
-    return File(
-      '${Platform.environment['HOME']}/Library/Caches/flutter_litert/'
-      'libtensorflowlite_flex-mac.dylib',
-    );
-  } else if (Platform.isWindows) {
-    return File(
-      '${Platform.environment['LOCALAPPDATA']}/flutter_litert/cache/'
-      'libtensorflowlite_flex-win.dll',
-    );
-  } else {
-    final xdgCache = Platform.environment['XDG_CACHE_HOME'];
-    final base = xdgCache ?? '${Platform.environment['HOME']}/.cache';
-    return File('$base/flutter_litert/libtensorflowlite_flex-linux.so');
-  }
-}
-
 void main() {
   group('FlexDelegate', () {
-    test('isAvailable reflects cache state', () {
-      expect(FlexDelegate.isAvailable, _flexCacheFile.existsSync());
-    });
-
-    test(
-      'download fetches library from GitHub Releases',
-      () async {
-        await FlexDelegate.download();
-        expect(FlexDelegate.isAvailable, isTrue);
-
-        final cacheFile = _flexCacheFile;
-        expect(cacheFile.existsSync(), isTrue);
-        expect(cacheFile.lengthSync(), greaterThan(100 * 1024 * 1024));
-      },
-      timeout: const Timeout(Duration(minutes: 5)),
-    );
-
-    test('second download is a no-op (cached)', () async {
-      final sw = Stopwatch()..start();
-      await FlexDelegate.download();
-      sw.stop();
-      expect(sw.elapsedMilliseconds, lessThan(1000));
+    test('isAvailable reports whether flex library is bundled', () {
+      // When running desktop tests, isAvailable depends on whether
+      // flutter_litert_flex is present in the project.
+      expect(FlexDelegate.isAvailable, isA<bool>());
     });
 
     test('constructor creates a valid delegate', () {
@@ -70,8 +34,7 @@ void main() {
     late InterpreterOptions options;
     late Interpreter interpreter;
 
-    setUp(() async {
-      await FlexDelegate.download();
+    setUp(() {
       flexDelegate = FlexDelegate();
       options = InterpreterOptions();
       options.addDelegate(flexDelegate);

@@ -15,13 +15,11 @@
  */
 
 import 'dart:ffi';
-import 'dart:io';
 
 import 'package:quiver/check.dart';
 import '../bindings/bindings.dart';
 import '../bindings/tensorflow_lite_bindings_generated.dart';
 import 'delegate.dart';
-import '../delegates/metal_delegate_native.dart';
 import '../custom_ops/transpose_conv_bias.dart';
 
 /// TensorFlowLite interpreter options.
@@ -47,21 +45,6 @@ class InterpreterOptions {
   /// Sets the number of CPU threads to use.
   set threads(int threads) =>
       tfliteBinding.TfLiteInterpreterOptionsSetNumThreads(_options, threads);
-
-  /// TensorFlow version >= v2.2
-  /// Set true to use NnApi Delegate for Android
-  set useNnApiForAndroid(bool useNnApi) {
-    if (Platform.isAndroid) {
-      tfliteBinding.TfLiteInterpreterOptionsSetUseNNAPI(_options, useNnApi);
-    }
-  }
-
-  /// Set true to use Metal Delegate for iOS
-  set useMetalDelegateForIOS(bool useMetal) {
-    if (Platform.isIOS) {
-      addDelegate(GpuDelegate());
-    }
-  }
 
   /// Adds delegate to Interpreter Options
   void addDelegate(Delegate delegate) {

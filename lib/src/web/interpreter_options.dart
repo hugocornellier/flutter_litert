@@ -18,12 +18,6 @@ class InterpreterOptions {
   /// Ignored on web.
   set threads(int threads) {}
 
-  /// Ignored on web.
-  set useNnApiForAndroid(bool useNnApi) {}
-
-  /// Ignored on web.
-  set useMetalDelegateForIOS(bool useMetal) {}
-
   /// Accepts delegate but ignores it on web.
   void addDelegate(Delegate delegate) {}
 
