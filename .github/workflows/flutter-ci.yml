@@ -22,13 +22,8 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # Resolve the spike sub-package first: dart format derives each file's
-      # language version (and thus formatting style) from its package config,
-      # falling back to the latest version when unresolved.
       - name: Verify formatting
-        run: |
-          dart pub get --directory spike/compiled_model
-          dart format --output=none --set-exit-if-changed .
+        run: dart format --output=none --set-exit-if-changed .
 
       - name: Analyze project source
         run: flutter analyze .
@@ -76,13 +71,8 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # Resolve the spike sub-package first: dart format derives each file's
-      # language version (and thus formatting style) from its package config,
-      # falling back to the latest version when unresolved.
       - name: Verify formatting
-        run: |
-          dart pub get --directory spike/compiled_model
-          dart format --output=none --set-exit-if-changed .
+        run: dart format --output=none --set-exit-if-changed .
 
       - name: Analyze project source
         run: flutter analyze .

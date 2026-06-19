@@ -1,2 +1,10 @@
 #include "../../Flutter/Flutter-Release.xcconfig"
 #include "Warnings.xcconfig"
+
+// Build arm64 only for profile and release. The example depends on opencv_dart,
+// whose dartcv4 prebuilt has a broken x86_64 slice that fails to link in
+// profile/release; every target we run on is Apple Silicon, so excluding x86_64
+// lets tool/run_matrix.sh build cleanly with opencv left enabled. This config is
+// shared by the Profile build configuration (see project.pbxproj), so it covers
+// the profile-mode matrix run.
+EXCLUDED_ARCHS = x86_64

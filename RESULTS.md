@@ -21,11 +21,12 @@ representative) via `flutter drive`, captures device/OS/commit metadata, and
 appends the results to `RESULTS.csv` on the host. Commit the updated CSV after
 each run so the file accumulates a record across hardware.
 
-> **macOS note:** the example app depends on `opencv_dart`, whose `dartcv4`
-> native asset fails to link its x86_64 slice in profile/release builds. The
-> benchmark entrypoint does not import opencv, so to run on macOS temporarily
-> comment out `opencv_dart` in `example/pubspec.yaml`, `flutter pub get`, run the
-> matrix, then restore it. Linux/Windows/mobile are unaffected.
+> **macOS note:** the example depends on `opencv_dart`, whose `dartcv4` prebuilt
+> has a broken x86_64 slice that fails to link in profile/release builds. The
+> macOS profile/release builds are therefore pinned to arm64 (see
+> `EXCLUDED_ARCHS` in `example/macos/Runner/Configs/Release.xcconfig`), so
+> `tool/run_matrix.sh macos` builds cleanly with `opencv_dart` enabled on Apple
+> Silicon, no workaround needed. Linux/Windows/mobile are unaffected.
 
 ## Columns
 

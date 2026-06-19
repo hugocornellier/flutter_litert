@@ -50,9 +50,9 @@ tool/
 flutter-tflite.code-workspace
 ffigen_tensorflow_lite.yaml
 
-# Internal benchmark results and experimental spikes (not consumer-facing).
+# Internal benchmark results and findings (not consumer-facing).
 # The plugin builds and runs without these; they would only expose internal
-# profiling data and scratch code.
-spike/
+# profiling data.
 RESULTS.md
 RESULTS.csv
+COMPILEDMODEL_FINDINGS.md

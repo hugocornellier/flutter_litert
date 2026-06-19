@@ -33,9 +33,9 @@ void main() {
   // NOTE: The GPU (Metal) accelerator needs a real GPU/Metal device context,
   // which the headless `flutter test` runner does not provide; there it fails
   // with kLiteRtStatusErrorCompilation (504) because the Metal accelerator can't
-  // register. The GPU path is validated separately via the standalone spike
-  // (`dart run` has Metal access) and in a real `flutter run` app. These tests
-  // assert success when Metal is available and skip gracefully when it isn't.
+  // register. The GPU path is validated separately in a real `flutter run`
+  // app (which has Metal access). These tests assert success when Metal is
+  // available and skip gracefully when it isn't.
   test(
     'CompiledModel compiles on the GPU (Metal) accelerator when available',
     () {
