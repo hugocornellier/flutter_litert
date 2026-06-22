@@ -1,10 +1,10 @@
-import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform;
 
 import 'packed_image_layout.dart';
+import 'transferable_bytes.dart';
 import 'yuv_conversion.dart';
 
 /// The colour conversion a [CameraFrame]'s bytes need before being used as a
@@ -323,13 +323,14 @@ CameraFrame? prepareCameraFrame({
 /// Builds the isolate-request field map for a [CameraFrame] payload, merged with
 /// any [extra] per-op fields (e.g. `maxDim`, `mode`, `outputFormat`).
 ///
-/// [frame]'s bytes are wrapped in [TransferableTypedData] for zero-copy
-/// transfer. Reconstruct on the isolate side with [cameraFrameFromRpcMessage].
+/// [frame]'s bytes are wrapped for zero-copy transfer on native (via
+/// `TransferableTypedData`) and passed through unchanged on web. Reconstruct on
+/// the isolate side with [cameraFrameFromRpcMessage].
 Map<String, dynamic> cameraFrameRpcFields(
   CameraFrame frame, [
   Map<String, dynamic> extra = const {},
 ]) => {
-  'bytes': TransferableTypedData.fromList([frame.bytes]),
+  'bytes': transferableBytes(frame.bytes),
   'width': frame.width,
   'height': frame.height,
   'strideCols': frame.strideCols,

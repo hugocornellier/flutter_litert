@@ -8,6 +8,7 @@
 //   flutter run
 
 import 'dart:convert' show utf8;
+import 'dart:io' show Platform;
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -60,15 +61,26 @@ class _StartupData {
   final SendPort sendPort;
   final TransferableTypedData modelBytes;
   final TransferableTypedData labelsBytes;
-  final String performanceModeName;
-  final int? numThreads;
+
+  // Engine selection, flattened to primitives so it crosses the isolate
+  // boundary cleanly.
+  final String engineKind; // EngineKind.name
+  final String performanceModeName; // interpreter
+  final int? numThreads; // interpreter
+  final List<String> acceleratorNames; // compiledModel
+  final String precisionName; // compiledModel
+  final bool runAsync; // compiledModel
 
   _StartupData({
     required this.sendPort,
     required this.modelBytes,
     required this.labelsBytes,
+    required this.engineKind,
     required this.performanceModeName,
     required this.numThreads,
+    required this.acceleratorNames,
+    required this.precisionName,
+    required this.runAsync,
   });
 }
 
@@ -83,7 +95,7 @@ class _DetectorWorker extends IsolateWorkerBase {
   Future<void> initialize({
     required Uint8List modelBytes,
     required Uint8List labelsBytes,
-    required PerformanceConfig performanceConfig,
+    required EngineConfig engine,
   }) async {
     await initWorker(
       (sendPort) => Isolate.spawn(
@@ -92,8 +104,14 @@ class _DetectorWorker extends IsolateWorkerBase {
           sendPort: sendPort,
           modelBytes: TransferableTypedData.fromList([modelBytes]),
           labelsBytes: TransferableTypedData.fromList([labelsBytes]),
-          performanceModeName: performanceConfig.mode.name,
-          numThreads: performanceConfig.numThreads,
+          engineKind: engine.kind.name,
+          performanceModeName: engine.perfMode.name,
+          numThreads: null,
+          acceleratorNames: engine.accelerators
+              .map((a) => a.name)
+              .toList(growable: false),
+          precisionName: engine.precision.name,
+          runAsync: engine.runAsync,
         ),
         debugName: 'flutter_litert.detector',
       ),
@@ -112,16 +130,14 @@ class _Detector {
 
   bool get isReady => _worker?.isReady ?? false;
 
-  Future<void> initialize({
-    PerformanceConfig config = const PerformanceConfig(),
-  }) async {
+  Future<void> initialize({EngineConfig engine = const EngineConfig()}) async {
     final modelData = await rootBundle.load('assets/efficientdet_lite0.tflite');
     final labelsData = await rootBundle.load('assets/labelmap.txt');
     final worker = _DetectorWorker();
     await worker.initialize(
       modelBytes: modelData.buffer.asUint8List(),
       labelsBytes: labelsData.buffer.asUint8List(),
-      performanceConfig: config,
+      engine: engine,
     );
     _worker = worker;
   }
@@ -159,51 +175,113 @@ class _Detector {
 
     Interpreter? interpreter;
     Delegate? delegate;
-    TensorFloat32Views? views;
+    CompiledModel? compiled;
     List<List<double>>? anchors;
     List<String>? labels;
     int inputW = 0, inputH = 0;
-    int boxesIdx = 0, classesIdx = 1;
+    int boxesIdx = 0, classesIdx = 1, numClasses = 0;
+
+    // Engine-specific inference. Returns (boxes, classes, inferenceMs).
+    late Future<(Float32List, Float32List, int)> Function(Float32List tensor)
+    runInference;
 
     try {
       final modelBytes = data.modelBytes.materialize().asUint8List();
       final labelsBytes = data.labelsBytes.materialize().asUint8List();
-
-      final performanceMode = PerformanceMode.values.firstWhere(
-        (m) => m.name == data.performanceModeName,
-      );
-      final perf = PerformanceConfig(
-        mode: performanceMode,
-        numThreads: data.numThreads,
-      );
-      final (options, del) = InterpreterFactory.create(perf);
-      delegate = del;
-
-      interpreter = Interpreter.fromBuffer(modelBytes, options: options);
-      interpreter.allocateTensors();
-
-      final inputShape = interpreter.getInputTensor(0).shape;
-      inputH = inputShape[1];
-      inputW = inputShape[2];
-
-      // Discover which output index is boxes (last dim = 4) vs classes (>4).
-      final outputs = interpreter.getOutputTensors();
-      for (int i = 0; i < outputs.length; i++) {
-        final s = outputs[i].shape;
-        if (s.length == 3) {
-          if (s[2] == 4) boxesIdx = i;
-          if (s[2] > 4) classesIdx = i;
-        }
-      }
-
-      views = TensorFloat32Views.capture(interpreter);
-      anchors = _generateAnchors(inputW);
       labels = utf8
           .decode(labelsBytes, allowMalformed: true)
           .split('\n')
           .map((s) => s.trim())
           .where((s) => s.isNotEmpty)
           .toList(growable: false);
+
+      if (data.engineKind == EngineKind.compiledModel.name) {
+        // LiteRT Next CompiledModel path.
+        final accelerators = data.acceleratorNames
+            .map(Accelerator.values.byName)
+            .toSet();
+        final precision = Precision.values.byName(data.precisionName);
+        final bool useAsync = data.runAsync;
+        final cm = CompiledModel.fromBuffer(
+          modelBytes,
+          accelerators: accelerators,
+          precision: precision,
+        );
+        compiled = cm;
+
+        // CompiledModel exposes byte sizes, not shapes. Derive the geometry:
+        // a square H x W x 3 input, the boxes output (anchors x 4 floats), and
+        // the classes output (anchors x numClasses floats).
+        final int inFloats = cm.inputByteSizes[0] ~/ 4;
+        inputW = inputH = math.sqrt(inFloats / 3).round();
+        anchors = _generateAnchors(inputW);
+        final int n = anchors.length;
+        for (int i = 0; i < cm.outputByteSizes.length; i++) {
+          final int floats = cm.outputByteSizes[i] ~/ 4;
+          if (floats == n * 4) {
+            boxesIdx = i;
+          } else {
+            classesIdx = i;
+            numClasses = n == 0 ? 0 : floats ~/ n;
+          }
+        }
+
+        runInference = (tensor) async {
+          final sw = Stopwatch()..start();
+          final outs = useAsync
+              ? await cm.runAsync([tensor])
+              : cm.run([tensor]);
+          sw.stop();
+          return (outs[boxesIdx], outs[classesIdx], sw.elapsedMilliseconds);
+        };
+      } else {
+        // Classic Interpreter path.
+        final performanceMode = PerformanceMode.values.byName(
+          data.performanceModeName,
+        );
+        final perf = PerformanceConfig(
+          mode: performanceMode,
+          numThreads: data.numThreads,
+        );
+        final (options, del) = InterpreterFactory.create(perf);
+        delegate = del;
+
+        final interp = Interpreter.fromBuffer(modelBytes, options: options);
+        interp.allocateTensors();
+        interpreter = interp;
+
+        final inputShape = interp.getInputTensor(0).shape;
+        inputH = inputShape[1];
+        inputW = inputShape[2];
+
+        // Discover which output index is boxes (last dim = 4) vs classes (>4).
+        final outputs = interp.getOutputTensors();
+        for (int i = 0; i < outputs.length; i++) {
+          final s = outputs[i].shape;
+          if (s.length == 3) {
+            if (s[2] == 4) boxesIdx = i;
+            if (s[2] > 4) {
+              classesIdx = i;
+              numClasses = s[2];
+            }
+          }
+        }
+
+        final v = TensorFloat32Views.capture(interp);
+        anchors = _generateAnchors(inputW);
+
+        runInference = (tensor) async {
+          final sw = Stopwatch()..start();
+          v.inputs[0].setAll(0, tensor);
+          interp.invoke();
+          sw.stop();
+          return (
+            v.outputs[boxesIdx],
+            v.outputs[classesIdx],
+            sw.elapsedMilliseconds,
+          );
+        };
+      }
 
       mainSendPort.send(workerReceivePort.sendPort);
     } catch (e, st) {
@@ -257,31 +335,22 @@ class _Detector {
               );
               padded.dispose();
 
-              // Run inference.
-              final sw = Stopwatch()..start();
-              views!.inputs[0].setAll(0, tensor);
-              interpreter!.invoke();
-              sw.stop();
-
-              final Float32List boxBuf = views.outputs[boxesIdx];
-              final Float32List clsBuf = views.outputs[classesIdx];
+              // Run inference on the selected engine.
+              final (boxBuf, clsBuf, inferenceMs) = await runInference(tensor);
 
               // Decode anchors → raw detections in letterboxed model space.
               final raw = _decodeAnchorsAndScore(
                 boxBuf: boxBuf,
                 clsBuf: clsBuf,
                 anchors: anchors!,
-                numClasses: interpreter.getOutputTensor(classesIdx).shape[2],
+                numClasses: numClasses,
                 threshold: threshold,
               );
 
               if (raw.isEmpty) {
                 mainSendPort.send({
                   'id': id,
-                  'result': {
-                    'detections': <Map>[],
-                    'inferenceMs': sw.elapsedMilliseconds,
-                  },
+                  'result': {'detections': <Map>[], 'inferenceMs': inferenceMs},
                 });
                 return;
               }
@@ -329,10 +398,7 @@ class _Detector {
 
               mainSendPort.send({
                 'id': id,
-                'result': {
-                  'detections': result,
-                  'inferenceMs': sw.elapsedMilliseconds,
-                },
+                'result': {'detections': result, 'inferenceMs': inferenceMs},
               });
             } finally {
               src.dispose();
@@ -341,6 +407,7 @@ class _Detector {
           case 'dispose':
             interpreter?.close();
             delegate?.delete();
+            compiled?.close();
             workerReceivePort.close();
         }
       } catch (e, st) {
@@ -459,6 +526,99 @@ class _RawDetection {
 // UI
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Engine configuration: Interpreter vs CompiledModel, platform-aware.
+// Top-level so both the UI and the isolate can read the availability helpers.
+
+enum EngineKind { interpreter, compiledModel }
+
+/// Selected inference engine plus its options.
+class EngineConfig {
+  final EngineKind kind;
+
+  // Interpreter path.
+  final PerformanceMode perfMode;
+
+  // CompiledModel path.
+  final Set<Accelerator> accelerators;
+  final Precision precision;
+  final bool runAsync;
+
+  const EngineConfig({
+    this.kind = EngineKind.interpreter,
+    this.perfMode = PerformanceMode.auto,
+    this.accelerators = const {Accelerator.gpu, Accelerator.cpu},
+    this.precision = Precision.fp16,
+    this.runAsync = false,
+  });
+
+  EngineConfig copyWith({
+    EngineKind? kind,
+    PerformanceMode? perfMode,
+    Set<Accelerator>? accelerators,
+    Precision? precision,
+    bool? runAsync,
+  }) => EngineConfig(
+    kind: kind ?? this.kind,
+    perfMode: perfMode ?? this.perfMode,
+    accelerators: accelerators ?? this.accelerators,
+    precision: precision ?? this.precision,
+    runAsync: runAsync ?? this.runAsync,
+  );
+
+  String get label {
+    if (kind == EngineKind.interpreter) {
+      return 'Interpreter · ${perfModeLabel(perfMode)}';
+    }
+    final bool gpu = accelerators.contains(Accelerator.gpu);
+    final bool cpu = accelerators.contains(Accelerator.cpu);
+    final String acc = gpu ? (cpu ? 'GPU+CPU' : 'GPU') : 'CPU';
+    final parts = <String>['CompiledModel', acc];
+    if (gpu) parts.add(precision == Precision.fp16 ? 'fp16' : 'fp32');
+    if (runAsync) parts.add('async');
+    return parts.join(' · ');
+  }
+}
+
+String perfModeLabel(PerformanceMode m) => switch (m) {
+  PerformanceMode.disabled => 'CPU (no delegate)',
+  PerformanceMode.xnnpack => 'XNNPACK',
+  PerformanceMode.gpu => Platform.isAndroid ? 'GPU (GL/CL)' : 'GPU (Metal)',
+  PerformanceMode.coreml => 'CoreML',
+  PerformanceMode.auto => 'Auto',
+};
+
+/// Whether an Interpreter delegate mode is usable on the current platform.
+bool perfModeAvailable(PerformanceMode m) => switch (m) {
+  PerformanceMode.disabled ||
+  PerformanceMode.xnnpack ||
+  PerformanceMode.auto => true,
+  PerformanceMode.gpu =>
+    Platform.isIOS || Platform.isMacOS || Platform.isAndroid,
+  PerformanceMode.coreml => Platform.isIOS || Platform.isMacOS,
+};
+
+/// Why a mode is unavailable here, or null if it is available.
+String? perfModeReason(PerformanceMode m) {
+  if (perfModeAvailable(m)) return null;
+  return switch (m) {
+    PerformanceMode.gpu => 'GPU delegate: Apple and Android only',
+    PerformanceMode.coreml => 'CoreML: iOS and macOS only',
+    _ => 'Unavailable on this platform',
+  };
+}
+
+/// CompiledModel GPU acceleration: Metal on Apple, WebGPU on Linux/Windows.
+/// The Android GL/CL accelerator is not bundled yet, so Android is CPU-only.
+bool cmGpuAvailable() =>
+    Platform.isMacOS ||
+    Platform.isIOS ||
+    Platform.isLinux ||
+    Platform.isWindows;
+
+String cmGpuReason() => Platform.isAndroid
+    ? 'CompiledModel GPU not bundled on Android yet'
+    : 'GPU not available on this platform';
+
 const _kSamples = <(String, String)>[
   ('Street', 'assets/samples/street.jpg'),
   ('Cat', 'assets/samples/cat.jpg'),
@@ -483,6 +643,7 @@ class _DetectionDemoState extends State<_DetectionDemo> {
   String? _error;
   int _sampleIdx = 0;
   double _threshold = 0.6;
+  EngineConfig _engine = const EngineConfig();
 
   @override
   void initState() {
@@ -493,7 +654,7 @@ class _DetectionDemoState extends State<_DetectionDemo> {
   Future<void> _initDetector() async {
     setState(() => _busy = true);
     try {
-      await _detector.initialize();
+      await _detector.initialize(engine: _engine);
       await _runOnSample(_sampleIdx);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -528,6 +689,31 @@ class _DetectionDemoState extends State<_DetectionDemo> {
     }
   }
 
+  Future<void> _applyEngine(EngineConfig engine) async {
+    setState(() {
+      _engine = engine;
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await _detector.dispose();
+      await _detector.initialize(engine: engine);
+      await _runOnSample(_sampleIdx);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _openSettings() async {
+    final result = await showDialog<EngineConfig>(
+      context: context,
+      builder: (_) => _EngineSettingsDialog(initial: _engine),
+    );
+    if (result != null) await _applyEngine(result);
+  }
+
   @override
   void dispose() {
     _detector.dispose();
@@ -540,19 +726,34 @@ class _DetectionDemoState extends State<_DetectionDemo> {
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
-        title: const Text(
-          'flutter_litert · Object Detection',
-          style: TextStyle(color: Colors.white),
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'flutter_litert · Object Detection',
+              style: TextStyle(color: Colors.white, fontSize: 18),
+            ),
+            Text(
+              _engine.label,
+              style: const TextStyle(color: Colors.white54, fontSize: 11),
+            ),
+          ],
         ),
         actions: [
           if (_inferenceMs > 0)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
               child: Text(
                 '${_inferenceMs}ms',
                 style: const TextStyle(color: Colors.white70),
               ),
             ),
+          IconButton(
+            icon: const Icon(Icons.settings, color: Colors.white),
+            tooltip: 'Engine settings',
+            onPressed: _busy ? null : _openSettings,
+          ),
         ],
       ),
       body: Column(
@@ -659,6 +860,198 @@ class _DetectionDemoState extends State<_DetectionDemo> {
         ],
       ),
     );
+  }
+}
+
+// Engine settings dialog: platform-aware picker for the interpreter delegates
+// and CompiledModel accelerators that actually work on this target.
+
+class _EngineSettingsDialog extends StatefulWidget {
+  final EngineConfig initial;
+  const _EngineSettingsDialog({required this.initial});
+
+  @override
+  State<_EngineSettingsDialog> createState() => _EngineSettingsDialogState();
+}
+
+class _EngineSettingsDialogState extends State<_EngineSettingsDialog> {
+  late EngineConfig _cfg = widget.initial;
+
+  static String _accelKey(Set<Accelerator> s) {
+    final sorted = s.toList()..sort((a, b) => a.index.compareTo(b.index));
+    return sorted.map((e) => e.name).join('+');
+  }
+
+  Widget _heading(String text) => Padding(
+    padding: const EdgeInsets.only(top: 4, bottom: 4, left: 8),
+    child: Text(
+      text,
+      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final bool gpuOn = _cfg.accelerators.contains(Accelerator.gpu);
+    return AlertDialog(
+      title: const Text('Inference engine'),
+      content: SizedBox(
+        width: 380,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SegmentedButton<EngineKind>(
+                segments: const [
+                  ButtonSegment(
+                    value: EngineKind.interpreter,
+                    label: Text('Interpreter'),
+                  ),
+                  ButtonSegment(
+                    value: EngineKind.compiledModel,
+                    label: Text('CompiledModel'),
+                  ),
+                ],
+                selected: {_cfg.kind},
+                onSelectionChanged: (sel) => setState(() {
+                  final kind = sel.first;
+                  var next = _cfg.copyWith(kind: kind);
+                  // CompiledModel GPU is unavailable on some platforms; fall
+                  // back to CPU so the selection stays valid.
+                  if (kind == EngineKind.compiledModel &&
+                      !cmGpuAvailable() &&
+                      next.accelerators.contains(Accelerator.gpu)) {
+                    next = next.copyWith(accelerators: const {Accelerator.cpu});
+                  }
+                  _cfg = next;
+                }),
+              ),
+              const Divider(height: 24),
+              if (_cfg.kind == EngineKind.interpreter)
+                ..._interpreterOptions()
+              else
+                ..._compiledModelOptions(gpuOn),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _cfg),
+          child: const Text('Apply'),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _interpreterOptions() => [
+    _heading('Delegate'),
+    RadioGroup<PerformanceMode>(
+      groupValue: _cfg.perfMode,
+      onChanged: (v) {
+        if (v != null) setState(() => _cfg = _cfg.copyWith(perfMode: v));
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final m in PerformanceMode.values)
+            RadioListTile<PerformanceMode>(
+              dense: true,
+              value: m,
+              enabled: perfModeAvailable(m),
+              title: Text(perfModeLabel(m)),
+              subtitle: perfModeReason(m) == null
+                  ? null
+                  : Text(
+                      perfModeReason(m)!,
+                      style: const TextStyle(fontSize: 11),
+                    ),
+            ),
+        ],
+      ),
+    ),
+  ];
+
+  List<Widget> _compiledModelOptions(bool gpuOn) {
+    final bool gpuOk = cmGpuAvailable();
+    final String? gpuReason = gpuOk ? null : cmGpuReason();
+    final String curKey = _accelKey(_cfg.accelerators);
+
+    Widget accel(String label, Set<Accelerator> value, {String? reason}) =>
+        RadioListTile<String>(
+          dense: true,
+          value: _accelKey(value),
+          enabled: reason == null,
+          title: Text(label),
+          subtitle: reason == null
+              ? null
+              : Text(reason, style: const TextStyle(fontSize: 11)),
+        );
+
+    return [
+      _heading('Accelerator'),
+      RadioGroup<String>(
+        groupValue: curKey,
+        onChanged: (key) {
+          const map = {
+            'cpu': {Accelerator.cpu},
+            'gpu': {Accelerator.gpu},
+            'cpu+gpu': {Accelerator.cpu, Accelerator.gpu},
+          };
+          final accels = map[key];
+          if (accels != null) {
+            setState(() => _cfg = _cfg.copyWith(accelerators: accels));
+          }
+        },
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            accel('CPU', const {Accelerator.cpu}),
+            accel('GPU + CPU fallback', const {
+              Accelerator.gpu,
+              Accelerator.cpu,
+            }, reason: gpuReason),
+            accel('GPU only', const {Accelerator.gpu}, reason: gpuReason),
+          ],
+        ),
+      ),
+      const Divider(height: 16),
+      _heading('Precision (GPU only)'),
+      RadioGroup<Precision>(
+        groupValue: _cfg.precision,
+        onChanged: (v) {
+          if (v != null) setState(() => _cfg = _cfg.copyWith(precision: v));
+        },
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            RadioListTile<Precision>(
+              dense: true,
+              value: Precision.fp16,
+              enabled: gpuOn,
+              title: const Text('fp16 (faster)'),
+            ),
+            RadioListTile<Precision>(
+              dense: true,
+              value: Precision.fp32,
+              enabled: gpuOn,
+              title: const Text('fp32 (accurate)'),
+            ),
+          ],
+        ),
+      ),
+      SwitchListTile(
+        dense: true,
+        value: _cfg.runAsync,
+        title: const Text('Async dispatch (runAsync)'),
+        onChanged: (v) => setState(() => _cfg = _cfg.copyWith(runAsync: v)),
+      ),
+    ];
   }
 }
 

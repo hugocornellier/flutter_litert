@@ -1,3 +1,10 @@
+## 3.1.2
+
+Makes the package web- and WASM-compatible. `dart:isolate` was reachable from
+the public API (via `decode_failure.dart` and `isolate_rpc_server.dart`) but is
+unavailable on web/WASM; the isolate-dependent code now sits behind conditional
+imports so none of it is reachable on the web build. No API changes.
+
 ## 3.1.1
 
 Fixes the iOS CocoaPods build for the LiteRT Next runtime. The prebuilt

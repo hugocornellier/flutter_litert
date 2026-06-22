@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import '../isolate_rpc_server.dart' show IsolateRpcExactError;
+import '../isolate_rpc_error.dart' show IsolateRpcExactError;
 
 /// Wire-prefix marking an isolate error as an undecodable-image failure, so the
 /// main side can map it to a [FormatException]. Paired with [throwDecodeFailure]

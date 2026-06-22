@@ -172,7 +172,9 @@ jobs:
 
   build-ios:
     runs-on: macos-latest
-    timeout-minutes: 30
+    # Per-attempt timeout + one retry live in the test step below; this outer
+    # cap only bounds the retry total (was 30 when a single hang had no retry).
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -191,9 +193,50 @@ jobs:
           iphones = [d for v in devices.values() for d in v if 'iPhone' in d['name']]
           print(iphones[-1]['udid'])
           ")
-          xcrun simctl boot "$UDID"
+          xcrun simctl boot "$UDID" || true
+          # Block until the simulator is fully booted before any app launch.
+          # Launching the test app on a not-yet-ready simulator was the cause of
+          # the connect-forever hangs (build succeeds, driver never attaches).
+          xcrun simctl bootstatus "$UDID" -b
+          open -a Simulator --args -CurrentDeviceUDID "$UDID" || true
           echo "SIMULATOR_UDID=$UDID" >> "$GITHUB_ENV"
 
       - name: Run CompiledModel integration tests (iOS simulator)
         working-directory: example
-        run: flutter test integration_test/compiled_model_test.dart -d "$SIMULATOR_UDID" --timeout 600s
+        run: |
+          set +e
+          # Per-attempt hard cap so a simulator-launch hang (app builds but the
+          # test driver never connects) fails this attempt fast and retries,
+          # instead of silently consuming the whole job budget.
+          attempt_timeout=1200
+          max=2
+          rc=1
+          for attempt in $(seq 1 "$max"); do
+            echo "::group::iOS integration tests (attempt $attempt/$max)"
+            flutter test integration_test/compiled_model_test.dart \
+              -d "$SIMULATOR_UDID" --timeout 600s &
+            pid=$!
+            ( sleep "$attempt_timeout"
+              echo "::warning::iOS attempt exceeded ${attempt_timeout}s; killing"
+              kill -TERM "$pid" 2>/dev/null
+              sleep 15
+              kill -KILL "$pid" 2>/dev/null ) &
+            watchdog=$!
+            wait "$pid"
+            rc=$?
+            kill -TERM "$watchdog" 2>/dev/null
+            wait "$watchdog" 2>/dev/null
+            echo "::endgroup::"
+            if [ "$rc" -eq 0 ]; then
+              echo "iOS integration tests passed on attempt $attempt"
+              break
+            fi
+            echo "::warning::iOS attempt $attempt failed/timed out (rc=$rc)"
+            if [ "$attempt" -lt "$max" ]; then
+              echo "Recycling simulator before retry"
+              xcrun simctl shutdown "$SIMULATOR_UDID" 2>/dev/null || true
+              xcrun simctl boot "$SIMULATOR_UDID" 2>/dev/null || true
+              xcrun simctl bootstatus "$SIMULATOR_UDID" -b 2>/dev/null || true
+            fi
+          done
+          exit $rc
