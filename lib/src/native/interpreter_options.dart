@@ -23,13 +23,40 @@ import '../bindings/tensorflow_lite_bindings_generated.dart';
 import 'delegate.dart';
 import '../custom_ops/transpose_conv_bias.dart';
 
+final class _CustomOpConfiguration {
+  const _CustomOpConfiguration({
+    required this.name,
+    required this.registration,
+    required this.minVersion,
+    required this.maxVersion,
+  });
+
+  final String name;
+  final Pointer<TfLiteRegistration> registration;
+  final int minVersion;
+  final int maxVersion;
+}
+
 /// LiteRT interpreter options.
 class InterpreterOptions {
   final Pointer<TfLiteInterpreterOptions> _options;
   final List<Pointer<Char>> _customOpNames = [];
+  final List<_CustomOpConfiguration> _customOps = [];
   bool _deleted = false;
+  bool _hasDelegate = false;
+  bool _hasMediaPipeCustomOps = false;
+  int? _threads;
 
   Pointer<TfLiteInterpreterOptions> get base => _options;
+
+  /// Whether a delegate has been added via [addDelegate].
+  ///
+  /// Lets interpreter creation fall back to CPU if the delegate cannot be
+  /// applied to a model on the current runtime.
+  bool get hasDelegate => _hasDelegate;
+
+  /// Configured CPU thread count, or null when the runtime default is used.
+  int? get threads => _threads;
 
   InterpreterOptions._(this._options);
 
@@ -49,12 +76,16 @@ class InterpreterOptions {
   }
 
   /// Sets the number of CPU threads to use.
-  set threads(int threads) =>
-      tfliteBinding.TfLiteInterpreterOptionsSetNumThreads(_options, threads);
+  set threads(int threads) {
+    checkState(!_deleted, message: 'InterpreterOptions already deleted.');
+    _threads = threads;
+    tfliteBinding.TfLiteInterpreterOptionsSetNumThreads(_options, threads);
+  }
 
   /// Adds delegate to Interpreter Options
   void addDelegate(Delegate delegate) {
     tfliteBinding.TfLiteInterpreterOptionsAddDelegate(_options, delegate.base);
+    _hasDelegate = true;
   }
 
   /// Registers a custom op with these interpreter options.
@@ -99,6 +130,14 @@ class InterpreterOptions {
 
     final opName = name.toNativeUtf8().cast<Char>();
     _customOpNames.add(opName);
+    _customOps.add(
+      _CustomOpConfiguration(
+        name: name,
+        registration: registration.cast<TfLiteRegistration>(),
+        minVersion: minVersion,
+        maxVersion: maxVersion,
+      ),
+    );
     tfliteBinding.TfLiteInterpreterOptionsAddCustomOp(
       _options,
       opName,
@@ -120,6 +159,30 @@ class InterpreterOptions {
   /// final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
   /// ```
   void addMediaPipeCustomOps() {
+    checkState(!_deleted, message: 'InterpreterOptions already deleted.');
     TransposeConvBiasOp.registerWithOptions(_options);
+    _hasMediaPipeCustomOps = true;
+  }
+
+  /// Creates equivalent options without hardware delegates.
+  ///
+  /// Used when interpreter creation cannot apply a configured delegate. CPU
+  /// fallback must retain thread tuning and custom-op registrations rather
+  /// than retrying with an empty options object.
+  InterpreterOptions copyWithoutDelegates() {
+    checkState(!_deleted, message: 'InterpreterOptions already deleted.');
+    final copy = InterpreterOptions();
+    final threads = _threads;
+    if (threads != null) copy.threads = threads;
+    if (_hasMediaPipeCustomOps) copy.addMediaPipeCustomOps();
+    for (final customOp in _customOps) {
+      copy.addCustomOp(
+        name: customOp.name,
+        registration: customOp.registration,
+        minVersion: customOp.minVersion,
+        maxVersion: customOp.maxVersion,
+      );
+    }
+    return copy;
   }
 }

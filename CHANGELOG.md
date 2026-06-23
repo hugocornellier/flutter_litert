@@ -1,3 +1,20 @@
+## 3.1.4
+
+* Preserve thread tuning and custom-op registrations when delegate application
+  fails and interpreter creation retries on CPU.
+* Expose whether an interpreter actually has an active delegate, so isolate
+  selection follows the effective backend after fallback.
+
+## 3.1.3
+
+Interpreter creation now falls back to CPU when a configured delegate cannot
+be applied to a model/runtime, instead of failing. This fixes classic
+`Interpreter` creation for models that cannot use the default iOS Metal
+delegate, including on the iOS simulator: it now warns and retries on CPU. The
+fallback covers every creation path (`fromAsset`, `fromBuffer`, `fromBytes`, and
+the isolate interpreter), and the iOS integration job now also exercises the
+classic `Interpreter` path so this is caught in CI.
+
 ## 3.1.2
 
 Makes the package web- and WASM-compatible. `dart:isolate` was reachable from

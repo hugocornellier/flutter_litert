@@ -155,8 +155,8 @@ class _Detector {
     final detections = (result['detections'] as List)
         .map((m) => _Detection.fromMap(m as Map))
         .toList();
-    final inferenceMs = result['inferenceMs'] as int;
-    return (detections, inferenceMs);
+    final inferenceUs = result['inferenceUs'] as int;
+    return (detections, inferenceUs);
   }
 
   Future<void> dispose() async {
@@ -181,7 +181,7 @@ class _Detector {
     int inputW = 0, inputH = 0;
     int boxesIdx = 0, classesIdx = 1, numClasses = 0;
 
-    // Engine-specific inference. Returns (boxes, classes, inferenceMs).
+    // Engine-specific inference. Returns (boxes, classes, inferenceUs).
     late Future<(Float32List, Float32List, int)> Function(Float32List tensor)
     runInference;
 
@@ -232,7 +232,7 @@ class _Detector {
               ? await cm.runAsync([tensor])
               : cm.run([tensor]);
           sw.stop();
-          return (outs[boxesIdx], outs[classesIdx], sw.elapsedMilliseconds);
+          return (outs[boxesIdx], outs[classesIdx], sw.elapsedMicroseconds);
         };
       } else {
         // Classic Interpreter path.
@@ -278,7 +278,7 @@ class _Detector {
           return (
             v.outputs[boxesIdx],
             v.outputs[classesIdx],
-            sw.elapsedMilliseconds,
+            sw.elapsedMicroseconds,
           );
         };
       }
@@ -336,7 +336,7 @@ class _Detector {
               padded.dispose();
 
               // Run inference on the selected engine.
-              final (boxBuf, clsBuf, inferenceMs) = await runInference(tensor);
+              final (boxBuf, clsBuf, inferenceUs) = await runInference(tensor);
 
               // Decode anchors → raw detections in letterboxed model space.
               final raw = _decodeAnchorsAndScore(
@@ -350,7 +350,7 @@ class _Detector {
               if (raw.isEmpty) {
                 mainSendPort.send({
                   'id': id,
-                  'result': {'detections': <Map>[], 'inferenceMs': inferenceMs},
+                  'result': {'detections': <Map>[], 'inferenceUs': inferenceUs},
                 });
                 return;
               }
@@ -398,7 +398,7 @@ class _Detector {
 
               mainSendPort.send({
                 'id': id,
-                'result': {'detections': result, 'inferenceMs': inferenceMs},
+                'result': {'detections': result, 'inferenceUs': inferenceUs},
               });
             } finally {
               src.dispose();
@@ -638,7 +638,7 @@ class _DetectionDemoState extends State<_DetectionDemo> {
 
   ui.Image? _decodedImage;
   List<_Detection> _detections = const [];
-  int _inferenceMs = 0;
+  int _inferenceUs = 0;
   bool _busy = false;
   String? _error;
   int _sampleIdx = 0;
@@ -675,12 +675,12 @@ class _DetectionDemoState extends State<_DetectionDemo> {
       final bytes = data.buffer.asUint8List();
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
-      final (dets, ms) = await _detector.detect(bytes, threshold: _threshold);
+      final (dets, us) = await _detector.detect(bytes, threshold: _threshold);
       if (!mounted) return;
       setState(() {
         _decodedImage = frame.image;
         _detections = dets;
-        _inferenceMs = ms;
+        _inferenceUs = us;
       });
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -741,11 +741,11 @@ class _DetectionDemoState extends State<_DetectionDemo> {
           ],
         ),
         actions: [
-          if (_inferenceMs > 0)
+          if (_inferenceUs > 0)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
               child: Text(
-                '${_inferenceMs}ms',
+                '${_inferenceUs}us',
                 style: const TextStyle(color: Colors.white70),
               ),
             ),
@@ -843,6 +843,7 @@ class _DetectionDemoState extends State<_DetectionDemo> {
                 itemCount: _detections.length,
                 itemBuilder: (context, i) {
                   final d = _detections[i];
+                  final color = _detectionColor(i);
                   return Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: Chip(
@@ -850,8 +851,8 @@ class _DetectionDemoState extends State<_DetectionDemo> {
                         '${d.label} ${(d.score * 100).toStringAsFixed(0)}%',
                         style: const TextStyle(fontSize: 12),
                       ),
-                      backgroundColor: Colors.indigo.shade700,
-                      labelStyle: const TextStyle(color: Colors.white),
+                      backgroundColor: color,
+                      labelStyle: TextStyle(color: _onColor(color)),
                     ),
                   );
                 },
@@ -1055,6 +1056,30 @@ class _EngineSettingsDialogState extends State<_EngineSettingsDialog> {
   }
 }
 
+// Per-detection overlay colors, cycled by index so adjacent boxes (and their
+// chips) stay visually distinct. Wraps around when detections outnumber the
+// palette.
+const List<Color> _detectionPalette = [
+  Color(0xFF00E5FF), // cyan
+  Color(0xFFFF5252), // red
+  Color(0xFF69F0AE), // green
+  Color(0xFFFFD740), // amber
+  Color(0xFFFF4081), // pink
+  Color(0xFF7C4DFF), // deep purple
+  Color(0xFF40C4FF), // light blue
+  Color(0xFFB2FF59), // lime
+  Color(0xFFFF6E40), // deep orange
+  Color(0xFFEEFF41), // yellow
+  Color(0xFF1DE9B6), // teal
+  Color(0xFFE040FB), // purple
+];
+
+Color _detectionColor(int i) => _detectionPalette[i % _detectionPalette.length];
+
+// Black or white text, whichever reads better on [bg].
+Color _onColor(Color bg) =>
+    bg.computeLuminance() > 0.5 ? Colors.black : Colors.white;
+
 class _OverlayPainter extends CustomPainter {
   final ui.Image image;
   final List<_Detection> detections;
@@ -1088,20 +1113,16 @@ class _OverlayPainter extends CustomPainter {
 
     final boxPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0
-      ..color = Colors.cyanAccent;
+      ..strokeWidth = 2.0;
 
-    final labelBgPaint = Paint()
-      ..style = PaintingStyle.fill
-      ..color = Colors.cyanAccent.withAlpha(200);
+    final labelBgPaint = Paint()..style = PaintingStyle.fill;
 
-    const textStyle = TextStyle(
-      color: Colors.black,
-      fontSize: 12,
-      fontWeight: FontWeight.bold,
-    );
+    for (var i = 0; i < detections.length; i++) {
+      final d = detections[i];
+      final Color color = _detectionColor(i);
+      boxPaint.color = color;
+      labelBgPaint.color = color.withAlpha(200);
 
-    for (final d in detections) {
       // Map normalized [0,1] coords to canvas pixels.
       final double x1 = offsetX + d.box[0] * drawW;
       final double y1 = offsetY + d.box[1] * drawH;
@@ -1113,7 +1134,14 @@ class _OverlayPainter extends CustomPainter {
       final String labelText =
           '${d.label} ${(d.score * 100).toStringAsFixed(0)}%';
       final tp = TextPainter(
-        text: TextSpan(text: labelText, style: textStyle),
+        text: TextSpan(
+          text: labelText,
+          style: TextStyle(
+            color: _onColor(color),
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         textDirection: ui.TextDirection.ltr,
       )..layout();
 

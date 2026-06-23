@@ -33,6 +33,7 @@ import 'tensor.dart';
 /// LiteRT interpreter for running inference on a model.
 class Interpreter {
   final Pointer<TfLiteInterpreter> _interpreter;
+  final bool _hasActiveDelegate;
   Pointer<Uint8>? _modelBuffer;
   bool _deleted = false;
   bool _allocated = false;
@@ -54,6 +55,13 @@ class Interpreter {
   int get lastInferenceDurationMicroseconds =>
       _lastInferenceDurationMicroseconds;
 
+  /// Whether interpreter creation successfully applied a hardware delegate.
+  ///
+  /// This can be false even when the supplied [InterpreterOptions] contained a
+  /// delegate, because delegate application is best-effort and creation may
+  /// retry with equivalent CPU-only options.
+  bool get hasActiveDelegate => _hasActiveDelegate;
+
   /// Duration of the last native inference call in microseconds.
   ///
   /// Deprecated in favor of [lastInferenceDurationMicroseconds], which uses a
@@ -65,7 +73,11 @@ class Interpreter {
   int get lastNativeInferenceDurationMicroSeconds =>
       lastInferenceDurationMicroseconds;
 
-  Interpreter._(this._interpreter, {bool skipAllocate = false}) {
+  Interpreter._(
+    this._interpreter, {
+    required bool hasActiveDelegate,
+    bool skipAllocate = false,
+  }) : _hasActiveDelegate = hasActiveDelegate {
     if (!skipAllocate) {
       allocateTensors();
     }
@@ -75,10 +87,30 @@ class Interpreter {
   ///
   /// Throws [ArgumentError] is unsuccessful.
   factory Interpreter._create(Model model, {InterpreterOptions? options}) {
-    final interpreter = tfliteBinding.TfLiteInterpreterCreate(
+    var interpreter = tfliteBinding.TfLiteInterpreterCreate(
       model.base,
       options?.base ?? cast<TfLiteInterpreterOptions>(nullptr),
     );
+    var hasActiveDelegate =
+        isNotNull(interpreter) && (options?.hasDelegate ?? false);
+    if (!isNotNull(interpreter) && (options?.hasDelegate ?? false)) {
+      // The configured delegate could not be applied to this model/runtime.
+      // Preserve all non-delegate options when retrying on CPU.
+      stderr.writeln(
+        'flutter_litert: interpreter creation failed with the configured '
+        'delegate; falling back to CPU.',
+      );
+      final fallbackOptions = options!.copyWithoutDelegates();
+      try {
+        interpreter = tfliteBinding.TfLiteInterpreterCreate(
+          model.base,
+          fallbackOptions.base,
+        );
+      } finally {
+        fallbackOptions.delete();
+      }
+      hasActiveDelegate = false;
+    }
     checkArgument(
       isNotNull(interpreter),
       message: 'Unable to create interpreter.',
@@ -86,7 +118,8 @@ class Interpreter {
     // Transfer buffer ownership: the interpreter references model weight data
     // directly via zero-copy, so the buffer must stay alive until the
     // interpreter is destroyed.
-    return Interpreter._(interpreter).._modelBuffer = model.detachBuffer();
+    return Interpreter._(interpreter, hasActiveDelegate: hasActiveDelegate)
+      .._modelBuffer = model.detachBuffer();
   }
 
   /// Creates [Interpreter] from a model file
@@ -189,9 +222,14 @@ class Interpreter {
     int address, {
     bool allocated = true,
     bool deleted = false,
+    bool hasActiveDelegate = false,
   }) {
     final interpreter = Pointer<TfLiteInterpreter>.fromAddress(address);
-    return Interpreter._(interpreter, skipAllocate: allocated)
+    return Interpreter._(
+        interpreter,
+        hasActiveDelegate: hasActiveDelegate,
+        skipAllocate: allocated,
+      )
       .._deleted = deleted
       .._allocated = allocated;
   }

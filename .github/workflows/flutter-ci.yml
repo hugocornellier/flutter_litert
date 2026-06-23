@@ -171,16 +171,22 @@ jobs:
           script: flutter test integration_test/compiled_model_test.dart -d emulator-5554 --timeout 600s
 
   build-ios:
-    runs-on: macos-latest
-    # Per-attempt timeout + one retry live in the test step below; this outer
-    # cap only bounds the retry total (was 30 when a single hang had no retry).
-    timeout-minutes: 50
+    runs-on: macos-15
+    # Per-test, per-attempt timeouts and retries live in the test step below.
+    # This outer cap only bounds the complete two-test sequence.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
+
+      - name: Select Xcode 16.4
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          xcodebuild -version
+          test "$(xcodebuild -version | head -n 1)" = "Xcode 16.4"
 
       - name: Install dependencies
         run: flutter pub get
@@ -201,42 +207,57 @@ jobs:
           open -a Simulator --args -CurrentDeviceUDID "$UDID" || true
           echo "SIMULATOR_UDID=$UDID" >> "$GITHUB_ENV"
 
-      - name: Run CompiledModel integration tests (iOS simulator)
+      - name: Run integration tests on iOS simulator
         working-directory: example
         run: |
           set +e
-          # Per-attempt hard cap so a simulator-launch hang (app builds but the
-          # test driver never connects) fails this attempt fast and retries,
-          # instead of silently consuming the whole job budget.
-          attempt_timeout=1200
+          attempt_timeout=1500
           max=2
-          rc=1
-          for attempt in $(seq 1 "$max"); do
-            echo "::group::iOS integration tests (attempt $attempt/$max)"
-            flutter test integration_test/compiled_model_test.dart \
-              -d "$SIMULATOR_UDID" --timeout 600s &
-            pid=$!
-            ( sleep "$attempt_timeout"
-              echo "::warning::iOS attempt exceeded ${attempt_timeout}s; killing"
-              kill -TERM "$pid" 2>/dev/null
-              sleep 15
-              kill -KILL "$pid" 2>/dev/null ) &
-            watchdog=$!
-            wait "$pid"
-            rc=$?
-            kill -TERM "$watchdog" 2>/dev/null
-            wait "$watchdog" 2>/dev/null
-            echo "::endgroup::"
-            if [ "$rc" -eq 0 ]; then
-              echo "iOS integration tests passed on attempt $attempt"
-              break
-            fi
-            echo "::warning::iOS attempt $attempt failed/timed out (rc=$rc)"
-            if [ "$attempt" -lt "$max" ]; then
-              echo "Recycling simulator before retry"
-              xcrun simctl shutdown "$SIMULATOR_UDID" 2>/dev/null || true
-              xcrun simctl boot "$SIMULATOR_UDID" 2>/dev/null || true
-              xcrun simctl bootstatus "$SIMULATOR_UDID" -b 2>/dev/null || true
-            fi
-          done
-          exit $rc
+
+          run_ios_test() {
+            test_file="$1"
+            rc=1
+            for attempt in $(seq 1 "$max"); do
+              timeout_marker="$RUNNER_TEMP/ios-timeout-$(basename "$test_file")-$attempt"
+              rm -f "$timeout_marker"
+              echo "::group::$test_file (attempt $attempt/$max)"
+              flutter test "$test_file" \
+                -d "$SIMULATOR_UDID" --timeout 600s &
+              pid=$!
+              ( sleep "$attempt_timeout"
+                if kill -0 "$pid" 2>/dev/null; then
+                  touch "$timeout_marker"
+                  echo "::warning::$test_file exceeded ${attempt_timeout}s; killing"
+                  kill -TERM "$pid" 2>/dev/null
+                  sleep 15
+                  kill -KILL "$pid" 2>/dev/null
+                fi ) &
+              watchdog=$!
+              wait "$pid"
+              rc=$?
+              kill -TERM "$watchdog" 2>/dev/null
+              wait "$watchdog" 2>/dev/null
+              if [ -f "$timeout_marker" ]; then
+                # Flutter may exit zero after handling SIGTERM. Preserve the
+                # timeout as a failure so a killed test can never go green.
+                rc=124
+              fi
+              rm -f "$timeout_marker"
+              echo "::endgroup::"
+              if [ "$rc" -eq 0 ]; then
+                echo "$test_file passed on attempt $attempt"
+                return 0
+              fi
+              echo "::warning::$test_file attempt $attempt failed/timed out (rc=$rc)"
+              if [ "$attempt" -lt "$max" ]; then
+                echo "Recycling simulator before retry"
+                xcrun simctl shutdown "$SIMULATOR_UDID" 2>/dev/null || true
+                xcrun simctl boot "$SIMULATOR_UDID" 2>/dev/null || true
+                xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+              fi
+            done
+            return "$rc"
+          }
+
+          run_ios_test integration_test/compiled_model_test.dart || exit $?
+          run_ios_test integration_test/interpreter_delegate_fallback_test.dart || exit $?

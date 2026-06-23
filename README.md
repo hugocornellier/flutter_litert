@@ -48,7 +48,7 @@ Main improvements over `tflite_flutter`:
 
 ```yaml
 dependencies:
-  flutter_litert: ^3.1.2
+  flutter_litert: ^3.1.4
 ```
 
 That's it for native platforms.
@@ -746,7 +746,7 @@ Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex) to you
 
 ```yaml
 dependencies:
-  flutter_litert: ^3.1.2
+  flutter_litert: ^3.1.4
   flutter_litert_flex: ^1.2.0
 ```
 

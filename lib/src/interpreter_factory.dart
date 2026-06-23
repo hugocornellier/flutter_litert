@@ -59,15 +59,16 @@ class InterpreterFactory {
 
   /// Creates an [IsolateInterpreter] if conditions allow isolate-based inference.
   ///
-  /// Returns null if [useIsolateInterpreter] is false, a delegate is active,
-  /// or the platform is macOS (where isolate sharing is unstable).
+  /// Returns null if [useIsolateInterpreter] is false, interpreter creation
+  /// successfully applied a delegate, or the platform is macOS (where isolate
+  /// sharing is unstable).
   static Future<IsolateInterpreter?> createIsolateIfNeeded(
     Interpreter interpreter,
     Delegate? delegate, {
     bool useIsolateInterpreter = true,
   }) async {
     if (!useIsolateInterpreter) return null;
-    if (delegate != null) return null;
+    if (interpreter.hasActiveDelegate) return null;
     // Sharing a native interpreter across isolates is unstable on macOS.
     if (Platform.isMacOS) return null;
     return IsolateInterpreter.create(address: interpreter.address);
