@@ -5,7 +5,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:flutter_litert/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// End-to-end engine overhead benchmark on a real per-frame model

@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'flutter_litert'
-  s.version          = '3.1.4'
+  s.version          = '3.2.0'
   s.summary          = 'LiteRT (formerly TensorFlow Lite) for Flutter with custom ops support.'
   s.description      = <<-DESC
 LiteRT (formerly TensorFlow Lite) Flutter plugin with MediaPipe custom operations support.

@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - compiled-model
+      - fix/wasm-ready-3.2.0
 
 jobs:
   build-macos:

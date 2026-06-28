@@ -1,3 +1,29 @@
+## 3.2.0
+
+Restores the WASM-ready score on pub.dev (back to 160/160), which dropped to
+150 when pub.dev upgraded its analyzer (pana 0.23.13). pana 0.23.13 mis-resolves
+conditional `export`/`import` directives: it derives the condition name with
+`name.tokens.map((t) => t.value()).join()`, and because `library` is a Dart
+keyword `Token.value()` returns it upper-cased, so `if (dart.library.X)` becomes
+`dart.LIBRARY.X` and never matches. Every conditional then resolves to its
+default (first) URI. The main `flutter_litert.dart` barrel defaulted to the
+native (`dart:ffi` / `dart:isolate`) surface, so the WASM/platform analysis saw
+those libraries as reachable.
+
+* The portable `flutter_litert.dart` barrel now defaults to the WASM-safe web
+  surface and gates the native surface on `dart.library.io`, so the package is
+  WASM-compatible again. Runtime behavior is unchanged: real native and web
+  builds resolve exactly as before.
+* **Breaking (native-only):** API whose public signatures use native-only types
+  (`Isolate`, `SendPort`, `File`, ...) and therefore cannot be WASM-safe is now
+  published from a new `package:flutter_litert/native.dart` library instead of
+  the main barrel: `IsolateWorkerBase`, `IsolateRpcClient`,
+  `setupIsolateHandshake`, `InterpreterPool`, `ModelCheckpoint`. Native code
+  using these now also needs `import 'package:flutter_litert/native.dart';`.
+  `TensorFloat32Views` and the rest of the API stay on the main barrel.
+* `InterpreterOptions` on web gains `hasDelegate`, `threads`, and
+  `copyWithoutDelegates()` to match the native API.
+
 ## 3.1.4
 
 * Preserve thread tuning and custom-op registrations when delegate application

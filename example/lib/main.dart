@@ -16,7 +16,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:flutter_litert/native.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 void main() {
@@ -165,7 +165,7 @@ class _Detector {
   }
 
   // ───────────────────────────────────────────────────────────────────────────
-  // Isolate entry: all TFLite work runs here, never on the UI thread
+  // Isolate entry: all LiteRT work runs here, never on the UI thread
   // ───────────────────────────────────────────────────────────────────────────
 
   @pragma('vm:entry-point')

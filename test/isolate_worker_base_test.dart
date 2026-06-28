@@ -1,6 +1,6 @@
 import 'dart:isolate';
 
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:flutter_litert/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Test isolate entry that completes the handshake and ACKs a 'dispose' op
