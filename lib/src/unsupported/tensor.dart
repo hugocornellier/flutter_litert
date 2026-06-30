@@ -37,7 +37,7 @@ class Tensor {
     'Tensor.asFloat32View is not supported on this platform',
   );
 
-  /// Quantization Params associated with the model, [only Android]
+  /// Quantization params associated with the tensor.
   QuantizationParams get params =>
       throw UnsupportedError('Tensor.params is not supported on this platform');
 

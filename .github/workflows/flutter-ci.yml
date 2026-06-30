@@ -171,6 +171,60 @@ jobs:
           working-directory: example
           script: flutter test integration_test/compiled_model_test.dart -d emulator-5554 --timeout 600s
 
+  # Forward-compatibility guard for newer Android Gradle Plugin (AGP 9.x).
+  # The example app pins AGP 8.11.1, so the build-android job above only ever
+  # exercises AGP 8. AGP 9 flips android.sourceset.disallowProvider to true and
+  # rejects passing a Provider to the legacy jniLibs SourceSet API, which broke
+  # consumers on AGP 9 (issue #14). This job rebuilds just the plugin module
+  # under AGP 9.x: no emulator and no app compile, but it both catches the
+  # configuration-time failure and asserts the native libraries still merge into
+  # the AAR (the CMake custom-ops lib plus the downloaded libLiteRt.so).
+  build-android-agp9:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Pin example Android toolchain to AGP 9.x / Gradle 9.x
+        working-directory: example/android
+        run: |
+          sed -i 's/id("com.android.application") version "[0-9.]*"/id("com.android.application") version "9.2.1"/' settings.gradle.kts
+          sed -i 's#gradle-[0-9.]*-all.zip#gradle-9.6.1-all.zip#' gradle/wrapper/gradle-wrapper.properties
+          echo "--- settings.gradle.kts ---"; grep -n "com.android.application" settings.gradle.kts
+          echo "--- gradle-wrapper.properties ---"; grep -n distributionUrl gradle/wrapper/gradle-wrapper.properties
+
+      # The example's gradlew and gradle-wrapper.jar are gitignored, so a fresh
+      # checkout has no Gradle wrapper. `flutter build --config-only` regenerates
+      # the wrapper and writes local.properties without compiling the app, and it
+      # leaves our pinned Gradle version in gradle-wrapper.properties untouched.
+      - name: Generate Android project files and Gradle wrapper
+        working-directory: example
+        run: flutter build apk --config-only --release
+
+      - name: Assemble plugin AAR under AGP 9 (regression guard for issue #14)
+        working-directory: example/android
+        run: ./gradlew :flutter_litert:assembleRelease --stacktrace
+
+      - name: Assert native libraries merged into the AGP 9 AAR
+        run: |
+          AAR=example/build/flutter_litert/outputs/aar/flutter_litert-release.aar
+          echo "Inspecting $AAR"
+          unzip -l "$AAR" | grep -E 'jni/.*/libLiteRt\.so' \
+            || { echo '::error::libLiteRt.so missing from AAR under AGP 9'; exit 1; }
+          unzip -l "$AAR" | grep -E 'jni/.*/libtflite_custom_ops\.so' \
+            || { echo '::error::CMake custom-ops .so missing from AAR under AGP 9'; exit 1; }
+          echo 'AGP 9 build packaged both native libraries.'
+
   build-ios:
     runs-on: macos-15
     # Per-test, per-attempt timeouts and retries live in the test step below.

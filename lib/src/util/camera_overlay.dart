@@ -100,9 +100,10 @@ Size detectionSize({
 /// Cover-fit scale + offset for rendering a source region of size
 /// ([sourceW], [sourceH]) into a viewport of size ([viewW], [viewH]).
 ///
-/// Preserves aspect ratio and centers; the source is scaled to fit the
-/// viewport along the more-constrained axis, with zero or positive offsets
-/// on the other axis. The record `(scale, offsetX, offsetY)` is what a
+/// Preserves aspect ratio and centers; the source is scaled to cover the
+/// viewport (by the larger of the width/height ratios), so the axis that
+/// overflows is centered with a zero or negative offset and the other axis
+/// offset is zero. The record `(scale, offsetX, offsetY)` is what a
 /// `CustomPainter` typically needs to transform source coordinates to
 /// viewport coordinates: `x_view = x_source * scale + offsetX`.
 ({double scale, double offsetX, double offsetY}) coverFitScaleOffset(

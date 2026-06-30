@@ -1,4 +1,6 @@
-<h1 align="center">flutter_litert</h1>
+<p align="center">
+  <img src="assets/litert-banner.png" alt="flutter_litert: performant on-device ML inference for Flutter" width="100%">
+</p>
 
 <p align="center">
 <a href="https://flutter.dev"><img src="https://img.shields.io/badge/Platform-Flutter-02569B?logo=flutter" alt="Platform"></a>
@@ -9,6 +11,8 @@
 <a href="https://github.com/hugocornellier/flutter_litert/actions/workflows/flutter-ci.yml"><img src="https://github.com/hugocornellier/flutter_litert/actions/workflows/flutter-ci.yml/badge.svg" alt="Flutter CI"></a>
 <a href="https://github.com/hugocornellier/flutter_litert/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-007A88.svg?logo=apache" alt="License"></a>
 </p>
+
+<hr>
 
 A Flutter plugin for on-device ML inference using LiteRT (formerly TensorFlow Lite), with bundled native runtimes for Android, iOS, macOS, Windows, and Linux, plus web runtimes for Flutter Web.
  
@@ -125,7 +129,7 @@ Packages built on flutter_litert:
 | Package | Description | Includes Web |
 |---------|-------------|--------------|
 | [face_detection_tflite](https://pub.dev/packages/face_detection_tflite) | Face detection, 468-point mesh, iris tracking, segmentation | ✓ |
-| [hand_detection](https://pub.dev/packages/hand_detection) | Hand detection, landmarks, gesture recognition | |
+| [hand_detection](https://pub.dev/packages/hand_detection) | Hand detection, landmarks, gesture recognition | ✓ |
 | [pose_detection](https://pub.dev/packages/pose_detection) | Body pose estimation with 33 keypoints | ✓ |
 | [object_detection](https://pub.dev/packages/object_detection) | Object detection with bounding boxes and labels | |
 | [animal_detection](https://pub.dev/packages/animal_detection) | Animal detection with species classification and pose | |
@@ -134,15 +138,22 @@ Packages built on flutter_litert:
 
 ## Platform support
 
-| Platform | Runtime | Version   | Bundling |
-|----------|---------|-----------|----------|
-| Android | LiteRT | 1.4.1     | Maven dependency, built automatically via Gradle |
-| iOS | TensorFlow Lite | 2.20.0    | xcframeworks via SPM (remote binary targets) or CocoaPods (vendored) |
-| macOS | TensorFlow Lite (C API) | 2.20.0    | Pre-built dylib, bundled via CocoaPods |
-| Windows | TensorFlow Lite (C API) | 2.20.0    | DLL bundled via CMake |
-| Linux | TensorFlow Lite (C API) | 2.20.0    | Shared library bundled via CMake |
-| Web (LiteRT.js) | LiteRT.js (Google official) | `@litertjs/core@2.4.0` (default CDN) | Auto-loaded by `LiteRtInterpreter` unless you disable the loader |
-| Web | TFLite.js (WASM via TensorFlow.js) | `tflite-js@v0.0.1-alpha.10` (default CDN) | JS runtime loaded at startup via `initializeWeb()` |
+flutter_litert ships two independent native runtimes, one per API. The classic `Interpreter` API runs on the TensorFlow Lite / LiteRT runtime, while the `CompiledModel` API (LiteRT Next, the recommended path for GPU and NPU) runs on a separate `libLiteRt` runtime. They are bundled side by side, so the two runtimes carry their own versions per platform.
+
+| Platform | Interpreter runtime | CompiledModel runtime |
+|----------|---------------------|-----------------------|
+| Android | LiteRT 1.4.2 | LiteRT Next 2.1.5 |
+| iOS | TensorFlow Lite 2.20.0 | LiteRT Next |
+| macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
+| Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
+| Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
+| Web | LiteRT.js 2.4.0 / TFLite.js (WASM) | not supported |
+
+Bundling:
+- Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` from the `2.1.5` AAR.
+- iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` xcframework (release `litert-ios-v1.0.0`, a commit-pinned LiteRT Next build, commit `1adc2475`).
+- macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.1.5 wheel, bundled via CMake.
+- Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.4.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel is not available on web.
 
 iOS and macOS will be migrated to LiteRT as official CocoaPods artifacts become available.
 

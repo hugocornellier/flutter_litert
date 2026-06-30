@@ -124,7 +124,8 @@ class PackedYuv {
 /// yuvMat.dispose();
 /// ```
 ///
-/// Returns null for unsupported shapes (odd [width] or [height], no U plane).
+/// Returns null for unsupported shapes (non-positive or odd [width] or
+/// [height]).
 PackedYuv? packYuv420({
   required int width,
   required int height,

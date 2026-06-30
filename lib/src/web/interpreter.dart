@@ -52,10 +52,11 @@ class Interpreter {
     'Use Interpreter.fromAsset or Interpreter.fromBytes instead.',
   );
 
-  /// Creates interpreter from a [buffer].
+  /// Not supported on web.
   ///
-  /// On web, this is async internally but the factory constructor is sync
-  /// for API compatibility. Prefer [fromAsset] which is already async.
+  /// `fromBuffer` is a synchronous factory, but web model loading is
+  /// asynchronous, so it cannot construct an interpreter. Throws
+  /// [UnsupportedError]; use [fromAsset] or [fromBytes] (both async) instead.
   factory Interpreter.fromBuffer(
     Uint8List buffer, {
     InterpreterOptions? options,

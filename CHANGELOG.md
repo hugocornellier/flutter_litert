@@ -1,3 +1,23 @@
+## 3.2.1
+
+Fixes an Android build failure on Android Gradle Plugin (AGP) 9.x (issue #14).
+AGP 9 changed the default of `android.sourceset.disallowProvider` to `true`,
+which rejects passing a `Provider` to the legacy jniLibs source-set API. The
+plugin handed `layout.buildDirectory.dir("litert-jni")` (a `Provider<Directory>`)
+to `jniLibs.srcDir(...)`, so configuration failed at `android/build.gradle.kts`
+with "You cannot add Provider instances to the Android SourceSet API." AGP 8.x is
+unaffected, which is why it only surfaced for consumers on AGP 9.
+
+* `libLiteRt.so` is now contributed as a generated jniLibs source through the AGP
+  Variant API (`androidComponents.onVariants { ...
+  jniLibs.addGeneratedSourceDirectory(...) }`) instead of the legacy
+  `sourceSets { ... srcDir(<Provider>) }` block. AGP owns the task dependency, so
+  the manual `preBuild` hook is removed, and a `litertNextVersion` bump now
+  re-downloads because the version is a tracked task input. Verified building the
+  plugin AAR on both AGP 8.11.1 and AGP 9.2.1.
+* CI now rebuilds the plugin module under AGP 9.x so this class of
+  forward-incompatibility is caught before publishing.
+
 ## 3.2.0
 
 Restores the WASM-ready score on pub.dev (back to 160/160), which dropped to

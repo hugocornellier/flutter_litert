@@ -19,9 +19,11 @@ class IsolateInterpreter {
     required Interpreter interpreter,
   }) : _interpreter = interpreter;
 
-  /// Creates a web IsolateInterpreter that wraps a regular Interpreter.
+  /// Address-based factory, not supported on web.
   ///
-  /// On web, this runs on the main thread (no isolates).
+  /// Web tensors are Dart-side buffers with no native address, so there is
+  /// nothing to construct from an [address]. Throws [UnsupportedError]; use
+  /// [createFromInterpreter] to wrap an existing [Interpreter] instead.
   static Future<IsolateInterpreter> create({
     required int address,
     String debugName = 'TfLiteInterpreterIsolate',

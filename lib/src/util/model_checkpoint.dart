@@ -150,8 +150,9 @@ class ModelCheckpoint {
     }
   }
 
-  /// Returns tensor names and shapes from a checkpoint file without loading
-  /// the full data. Useful for debugging and validation.
+  /// Returns a map of tensor name to shape for every tensor in a checkpoint
+  /// file. Reads and parses the entire file, then discards the tensor data,
+  /// retaining only names and shapes. Useful for debugging and validation.
   static Future<Map<String, List<int>>> inspect(File file) async {
     final bytes = await file.readAsBytes();
     final records = _parseCheckpoint(bytes);

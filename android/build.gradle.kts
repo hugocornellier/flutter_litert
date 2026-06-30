@@ -1,4 +1,15 @@
+import java.io.File
 import java.net.URI
+import javax.inject.Inject
+import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
+import org.gradle.api.file.ArchiveOperations
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension
 
@@ -91,24 +102,48 @@ dependencies {
 // versions of the same module would resolve to a single version and break one
 // of the two runtimes. Extracting only libLiteRt.so keeps them side by side.
 val litertNextVersion = "2.1.5"
-val litertJniDir = layout.buildDirectory.dir("litert-jni")
 
-val downloadLitertJni = tasks.register("downloadLitertJni") {
-    val outDir = litertJniDir.get().asFile
-    outputs.dir(outDir)
-    doLast {
+// libLiteRt.so is contributed to the build as a GENERATED jniLibs source through
+// the AGP Variant API (androidComponents.onVariants -> jniLibs
+// .addGeneratedSourceDirectory). This is the AGP-9 replacement for the old
+// `android.sourceSets["main"].jniLibs.srcDir(<Provider>)` wiring: AGP 9 defaults
+// `android.sourceset.disallowProvider` to true and rejects passing a Provider to
+// the legacy SourceSet API. Modelling it as a generated source also lets AGP own
+// the task dependency (no manual preBuild hook) and makes a litertNextVersion bump
+// re-download, because the version is a tracked task input.
+abstract class DownloadLitertJniTask : DefaultTask() {
+    @get:Input
+    abstract val litertVersion: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @get:Inject
+    abstract val archiveOperations: ArchiveOperations
+
+    @get:Inject
+    abstract val fileSystemOperations: FileSystemOperations
+
+    @TaskAction
+    fun download() {
+        val version = litertVersion.get()
+        val outDir = outputDir.get().asFile
         val marker = File(outDir, "arm64-v8a/libLiteRt.so")
-        if (marker.exists()) return@doLast
-        outDir.mkdirs()
-        val aar = File(outDir, "litert-$litertNextVersion.aar")
+        val aar = File(temporaryDir, "litert-$version.aar")
         val url = "https://dl.google.com/dl/android/maven2/com/google/ai/edge/" +
-            "litert/litert/$litertNextVersion/litert-$litertNextVersion.aar"
-        logger.lifecycle("[flutter_litert] Downloading LiteRT Next runtime (libLiteRt.so) from Maven $litertNextVersion...")
+            "litert/litert/$version/litert-$version.aar"
+        logger.lifecycle("[flutter_litert] Downloading LiteRT Next runtime (libLiteRt.so) from Maven $version...")
+        fileSystemOperations.delete {
+            delete(outDir)
+            delete(aar)
+        }
+        outDir.mkdirs()
+        aar.parentFile.mkdirs()
         URI(url).toURL().openStream().use { input ->
             aar.outputStream().use { output -> input.copyTo(output) }
         }
-        copy {
-            from(zipTree(aar)) {
+        fileSystemOperations.copy {
+            from(archiveOperations.zipTree(aar)) {
                 // CPU runtime only for now. libLiteRtClGlAccelerator.so is in
                 // the same AAR (arm64-v8a/x86_64) but stays unbundled: when it
                 // registers in an environment without working OpenCL (every
@@ -123,21 +158,21 @@ val downloadLitertJni = tasks.register("downloadLitertJni") {
             }
             into(outDir)
         }
-        aar.delete()
         if (!marker.exists()) {
             throw GradleException("[flutter_litert] LiteRT Next Maven AAR did not yield $marker")
         }
     }
 }
 
-android {
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDir(litertJniDir)
-        }
-    }
+val downloadLitertJni = tasks.register<DownloadLitertJniTask>("downloadLitertJni") {
+    litertVersion.set(litertNextVersion)
 }
 
-tasks.named("preBuild") {
-    dependsOn(downloadLitertJni)
+androidComponents {
+    onVariants { variant ->
+        val jniLibs = checkNotNull(variant.sources.jniLibs) {
+            "[flutter_litert] AGP did not expose jniLibs sources for variant ${variant.name}"
+        }
+        jniLibs.addGeneratedSourceDirectory(downloadLitertJni) { it.outputDir }
+    }
 }
