@@ -21,6 +21,14 @@ import '../bindings/bindings.dart';
 import '../bindings/tensorflow_lite_bindings_generated.dart';
 import '../native/delegate.dart';
 
+// Re-export the GPU delegate configuration enums so callers using the public
+// barrel can name these option values without importing the generated bindings.
+export '../bindings/tensorflow_lite_bindings_generated.dart'
+    show
+        TfLiteGpuExperimentalFlags,
+        TfLiteGpuInferenceUsage,
+        TfLiteGpuInferencePriority;
+
 /// GPU delegate for Android
 @Deprecated(
   'Manual hardware-acceleration delegates are superseded by LiteRT Next. Use '

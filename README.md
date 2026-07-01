@@ -15,55 +15,52 @@
 <hr>
 
 A Flutter plugin for on-device ML inference using LiteRT (formerly TensorFlow Lite), with bundled native runtimes for Android, iOS, macOS, Windows, and Linux, plus web runtimes for Flutter Web.
- 
-## Background  
 
-This project started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutter), the TensorFlow Lite plugin for Flutter. Google's on-device runtime documentation now uses the [LiteRT](https://ai.google.dev/edge/litert) name.
- 
-`flutter_litert` keeps the core `tflite_flutter` interpreter API source-compatible on native platforms, auto bundles dynamic libraries, adds newer utilities, adds and improves delegate support, and documents the web-specific API differences below.
+It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutter), the TensorFlow Lite plugin for Flutter, and keeps that interpreter API source-compatible on native platforms. This plugin adds the modern LiteRT Next CompiledModel path, auto bundles the native dynamic libraries, adds newer utilities, adds and improves delegate support, and adds web support.
 
-## Why this package?
+<p align="center">
+  <img src="assets/pose-detection-demo.webp" alt="Real-time on-device pose detection running on iPhone, built with flutter_litert" width="270">
+  <br>
+  <sub><i>Real-time on-device pose detection</i></sub>
+</p>
 
-The biggest pain point with `tflite_flutter` was native library setup. You had to manually build `.so`, `.dll`, or `.dylib` files and place them in the right directories for each platform.
+## Two runtimes, one package
 
-Instead, `flutter_litert` automatically bundles the native runtime for each supported native platform. Simply add the dependency, and you're ready to use LiteRT.
+`flutter_litert` exposes two inference APIs. Reach for `CompiledModel` first, then fall back to `Interpreter` when your use case needs it.
 
-Main improvements over `tflite_flutter`:
-
-- Native libraries bundled automatically
-  - Prebuilt binaries for macOS/Windows/Linux are served automatically. Manual steps no longer necessary.
-- Runtime versions and bundling mechanisms are documented in [Platform support](#platform-support)
-- [On-device training with weight persistence](#on-device-training)
-- [Variable tensor inspection](#inspecting-variable-tensors), access trainable weights at runtime
-- [Custom ops support](#custom-ops)
-- [Web support](#web-support)
-  - For a complete web demo, see [pose_detection](https://github.com/hugocornellier/pose_detection) and its [web example](https://github.com/hugocornellier/pose_detection/tree/e93ffe99bdc05f4a397d3bf4b70f2a9454b3b0f5/example_web) shown in the repo.
+- **`CompiledModel` (LiteRT Next), recommended.** The modern path and the recommended way to get GPU and NPU acceleration. See [CompiledModel (LiteRT Next)](#compiledmodel-litert-next) 
+- **`Interpreter` (classic), fully supported.** The TensorFlow Lite / LiteRT runtime, source-compatible with `tflite_flutter`. See [Interpreter (classic API)](#interpreter-classic-api)
 
 ## Features
 
-- **Core API compatibility with tflite_flutter.** Native `Interpreter`, `InterpreterOptions`, tensors, and delegates keep the familiar API, with additive utilities and documented web differences.
-- **Auto-bundled native libraries.** Works out of the box on Android, iOS, macOS, Windows, and Linux (plus web support via `initializeWeb()`).
-- **Hardware acceleration (LiteRT Next).** `CompiledModel` selects CPU / GPU / NPU automatically; the recommended path for GPU and NPU acceleration, [see LiteRT Next](#hardware-acceleration-with-litert-next-compiledmodel).
-- **Interpreter delegates.** XNNPACK (CPU) on all native platforms. The GPU (Android), Metal, and CoreML delegates remain available but are **deprecated** in favour of `CompiledModel`, [see delegates](#delegates).
-- **Custom ops.** MediaPipe's `Convolution2DTransposeBias` op is built and included on native platforms.
-- **Isolate support.** Run inference on a background thread with `IsolateInterpreter` on native platforms (web provides a compatibility wrapper).
+- `CompiledModel` (LiteRT Next), the recommended path. Request accelerators and the runtime picks CPU, GPU, or NPU automatically, with CPU fallback. See [CompiledModel (LiteRT Next)](#compiledmodel-litert-next).
+- The classic `Interpreter` API remains fully supported when needed.
+- Auto-bundled native libraries. No hand-built `.so`, `.dll`, or `.dylib` files: just add the dependency and it works on Android, iOS, macOS, Windows, and Linux (plus web via `initializeWeb()`). See [Platform support](#platform-support).
+- Interpreter delegates. XNNPACK (CPU) on all native platforms; GPU, Metal, and CoreML remain available but are **deprecated** in favour of `CompiledModel`. See [Delegates](#delegates).
+- On-device training with weight persistence and [variable tensor inspection](#inspecting-variable-tensors). See [On-device training](#on-device-training).
+- Custom ops. MediaPipe's `Convolution2DTransposeBias` is included on native platforms, and you can register your own. See [Custom ops](#custom-ops).
+- Isolate support. Background-thread inference via `IsolateInterpreter` on native platforms (web provides a compatibility wrapper).
+- Web support. Two interchangeable runtimes: `tflite-js` (CPU/WASM) and Google's LiteRT.js with an optional WebGPU path. See [Web support](#web-support).
 
-## Installation
+## Quick start
 
-```yaml
-dependencies:
-  flutter_litert: ^3.2.0
+Start with `CompiledModel`, the recommended LiteRT Next path. You request a set of accelerators and the runtime selects the best available backend, with CPU fallback:
+
+```dart
+import 'package:flutter_litert/flutter_litert.dart';
+
+final model = CompiledModel.fromFile(
+  'model.tflite',
+  accelerators: {Accelerator.gpu, Accelerator.cpu}, // GPU with CPU fallback
+);
+
+final outputs = model.run(inputs); // List<Float32List> in, List<Float32List> out
+model.close();
 ```
 
-That's it for native platforms.
+See [CompiledModel (LiteRT Next)](#compiledmodel-litert-next) for accelerator selection, precision options, and the zero-copy hot path.
 
-> Intel Macs Only: The iOS simulator is not supported under Swift Package Manager on 
-> x86_64. You have two options: test using a real iOS device or switch to CocoaPods 
-> to use the Simulator. This applies to Intel Macs only. 
-
-For web using `Interpreter`, call `initializeWeb()` first (see [Web support](#web-support)). If you're using `LiteRtInterpreter` (the LiteRT.js/WebGPU path), no setup call is needed.
-
-## Usage (Quick Start)
+Use the classic `Interpreter` when you need web, on-device training, custom ops, named signatures, quantized or integer I/O, or a drop-in `tflite_flutter` replacement:
 
 ```dart
 import 'package:flutter_litert/flutter_litert.dart';
@@ -77,36 +74,9 @@ var output = List.filled(outputSize, 0.0).reshape([1, outputSize]);
 interpreter.run(input, output);
 ```
 
-For inference off the main thread (native platforms):
+See [Interpreter (classic API)](#interpreter-classic-api) for isolates, delegates, training, and custom ops.
 
-```dart
-final interpreter = await Interpreter.fromAsset('model.tflite');
-final isolateInterpreter = await IsolateInterpreter.create(address: interpreter.address);
-
-await isolateInterpreter.run(input, output);
-```
-
-To check which TFLite runtime version is loaded:
-
-```dart
-print('TFLite version: ${Interpreter.version}'); // e.g. "2.20.0"
-```
-
-For GPU or NPU acceleration, use the LiteRT Next `CompiledModel` API instead of attaching a delegate by hand. You request a set of accelerators and the runtime selects the best available backend, with CPU fallback:
-
-```dart
-final model = CompiledModel.fromFile(
-  'model.tflite',
-  accelerators: {Accelerator.gpu, Accelerator.cpu}, // GPU with CPU fallback
-);
-
-final outputs = model.run(inputs); // List<Float32List> in, List<Float32List> out
-model.close();
-```
-
-This is the recommended path for hardware acceleration in 3.0.0. See [Hardware acceleration with LiteRT Next (CompiledModel)](#hardware-acceleration-with-litert-next-compiledmodel) for accelerator selection, precision options, and the zero-copy hot path.
-
-## Demos and Examples
+## Demos and examples
 
 ### Examples
 
@@ -136,46 +106,13 @@ Packages built on flutter_litert:
 | [cat_detection](https://pub.dev/packages/cat_detection) | Cat face detection, landmarks, breed identification | |
 | [dog_detection](https://pub.dev/packages/dog_detection) | Dog face detection, landmarks, breed identification | |
 
-## Platform support
+## CompiledModel (LiteRT Next)
 
-flutter_litert ships two independent native runtimes, one per API. The classic `Interpreter` API runs on the TensorFlow Lite / LiteRT runtime, while the `CompiledModel` API (LiteRT Next, the recommended path for GPU and NPU) runs on a separate `libLiteRt` runtime. They are bundled side by side, so the two runtimes carry their own versions per platform.
+`CompiledModel` is the LiteRT Next inference path and the recommended way to run models with GPU or NPU acceleration. Instead of manually creating and attaching a delegate, you request a set of accelerators and the runtime selects the best available backend (CPU, GPU, or NPU) for the model. This follows Google's [LiteRT Next guidance](https://developers.google.com/edge/litert/next/get_started). Supported on Android, iOS, macOS, Windows, and Linux.
 
-| Platform | Interpreter runtime | CompiledModel runtime |
-|----------|---------------------|-----------------------|
-| Android | LiteRT 1.4.2 | LiteRT Next 2.1.5 |
-| iOS | TensorFlow Lite 2.20.0 | LiteRT Next |
-| macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
-| Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
-| Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
-| Web | LiteRT.js 2.4.0 / TFLite.js (WASM) | not supported |
+`CompiledModel` runs Float32 models only (`run()` takes `List<Float32List>` and returns `List<Float32List>`) and is not available on web. For web, on-device training, custom ops, named signatures, or quantized and integer I/O, use the [Interpreter (classic API)](#interpreter-classic-api) instead.
 
-Bundling:
-- Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` from the `2.1.5` AAR.
-- iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` xcframework (release `litert-ios-v1.0.0`, a commit-pinned LiteRT Next build, commit `1adc2475`).
-- macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.1.5 wheel, bundled via CMake.
-- Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.4.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel is not available on web.
-
-iOS and macOS will be migrated to LiteRT as official CocoaPods artifacts become available.
-
-## Upgrading to 3.0.0
-
-3.0.0 is a major release: it introduces the LiteRT Next `CompiledModel` API and deprecates the manual GPU/Metal/CoreML delegates. The classic `Interpreter` API stays source-compatible; no method signatures changed. Two `IsolateInterpreter` behavior changes are worth knowing about before you upgrade:
-
-- **In-flight calls now queue instead of being silently dropped.** Previously, calling `run()` or `runForMultipleInputs()` while a run was still in flight returned without writing the outputs. Now the call waits its turn and completes with real results. If you relied on that as frame-skipping (for example, one inference per camera frame), skip explicitly instead:
-
-  ```dart
-  if (isolate.state != IsolateInterpreterState.loading) {
-    isolate.runForMultipleInputs(inputs, outputs);
-  }
-  ```
-
-- **Calling `run()` after `close()` now throws `StateError`** instead of returning silently. Closing an interpreter while a run is in flight also throws, rather than reading freed tensors.
-
-The GPU, Metal, and CoreML delegates are deprecated in 3.0.0 (see [Delegates](#delegates)) but remain functional; they are planned for removal in 4.0.0. The `Interpreter` API, the CPU `XNNPackDelegate`, and `FlexDelegate` are not deprecated.
-
-## Hardware acceleration with LiteRT Next (CompiledModel)
-
-`CompiledModel` is the LiteRT Next inference path. Instead of manually creating and attaching a GPU/NPU delegate, you request a set of accelerators and the runtime selects the best available backend (CPU, GPU, or NPU) for the model:
+### Accelerator selection and precision
 
 ```dart
 final model = CompiledModel.fromFile(
@@ -187,21 +124,60 @@ final outputs = model.run(inputs); // List<Float32List> in, List<Float32List> ou
 model.close();
 ```
 
-For the common "GPU if available, otherwise CPU" case there is a convenience constructor:
+- Include `Accelerator.cpu` in the `accelerators` set so the model still runs when the GPU or NPU backend is unavailable on a device.
+- `precision` accepts `Precision.fp16` or `Precision.fp32`.
+- On Apple platforms, `Accelerator.npu` targets the Neural Engine, the replacement for `CoreMlDelegate`.
+
+### GPU with CPU fallback (convenience method)
+
+For the common "GPU if available, otherwise CPU" case there is a convenience method:
 
 ```dart
 final model = CompiledModel.fromBufferWithGpuFallback(modelBytes);
 ```
 
-This is the recommended path for GPU and NPU acceleration going forward, following Google's [LiteRT Next guidance](https://developers.google.com/edge/litert/next/get_started). Supported on Android, iOS, macOS, Windows, and Linux. The classic `Interpreter` API below remains fully supported for CPU inference.
+This requests `{gpu, cpu}` for you and reports any GPU initialization failure through an optional callback.
 
-## Migrating from Interpreter to CompiledModel
+### Zero-copy hot path
 
-Starting with version 3.0.0, the LiteRT Next `CompiledModel` API is available and is the recommended way to run models with GPU or NPU acceleration. It follows Google's [LiteRT Next guidance](https://developers.google.com/edge/litert/next/get_started): the runtime selects the accelerator for you instead of you creating and attaching a delegate by hand.
+`CompiledModel.run` takes a `List<Float32List>` (one entry per input tensor) and returns a fresh `List<Float32List>` (one per output tensor). For a hot path that avoids those per-call allocations, build the model with `tensorBufferMode: TensorBufferMode.hostMemory` and use `writeInput`, `dispatch`, and `readOutput`, which read and write the native tensor buffers in place.
 
-You do not have to migrate everything at once. The `Interpreter` API stays fully supported for CPU inference, and the CPU `XNNPackDelegate` and `FlexDelegate` are not deprecated. Only the manual GPU, Metal, and CoreML delegates are deprecated (planned for removal in 4.0.0), so those are the ones to move over to `CompiledModel`.
+```dart
+final model = CompiledModel.fromFile(
+  'model.tflite',
+  accelerators: {Accelerator.gpu, Accelerator.cpu},
+  tensorBufferMode: TensorBufferMode.hostMemory, // required for the zero-copy path
+);
 
-### Before (Interpreter plus GPU delegate)
+// `input` and `output` are Float32List views over the native tensor buffers.
+model.writeInput(0, (input) => input.setAll(0, inputData));
+model.dispatch();
+model.readOutput(0, (output) {
+  // read or process `output` in place, without an extra copy
+});
+
+model.close();
+```
+
+> The default is `TensorBufferMode.managed`. `writeInput`, `dispatch`, and `readOutput` throw a `StateError` unless the model is built with `TensorBufferMode.hostMemory`.
+
+### Async inference
+
+`run` and the zero-copy `dispatch` are synchronous. `CompiledModel` also exposes `runAsync` (and, for the zero-copy path, `dispatchAsync`), which return a `Future` and use LiteRT Next's asynchronous dispatch (`LiteRtRunCompiledModelAsync`) with output-buffer event synchronization:
+
+```dart
+final outputs = await model.runAsync(inputs); // Future<List<Float32List>>
+```
+
+`runAsync` takes and returns the same `List<Float32List>` shape as `run`. When the selected accelerator dispatches the work asynchronously, `runAsync` waits on each output tensor's completion event before the future resolves; when the accelerator completes synchronously (for example on CPU), there is no event to wait on and the future resolves once the native call returns. On GPU this asynchronous execution path is typically faster than the synchronous `run` because the backend can overlap the work, so it is the preferred call for GPU-backed models; on CPU the two are equivalent. `dispatchAsync` is the zero-copy counterpart to `dispatch`, using the same `writeInput`, `dispatchAsync`, `readOutput` sequence.
+
+> **`runAsync` does not move inference to a background isolate.** The native dispatch and the completion wait both run synchronously on the calling isolate, so awaiting `runAsync` still blocks that isolate for the full duration of the run. Its benefit is a faster accelerator execution path, not concurrency: it is not, on its own, a way to keep the UI thread responsive. To run inference without blocking your UI, run the model inside a background `Isolate` and call `run` or `runAsync` there.
+
+### Coming from the Interpreter delegate API
+
+You do not have to migrate everything at once. The `Interpreter` API stays fully supported, and the CPU `XNNPackDelegate` and `FlexDelegate` are not deprecated. Only the manual GPU, Metal, and CoreML delegates are deprecated (planned for removal in 4.0.0), so those are the ones to move over to `CompiledModel`.
+
+Before (Interpreter plus GPU delegate):
 
 ```dart
 final options = InterpreterOptions();
@@ -212,7 +188,7 @@ interpreter.run(input, output);
 interpreter.close();
 ```
 
-### After (CompiledModel)
+After (CompiledModel):
 
 ```dart
 final model = CompiledModel.fromFile(
@@ -224,7 +200,7 @@ final outputs = model.run(inputs); // List<Float32List> in, List<Float32List> ou
 model.close();
 ```
 
-### What changes
+What changes:
 
 | Interpreter API | CompiledModel API |
 |-----------------|-------------------|
@@ -234,16 +210,40 @@ model.close();
 | `interpreter.run(input, output)` with nested lists | `model.run(inputs)` returning `List<Float32List>` |
 | `interpreter.close()` | `model.close()` |
 
-Notes:
+## Interpreter (classic API)
 
-* `CompiledModel.run` takes a `List<Float32List>` (one entry per input tensor) and returns a `List<Float32List>` (one per output tensor). For a zero-copy hot path, use `writeInput` / `dispatch` / `readOutput` instead.
-* Include `Accelerator.cpu` in the `accelerators` set so the model still runs when the GPU or NPU backend is unavailable on a device.
-* For the common "GPU if available, otherwise CPU" case, `CompiledModel.fromBufferWithGpuFallback(bytes)` requests `{gpu, cpu}` for you and reports any GPU initialization failure through an optional callback.
-* On Apple platforms, `Accelerator.npu` targets the Neural Engine, the replacement for `CoreMlDelegate`.
+The classic `Interpreter` runs on the TensorFlow Lite / LiteRT runtime and is source-compatible with `tflite_flutter`. It is fully supported and is the right choice for web, on-device training, custom ops, named signatures, and quantized or integer I/O.
 
-## Delegates
+```dart
+import 'package:flutter_litert/flutter_litert.dart';
 
-> **Deprecation notice:** The GPU (Android), Metal, and CoreML delegates below are **deprecated** in favour of [`CompiledModel`](#hardware-acceleration-with-litert-next-compiledmodel) and are planned for removal in 4.0.0. They remain fully functional in the meantime. The `Interpreter` API itself, the CPU `XNNPackDelegate`, and `FlexDelegate` are **not** deprecated.
+final interpreter = await Interpreter.fromAsset('model.tflite');
+
+// Prepare input and output buffers
+var input = [/* your input data */];
+var output = List.filled(outputSize, 0.0).reshape([1, outputSize]);
+
+interpreter.run(input, output);
+```
+
+For inference off the main thread (native platforms):
+
+```dart
+final interpreter = await Interpreter.fromAsset('model.tflite');
+final isolateInterpreter = await IsolateInterpreter.create(address: interpreter.address);
+
+await isolateInterpreter.run(input, output);
+```
+
+To check which TFLite runtime version is loaded:
+
+```dart
+print('TFLite version: ${Interpreter.version}'); // e.g. "2.20.0"
+```
+
+### Delegates
+
+> **Deprecation notice:** The GPU (Android), Metal, and CoreML delegates below are **deprecated** in favour of [`CompiledModel`](#compiledmodel-litert-next) and are planned for removal in 4.0.0. They remain fully functional in the meantime. The `Interpreter` API itself, the CPU `XNNPackDelegate`, and `FlexDelegate` are **not** deprecated.
 
 Delegates accelerate inference by offloading computation to specialized hardware (GPU, Neural Engine, etc.). All delegates are passed to the interpreter via `InterpreterOptions.addDelegate()`:
 
@@ -253,19 +253,19 @@ options.addDelegate(XNNPackDelegate());
 final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
 ```
 
-### Delegate availability
+#### Delegate availability
 
 | Delegate | Platform | Hardware | Class |
 |----------|----------|----------|-------|
 | XNNPACK | Android, iOS, macOS, Windows, Linux | CPU (optimized SIMD) | `XNNPackDelegate` |
-| GPU (Android) | Android | GPU (OpenGL / OpenCL) | `GpuDelegateV2` _(deprecated → `CompiledModel`)_ |
-| Metal | iOS, macOS (arm64 only on macOS) | GPU (Metal) | `GpuDelegate` _(deprecated → `CompiledModel`)_ |
-| CoreML | iOS, macOS (arm64 only on macOS) | Neural Engine / GPU / CPU | `CoreMlDelegate` _(deprecated → `CompiledModel`)_ |
+| GPU (Android) | Android | GPU (OpenGL / OpenCL) | `GpuDelegateV2` _(deprecated, use `CompiledModel`)_ |
+| Metal | iOS, macOS (arm64 only on macOS) | GPU (Metal) | `GpuDelegate` _(deprecated, use `CompiledModel`)_ |
+| CoreML | iOS, macOS (arm64 only on macOS) | Neural Engine / GPU / CPU | `CoreMlDelegate` _(deprecated, use `CompiledModel`)_ |
 | Flex | Android, iOS, macOS, Windows, Linux | CPU (TensorFlow ops) | `FlexDelegate` |
 
-### XNNPACK (all native platforms)
+#### XNNPACK (all native platforms)
 
-XNNPACK is a CPU delegate that uses SIMD instructions for faster inference. It works on every native platform and is a good default accelerator.
+XNNPACK is a CPU delegate that uses SIMD instructions for faster inference. It works on every native platform and is a good default accelerator. It is not deprecated.
 
 ```dart
 final options = InterpreterOptions();
@@ -280,7 +280,7 @@ XNNPACK options:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `numThreads` | `int` | `1` | Number of threads for parallel computation |
-| `flags` | `int` | `0` | Bitmask of `TfLiteXNNPackDelegateFlags` (QS8, QU8, FORCE_FP16, etc.) |
+| `flags` | `int` | `0` | Bitmask of XNNPACK flags (QS8, QU8, FORCE_FP16). A value of `0` enables QS8 and QU8 quantization by default. |
 | `weightCacheFilePath` | `String?` | `null` | Path to cache packed weights on disk for faster subsequent loads |
 
 Weight caching example:
@@ -296,9 +296,10 @@ options.addDelegate(XNNPackDelegate(
 ));
 ```
 
-### GPU delegate (Android)
+<details>
+<summary><strong>GPU delegate (Android)</strong> (deprecated, use <code>CompiledModel</code>)</summary>
 
-> **Deprecated:** Use [`CompiledModel`](#hardware-acceleration-with-litert-next-compiledmodel) with `accelerators: {Accelerator.gpu, Accelerator.cpu}` instead. Planned for removal in 4.0.0.
+> **Deprecated:** Use [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.gpu, Accelerator.cpu}` instead. Planned for removal in 4.0.0.
 
 The Android GPU delegate uses OpenGL ES or OpenCL for GPU-accelerated inference.
 
@@ -310,7 +311,7 @@ final interpreter = await Interpreter.fromAsset('model.tflite', options: options
 
 > **Note:** GPU delegate initialization on Android can take several seconds on first run as GPU kernels are compiled. Use serialization caching (below) to eliminate this overhead on subsequent runs.
 
-#### GPU kernel serialization (Android)
+**GPU kernel serialization (Android)**
 
 Compiled GPU kernels can be cached to disk so initialization is near-instant after the first run:
 
@@ -341,9 +342,12 @@ GPU delegate options:
 | `serializationDir` | `String?` | `null` | Directory for kernel cache (requires `ENABLE_SERIALIZATION` flag) |
 | `modelToken` | `String?` | `null` | Unique model identifier for cache namespace |
 
-### Metal delegate (iOS and macOS)
+</details>
 
-> **Deprecated:** Use [`CompiledModel`](#hardware-acceleration-with-litert-next-compiledmodel) with `accelerators: {Accelerator.gpu, Accelerator.cpu}` instead. Planned for removal in 4.0.0.
+<details>
+<summary><strong>Metal delegate (iOS and macOS)</strong> (deprecated, use <code>CompiledModel</code>)</summary>
+
+> **Deprecated:** Use [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.gpu, Accelerator.cpu}` instead. Planned for removal in 4.0.0.
 
 The Metal delegate uses Apple's Metal API for GPU-accelerated inference on iOS and macOS. The native library is bundled automatically on both platforms.
 
@@ -363,20 +367,19 @@ Metal delegate options:
 | `waitType` | `int` | `Passive` | `TFLGpuDelegateWaitType` value (Passive, Active, DoNotWait, Aggressive) |
 | `enableQuantization` | `bool` | `true` | Enable quantized model support |
 
-### CoreML delegate (iOS and macOS)
+</details>
 
-> **Deprecated:** Use [`CompiledModel`](#hardware-acceleration-with-litert-next-compiledmodel) with `accelerators: {Accelerator.npu, Accelerator.gpu, Accelerator.cpu}` instead. Planned for removal in 4.0.0.
+<details>
+<summary><strong>CoreML delegate (iOS and macOS)</strong> (deprecated, use <code>CompiledModel</code>)</summary>
+
+> **Deprecated:** Use [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.npu, Accelerator.gpu, Accelerator.cpu}` instead. Planned for removal in 4.0.0.
 
 The CoreML delegate uses Apple's CoreML framework, which can dispatch to the Neural Engine, GPU, or CPU depending on the model and device. The native library is bundled automatically on both platforms.
 
 ```dart
 final options = InterpreterOptions();
-options.addDelegate(CoreMlDelegate(
-  options: CoreMlDelegateOptions(
-    enabledDevices: TfLiteCoreMlDelegateEnabledDevices
-        .TfLiteCoreMlDelegateDevicesWithNeuralEngine,
-  ),
-));
+// enabledDevices defaults to the Neural Engine, so the common case needs no options.
+options.addDelegate(CoreMlDelegate());
 final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
 ```
 
@@ -391,7 +394,9 @@ CoreML delegate options:
 | `maxDelegatedPartitions` | `int` | `0` | Max partitions (0 = unlimited) |
 | `minNodesPerPartition` | `int` | `2` | Minimum nodes per delegated partition |
 
-### Platform recommendations
+</details>
+
+#### Platform recommendations
 
 | Platform | Recommended delegate | Notes |
 |----------|---------------------|-------|
@@ -402,94 +407,7 @@ CoreML delegate options:
 | Linux | `XNNPackDelegate` | XNNPACK symbols are bundled in the shared library. |
 | Web | None for tflite-js; `LiteRtInterpreter` for LiteRT.js | Native-style delegates are no-ops on web. Use `LiteRtInterpreter.fromBytes(..., accelerator: 'webgpu')` for the WebGPU path. |
 
-## Web support
-
-`flutter_litert` supports Flutter Web with two interchangeable runtimes:
-
-1. **`Interpreter`** (standard cross-platform class). Bound to the third-party `tflite-js` runtime via `tf-tflite.min.js`. Pure CPU/WASM execution. Existing API, no setup beyond `initializeWeb()`.
-2. **`LiteRtInterpreter`** (opt-in LiteRT.js runtime, since 2.5.0). Google's official **LiteRT.js** runtime. Defaults to WASM; pass `accelerator: 'webgpu'` to use the **WebGPU** delegate with WASM fallback. Same .tflite models, dramatically faster on browsers that support WebGPU. Async: `runForMultipleInputs(...)` returns a `Future`.
-
-### Web Demo / Example
-
-For a complete web demo (with WebGPU), see [pose_detection](https://github.com/hugocornellier/pose_detection) and its [web example](https://github.com/hugocornellier/pose_detection/tree/e93ffe99bdc05f4a397d3bf4b70f2a9454b3b0f5/example_web).
-
-### Quick start (default tflite-js runtime)
-
-Call `initializeWeb()` before creating an `Interpreter` in a browser. It is a no-op on native, so you can call it unconditionally.
-
-```dart
-import 'package:flutter_litert/flutter_litert.dart';
-
-await initializeWeb();
-
-final interpreter = await Interpreter.fromAsset('assets/model.tflite');
-// or: final interpreter = await Interpreter.fromBytes(modelBytes);
-
-interpreter.run(input, output);
-```
-
-By default, `initializeWeb()` loads the TFLite.js / TensorFlow.js scripts from a CDN. You can pass custom script URLs to self-host the files (for offline use or stricter CSP).
-
-### LiteRT.js runtime (WASM or WebGPU)
-
-Use `LiteRtInterpreter` for Google's official LiteRT.js runtime on web. It defaults to WASM; pass `accelerator: 'webgpu'` when you want GPU acceleration. **Zero `index.html` setup**: the runtime is auto-loaded from a CDN on first use.
-
-```dart
-import 'package:flutter_litert/flutter_litert.dart';
-
-final lrt = await LiteRtInterpreter.fromBytes(
-  modelBytes,
-  accelerator: 'webgpu', // omit or use 'wasm' for the default WASM path
-);
-
-await lrt.runForMultipleInputs(
-  <Object>[inputFloat32List],
-  <int, Object>{0: outputFloat32List}, // also accepts ByteBuffer or nested lists
-);
-```
-
-The first `LiteRtInterpreter.fromBytes(...)` call injects a `<script type="module">` that imports `@litertjs/core` from jsDelivr, calls `loadLiteRt(...)`, and exposes the runtime on `window.LiteRt`. Subsequent calls reuse the loaded module.
-
-To self-host or pin a specific build, call `configureLiteRtWebLoader(...)` once before the first interpreter:
-
-```dart
-configureLiteRtWebLoader(
-  moduleUrl: '/assets/litertjs/index.js',          // your bundled path
-  wasmUrl  : '/assets/litertjs/litert_wasm_internal.js',
-);
-```
-
-Or disable the auto-loader entirely if you want to load it from your own `<script>` tag:
-
-```dart
-configureLiteRtWebLoader(autoLoad: false);
-```
-
-Notes:
-
-- `runForMultipleInputs` is **async** on this runtime; await it.
-- Output buffers may be `Float32List` (preferred, single bulk copy), `ByteBuffer`, or the legacy `List<List<List<double>>>` shape used by tflite-js callers.
-- `webgpu` falls back to `wasm` if LiteRT.js cannot compile the model for the WebGPU delegate.
-- The WebGPU path requires Chrome / Edge ≥ 113 (or Firefox / Safari with the flag enabled). On unsupported browsers, pass `accelerator: 'wasm'` directly.
-- The default loader points at the non-threaded WASM build because the threaded variant requires `SharedArrayBuffer` (which needs COOP/COEP headers Flutter's dev server doesn't set). The SIMD non-threaded variant is still substantially faster than the tflite-js path.
-
-### Web-specific API differences
-
-- Call `initializeWeb()` before `Interpreter.fromAsset(...)` or `Interpreter.fromBytes(...)` (only required for the tflite-js runtime; `LiteRtInterpreter` does not need it).
-- `Interpreter.fromAsset(...)` and `Interpreter.fromBytes(...)` are the supported model-loading APIs on web.
-- `Interpreter.fromFile(...)`, `Interpreter.fromBuffer(...)`, and `Interpreter.fromAddress(...)` are not supported on web.
-- `IsolateInterpreter.create(address: ...)` is not supported on web. Use the regular `Interpreter` directly (or `IsolateInterpreter.createFromInterpreter(...)`).
-- Delegate and interpreter tuning options (GPU/XNNPACK/CoreML/threads) are accepted for API compatibility but are effectively no-ops on the tflite-js `Interpreter`. For GPU on web, use `LiteRtInterpreter` instead.
-
-### Using this from a web app or plugin
-
-- Avoid `dart:io`-only code paths in the browser.
-- Load files/images/models as bytes (`Uint8List`) using Flutter assets, HTTP, file picker, or drag-and-drop.
-- Run your app with `flutter run -d chrome` and build with `flutter build web`.
-- If you are writing a plugin on top of `flutter_litert`, add a web code path that works with bytes instead of file paths / native handles.
-- For the LiteRT.js path, rely on the auto-loader by default. Provide your own loader or self-hosted URLs only when your app needs stricter CSP, offline operation, or pinned assets.
-
-## On-device training
+### On-device training
 
 `flutter_litert` supports [on-device training](https://ai.google.dev/edge/litert/examples/on_device_training/overview) on native platforms via `SignatureRunner`, which lets you call named entry points (signatures) in a TFLite model. On-device training adjusts an existing model's weights using new data. The `.tflite` model architecture is fixed at export time and is never modified on-device.
 
@@ -498,11 +416,11 @@ Two persistence approaches are supported:
 1. **Lightweight (`get_weights`/`set_weights`)**: Weights are extracted via builtin ops and serialized in Dart. Works with the standard bundled native runtime, no Flex delegate or extra downloads required.
 2. **Checkpoint-based (`save`/`restore`)**: Google's standard approach using `tf.raw_ops.SaveV2`/`RestoreV2` with `SELECT_TF_OPS`. Writes TensorFlow checkpoint files directly from the model. Requires the [Flex delegate](#flexdelegate-for-complex-model-training).
 
-### Lightweight persistence (get_weights/set_weights)
+#### Lightweight persistence (get_weights/set_weights)
 
 A training-capable model using this approach exposes four signatures: `train`, `infer`, `get_weights`, and `set_weights`.
 
-#### Preparing a training model (Python)
+##### Preparing a training model (Python)
 
 Export a TensorFlow model with named signatures:
 
@@ -556,7 +474,7 @@ tflite_model = converter.convert()
 
 See `scripts/generate_training_model.py` for a complete working example.
 
-#### Training loop (Dart)
+##### Training loop (Dart)
 
 ```dart
 final interpreter = await Interpreter.fromAsset('training_model.tflite');
@@ -578,7 +496,7 @@ print('Prediction: ${output[0][0]}');
 inferRunner.close();
 ```
 
-#### Persisting trained weights across app sessions
+##### Persisting trained weights across app sessions
 
 The `.tflite` model file is read-only, so trained weights live in memory and are lost when the interpreter is closed. Use `get_weights` and `set_weights` to persist them:
 
@@ -606,7 +524,7 @@ setRunner.close();
 
 This uses only TFLite builtin ops (`ReadVariable`, `AssignVariable`), no Flex delegate, no extra native libraries. It works with the standard bundled runtime on native platforms.
 
-### Inspecting variable tensors
+#### Inspecting variable tensors
 
 You can inspect a model's trainable (variable) tensors at runtime, useful for debugging training or verifying weight restoration:
 
@@ -625,11 +543,11 @@ for (var i = 0; i < count; i++) {
 
 Use `resetVariableTensors()` to reset all trainable weights to their initial values (as defined in the `.tflite` file).
 
-### Checkpoint-based persistence (save/restore)
+#### Checkpoint-based persistence (save/restore)
 
 Google's standard approach to on-device training persistence uses `tf.raw_ops.SaveV2` and `tf.raw_ops.RestoreV2` with `SELECT_TF_OPS`. This writes TensorFlow checkpoint files (`.index` + `.data-00000-of-00001`) directly from the model. This approach requires the Flex delegate.
 
-#### Preparing a save/restore model (Python)
+##### Preparing a save/restore model (Python)
 
 Export a model with `save` and `restore` signatures that take a checkpoint path string:
 
@@ -700,7 +618,7 @@ tflite_model = converter.convert()
 
 See `scripts/generate_training_model_flex.py` for a complete working example.
 
-#### Save/restore in Dart
+##### Save/restore in Dart
 
 ```dart
 // Requires flutter_litert_flex in pubspec.yaml
@@ -739,7 +657,7 @@ restore.close();
 // Model weights are now restored, ready for inference or continued training
 ```
 
-#### Choosing a persistence approach
+##### Choosing a persistence approach
 
 | | Lightweight (`get_weights`/`set_weights`) | Checkpoint (`save`/`restore`) |
 |---|---|---|
@@ -749,16 +667,16 @@ restore.close();
 | **Best for** | Simple models, size-constrained apps | Google-standard models, complex architectures |
 | **Model prep** | `get_weights`/`set_weights` signatures | `save`/`restore` signatures with `tf.raw_ops.SaveV2`/`RestoreV2` |
 
-### FlexDelegate for complex model training
+#### FlexDelegate for complex model training
 
-The weight persistence approach above works with models whose training graph uses only TFLite builtins. However, training models with layers like `Conv2D` or `BatchNormalization` can generate gradient ops (e.g., `Conv2DBackpropFilter`) that require `SELECT_TF_OPS`. For these models, you need the **Flex delegate**, a separate native package whose library size depends on the platform.
+The weight persistence approach above works with models whose training graph uses only TFLite builtins. However, training models with layers like `Conv2D` or `BatchNormalization` can generate gradient ops (e.g., `Conv2DBackpropFilter`) that require `SELECT_TF_OPS`. For these models, you need the **Flex delegate**, a separate native package whose library size depends on the platform. The Flex delegate is not deprecated.
 
 Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex) to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_litert: ^3.2.0
-  flutter_litert_flex: ^1.2.0
+  flutter_litert: ^3.2.1
+  flutter_litert_flex: ^1.3.0
 ```
 
 That's it. The native library is downloaded or linked automatically on the first build for supported native platforms. Then use the async constructor, which is required on Android and works everywhere else:
@@ -771,6 +689,153 @@ final interpreter = Interpreter.fromFile(model, options: options);
 ```
 
 > **Note:** Dense-only models (linear regression, MLP classifiers) do not need the Flex delegate, their gradient ops decompose into TFLite builtins. The Flex delegate is only needed when training convolutional or batch-normalized layers.
+
+### Custom ops
+
+`flutter_litert` bundles MediaPipe's `Convolution2DTransposeBias` custom op out of the box on native platforms. To use it, call `addMediaPipeCustomOps()` on your interpreter options before creating the interpreter:
+
+```dart
+final options = InterpreterOptions();
+options.addMediaPipeCustomOps();
+final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
+```
+
+This is required for models like MediaPipe Selfie Segmentation (the binary `selfie_segmenter.tflite` and `selfie_segmenter_landscape.tflite` variants). The [`face_detection_tflite`](https://pub.dev/packages/face_detection_tflite) package uses this for its selfie segmentation feature. The web runtimes do not expose a native custom-op registration API.
+
+#### Adding your own custom ops
+
+If your TFLite model uses a custom op that isn't already bundled, you need to provide three things: a C implementation, per-platform native builds, and Dart FFI registration. The bundled `Convolution2DTransposeBias` op (in `src/custom_ops/`) serves as a complete working example.
+
+##### 1. Write the C implementation
+
+Implement the four TFLite op callbacks and export a registration function:
+
+```c
+#include "tensorflow_lite/common.h"
+#include "tensorflow_lite/c_api.h"
+
+static void* MyOpInit(TfLiteContext* context, const char* buffer, size_t length) {
+    // Parse custom_options, allocate state. Return a pointer to your state.
+}
+
+static void MyOpFree(TfLiteContext* context, void* buffer) {
+    // Free state allocated in Init.
+}
+
+static TfLiteStatus MyOpPrepare(TfLiteContext* context, TfLiteNode* node) {
+    // Validate input/output tensor shapes, types, and dimensions.
+    // Do NOT call context->ResizeTensor for custom ops, validate
+    // against the shapes the model graph already defines.
+    return kTfLiteOk;
+}
+
+static TfLiteStatus MyOpEval(TfLiteContext* context, TfLiteNode* node) {
+    // Run the actual computation.
+    return kTfLiteOk;
+}
+
+static TfLiteRegistration g_registration = {
+    MyOpInit,
+    MyOpFree,
+    MyOpPrepare,
+    MyOpEval,
+    NULL,                   // profiling_string
+    kTfLiteBuiltinCustom,   // builtin_code
+    "MyCustomOpName",       // custom_name (must match the op name in your .tflite model)
+    1,                      // version
+    NULL,                   // registration_external
+};
+
+// Export with visibility so the linker doesn't strip it and FFI can find it
+__attribute__((used, visibility("default")))
+TfLiteRegistration* MyPlugin_RegisterMyCustomOp(void) {
+    return &g_registration;
+}
+```
+
+##### 2. Build and bundle per platform
+
+Each platform needs to compile your C code and make the resulting library available at runtime.
+
+**Android**: Add a CMakeLists.txt that compiles your `.c` into a shared library, and point to it from your plugin's `android/build.gradle`:
+
+```gradle
+android {
+    externalNativeBuild {
+        cmake { path "../src/CMakeLists.txt" }
+    }
+}
+```
+
+**Linux / Windows**: In your plugin's `linux/CMakeLists.txt` or `windows/CMakeLists.txt`, add your source directory as a subdirectory and include the resulting library in `bundled_libraries`:
+
+```cmake
+add_subdirectory("../src" "${CMAKE_CURRENT_BINARY_DIR}/my_custom_ops")
+set(my_plugin_bundled_libraries $<TARGET_FILE:my_custom_ops> PARENT_SCOPE)
+```
+
+**macOS**: Either pre-build a universal `.dylib` and ship it as a CocoaPods resource in your `.podspec`:
+
+```ruby
+s.resources = ['my_custom_ops.dylib']
+```
+
+Or compile from source using a script phase.
+
+**iOS**: Static linking is required. Create a forwarder `.c` file in `ios/Classes/` that `#include`s your implementation:
+
+```c
+// ios/Classes/my_custom_ops.c
+#include "../../src/my_custom_op.c"
+
+// Force-load so the linker doesn't strip the symbol
+__attribute__((used))
+void MyPlugin_ForceLoadCustomOps(void) {
+    (void)MyPlugin_RegisterMyCustomOp;
+}
+```
+
+Then call the force-load function from your Swift/ObjC plugin registration to prevent dead code elimination.
+
+##### 3. Register from Dart via FFI
+
+Load the native library and register the op with the interpreter options:
+
+```dart
+import 'dart:ffi';
+import 'dart:io';
+import 'package:flutter_litert/flutter_litert.dart';
+
+// Load the native library (platform-specific)
+final DynamicLibrary customOpsLib = Platform.isIOS
+    ? DynamicLibrary.process()  // iOS: statically linked
+    : DynamicLibrary.open('libmy_custom_ops.so');  // Android/Linux/etc.
+
+// Look up the registration function
+final registerFn = customOpsLib.lookupFunction<
+    Pointer<Void> Function(),
+    Pointer<Void> Function()
+>('MyPlugin_RegisterMyCustomOp');
+
+final registration = registerFn();
+
+// Register before creating the interpreter
+final options = InterpreterOptions();
+options.addCustomOp(
+  name: 'MyCustomOpName',
+  registration: registration,
+  minVersion: 1,
+  maxVersion: 1,
+);
+final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
+```
+
+#### Custom Ops Tips
+
+- **The registration must remain valid.** `InterpreterOptions.addCustomOp(...)` keeps the op-name string alive until `InterpreterOptions.delete()`, but the returned registration pointer should point to static/native storage that remains valid for every interpreter created from those options.
+- **iOS linker stripping.** Even if the C symbol is compiled in, the linker will strip it if nothing references it. You need a force-load function called from your plugin's Swift/ObjC registration code.
+- **Windows CRT heap mismatch.** If your custom op DLL calls `malloc` but TFLite frees with its own `free` (from a different DLL), you get heap corruption. Resolve `TfLiteIntArrayCreate` from the TFLite DLL at runtime so allocations use TFLite's heap. See `src/custom_ops/transpose_conv_bias.c` for a working example.
+- **Web is not supported.** The TFLite.js/WASM runtime does not have a custom op registration API.
 
 ## Inference utilities
 
@@ -828,13 +893,13 @@ mediaPipeInterpreter.allocateTensors();
 `InterpreterFactory.create()` returns both the configured `InterpreterOptions` and the `Delegate` (if one was created). The delegate is needed if you want to manage its lifecycle or decide whether to use an `IsolateInterpreter`:
 
 ```dart
-// IsolateInterpreter is only useful when no hardware delegate is active
+// Returns an isolate only when it helps: no active hardware delegate, and not on macOS.
 final isolate = await InterpreterFactory.createIsolateIfNeeded(interpreter, delegate);
 ```
 
 ### InterpreterPool
 
-Thread-safe round-robin pool of interpreters with per-slot serialization locks. Useful when you need concurrent inference (e.g. processing video frames) without XNNPACK thread contention:
+Round-robin pool of interpreters that serializes overlapping async calls per slot with a per-slot lock. Useful when you need to interleave inference work (e.g. processing video frames) without XNNPACK thread contention:
 
 ```dart
 import 'package:flutter_litert/flutter_litert.dart';
@@ -905,152 +970,133 @@ final originalBox = scaleFromLetterbox(
 );
 ```
 
-## Custom ops
+## Platform support
 
-`flutter_litert` bundles MediaPipe's `Convolution2DTransposeBias` custom op out of the box on native platforms. To use it, call `addMediaPipeCustomOps()` on your interpreter options before creating the interpreter:
+flutter_litert ships two independent native runtimes, one per API. The classic `Interpreter` API runs on the TensorFlow Lite / LiteRT runtime, while the `CompiledModel` API (LiteRT Next, the recommended path for GPU and NPU) runs on a separate `libLiteRt` runtime. They are bundled side by side, so the two runtimes carry their own versions per platform.
 
-```dart
-final options = InterpreterOptions();
-options.addMediaPipeCustomOps();
-final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
-```
+| Platform | Interpreter runtime | CompiledModel runtime |
+|----------|---------------------|-----------------------|
+| Android | LiteRT 1.4.2 | LiteRT Next 2.1.5 |
+| iOS | TensorFlow Lite 2.20.0 | LiteRT Next |
+| macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
+| Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
+| Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
+| Web | LiteRT.js 2.4.0 / TFLite.js (WASM) | not supported |
 
-This is required for models like MediaPipe Selfie Segmentation (the binary `selfie_segmenter.tflite` and `selfie_segmenter_landscape.tflite` variants). The [`face_detection_tflite`](https://pub.dev/packages/face_detection_tflite) package uses this for its selfie segmentation feature. The web runtimes do not expose a native custom-op registration API.
+Bundling:
+- Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` from the `2.1.5` AAR.
+- iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` xcframework (release `litert-ios-v1.0.0`, a commit-pinned LiteRT Next build, commit `1adc2475`).
+- macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.1.5 wheel, bundled via CMake.
+- Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.4.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel is not available on web.
 
-### Adding your own custom ops
+> Intel Macs only: the iOS simulator is not supported under Swift Package Manager on x86_64. You have two options: test using a real iOS device or switch to CocoaPods to use the simulator. This applies to Intel Macs only.
 
-If your TFLite model uses a custom op that isn't already bundled, you need to provide three things: a C implementation, per-platform native builds, and Dart FFI registration. The bundled `Convolution2DTransposeBias` op (in `src/custom_ops/`) serves as a complete working example.
+iOS and macOS will be migrated to LiteRT as official CocoaPods artifacts become available.
 
-#### 1. Write the C implementation
+## Web support
 
-Implement the four TFLite op callbacks and export a registration function:
+`flutter_litert` supports Flutter Web with two interchangeable runtimes:
 
-```c
-#include "tensorflow_lite/common.h"
-#include "tensorflow_lite/c_api.h"
+1. **`Interpreter`** (standard cross-platform class). Bound to the third-party `tflite-js` runtime via `tf-tflite.min.js`. Pure CPU/WASM execution. Existing API, no setup beyond `initializeWeb()`.
+2. **`LiteRtInterpreter`** (opt-in LiteRT.js runtime, since 2.5.0). Google's official **LiteRT.js** runtime. Defaults to WASM; pass `accelerator: 'webgpu'` to use the **WebGPU** delegate with WASM fallback. Same .tflite models, dramatically faster on browsers that support WebGPU. Async: `runForMultipleInputs(...)` returns a `Future`.
 
-static void* MyOpInit(TfLiteContext* context, const char* buffer, size_t length) {
-    // Parse custom_options, allocate state. Return a pointer to your state.
-}
+### Web Demo / Example
 
-static void MyOpFree(TfLiteContext* context, void* buffer) {
-    // Free state allocated in Init.
-}
+For a complete web demo (with WebGPU), see [pose_detection](https://github.com/hugocornellier/pose_detection) and its [web example](https://github.com/hugocornellier/pose_detection/tree/e93ffe99bdc05f4a397d3bf4b70f2a9454b3b0f5/example_web).
 
-static TfLiteStatus MyOpPrepare(TfLiteContext* context, TfLiteNode* node) {
-    // Validate input/output tensor shapes, types, and dimensions.
-    // Do NOT call context->ResizeTensor for custom ops, validate
-    // against the shapes the model graph already defines.
-    return kTfLiteOk;
-}
+### Quick start (default tflite-js runtime)
 
-static TfLiteStatus MyOpEval(TfLiteContext* context, TfLiteNode* node) {
-    // Run the actual computation.
-    return kTfLiteOk;
-}
-
-static TfLiteRegistration g_registration = {
-    MyOpInit,
-    MyOpFree,
-    MyOpPrepare,
-    MyOpEval,
-    NULL,                   // profiling_string
-    kTfLiteBuiltinCustom,   // builtin_code
-    "MyCustomOpName",       // custom_name (must match the op name in your .tflite model)
-    1,                      // version
-    NULL,                   // registration_external
-};
-
-// Export with visibility so the linker doesn't strip it and FFI can find it
-__attribute__((used, visibility("default")))
-TfLiteRegistration* MyPlugin_RegisterMyCustomOp(void) {
-    return &g_registration;
-}
-```
-
-#### 2. Build and bundle per platform
-
-Each platform needs to compile your C code and make the resulting library available at runtime.
-
-**Android**: Add a CMakeLists.txt that compiles your `.c` into a shared library, and point to it from your plugin's `android/build.gradle`:
-
-```gradle
-android {
-    externalNativeBuild {
-        cmake { path "../src/CMakeLists.txt" }
-    }
-}
-```
-
-**Linux / Windows**: In your plugin's `linux/CMakeLists.txt` or `windows/CMakeLists.txt`, add your source directory as a subdirectory and include the resulting library in `bundled_libraries`:
-
-```cmake
-add_subdirectory("../src" "${CMAKE_CURRENT_BINARY_DIR}/my_custom_ops")
-set(my_plugin_bundled_libraries $<TARGET_FILE:my_custom_ops> PARENT_SCOPE)
-```
-
-**macOS**: Either pre-build a universal `.dylib` and ship it as a CocoaPods resource in your `.podspec`:
-
-```ruby
-s.resources = ['my_custom_ops.dylib']
-```
-
-Or compile from source using a script phase.
-
-**iOS**: Static linking is required. Create a forwarder `.c` file in `ios/Classes/` that `#include`s your implementation:
-
-```c
-// ios/Classes/my_custom_ops.c
-#include "../../src/my_custom_op.c"
-
-// Force-load so the linker doesn't strip the symbol
-__attribute__((used))
-void MyPlugin_ForceLoadCustomOps(void) {
-    (void)MyPlugin_RegisterMyCustomOp;
-}
-```
-
-Then call the force-load function from your Swift/ObjC plugin registration to prevent dead code elimination.
-
-#### 3. Register from Dart via FFI
-
-Load the native library and register the op with the interpreter options:
+Call `initializeWeb()` before creating an `Interpreter` in a browser. It is a no-op on native, so you can call it unconditionally.
 
 ```dart
-import 'dart:ffi';
-import 'dart:io';
 import 'package:flutter_litert/flutter_litert.dart';
 
-// Load the native library (platform-specific)
-final DynamicLibrary customOpsLib = Platform.isIOS
-    ? DynamicLibrary.process()  // iOS: statically linked
-    : DynamicLibrary.open('libmy_custom_ops.so');  // Android/Linux/etc.
+await initializeWeb();
 
-// Look up the registration function
-final registerFn = customOpsLib.lookupFunction<
-    Pointer<Void> Function(),
-    Pointer<Void> Function()
->('MyPlugin_RegisterMyCustomOp');
+final interpreter = await Interpreter.fromAsset('assets/model.tflite');
+// or: final interpreter = await Interpreter.fromBytes(modelBytes);
 
-final registration = registerFn();
-
-// Register before creating the interpreter
-final options = InterpreterOptions();
-options.addCustomOp(
-  name: 'MyCustomOpName',
-  registration: registration,
-  minVersion: 1,
-  maxVersion: 1,
-);
-final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
+interpreter.run(input, output);
 ```
 
-### Custom Ops Tips
+By default, `initializeWeb()` loads the TFLite.js / TensorFlow.js scripts from a CDN. You can pass custom script URLs to self-host the files (for offline use or stricter CSP).
 
-- **The registration must remain valid.** `InterpreterOptions.addCustomOp(...)` keeps the op-name string alive until `InterpreterOptions.delete()`, but the returned registration pointer should point to static/native storage that remains valid for every interpreter created from those options.
-- **iOS linker stripping.** Even if the C symbol is compiled in, the linker will strip it if nothing references it. You need a force-load function called from your plugin's Swift/ObjC registration code.
-- **Windows CRT heap mismatch.** If your custom op DLL calls `malloc` but TFLite frees with its own `free` (from a different DLL), you get heap corruption. Resolve `TfLiteIntArrayCreate` from the TFLite DLL at runtime so allocations use TFLite's heap. See `src/custom_ops/transpose_conv_bias.c` for a working example.
-- **Web is not supported.** The TFLite.js/WASM runtime does not have a custom op registration API.
+### LiteRT.js runtime (WASM or WebGPU)
+
+Use `LiteRtInterpreter` for Google's official LiteRT.js runtime on web. It defaults to WASM; pass `accelerator: 'webgpu'` when you want GPU acceleration. **Zero `index.html` setup**: the runtime is auto-loaded from a CDN on first use.
+
+```dart
+import 'package:flutter_litert/flutter_litert.dart';
+
+final lrt = await LiteRtInterpreter.fromBytes(
+  modelBytes,
+  accelerator: 'webgpu', // omit or use 'wasm' for the default WASM path
+);
+
+await lrt.runForMultipleInputs(
+  <Object>[inputFloat32List],
+  <int, Object>{0: outputFloat32List}, // also accepts ByteBuffer or nested lists
+);
+```
+
+The first `LiteRtInterpreter.fromBytes(...)` call injects a `<script type="module">` that imports `@litertjs/core` from jsDelivr, calls `loadLiteRt(...)`, and exposes the runtime on `window.LiteRt`. Subsequent calls reuse the loaded module.
+
+To self-host or pin a specific build, call `configureLiteRtWebLoader(...)` once before the first interpreter:
+
+```dart
+configureLiteRtWebLoader(
+  moduleUrl: '/assets/litertjs/index.js',          // your bundled path
+  wasmUrl  : '/assets/litertjs/litert_wasm_internal.js',
+);
+```
+
+Or disable the auto-loader entirely if you want to load it from your own `<script>` tag:
+
+```dart
+configureLiteRtWebLoader(autoLoad: false);
+```
+
+Notes:
+
+- `runForMultipleInputs` is **async** on this runtime; await it.
+- Output buffers may be `Float32List` (preferred, single bulk copy), `ByteBuffer`, or the legacy `List<List<List<double>>>` shape used by tflite-js callers.
+- `webgpu` falls back to `wasm` if LiteRT.js cannot compile the model for the WebGPU delegate.
+- The WebGPU path requires Chrome / Edge 113 or newer (or Firefox / Safari with the flag enabled). On unsupported browsers, pass `accelerator: 'wasm'` directly.
+- The default loader points at the non-threaded WASM build because the threaded variant requires `SharedArrayBuffer` (which needs COOP/COEP headers Flutter's dev server doesn't set). The SIMD non-threaded variant is still substantially faster than the tflite-js path.
+
+### Web-specific API differences
+
+- Call `initializeWeb()` before `Interpreter.fromAsset(...)` or `Interpreter.fromBytes(...)` (only required for the tflite-js runtime; `LiteRtInterpreter` does not need it).
+- `Interpreter.fromAsset(...)` and `Interpreter.fromBytes(...)` are the supported model-loading APIs on web.
+- `Interpreter.fromFile(...)`, `Interpreter.fromBuffer(...)`, and `Interpreter.fromAddress(...)` are not supported on web.
+- `IsolateInterpreter.create(address: ...)` is not supported on web. Use the regular `Interpreter` directly (or `IsolateInterpreter.createFromInterpreter(...)`).
+- Delegate and interpreter tuning options (GPU/XNNPACK/CoreML/threads) are accepted for API compatibility but are effectively no-ops on the tflite-js `Interpreter`. For GPU on web, use `LiteRtInterpreter` instead.
+
+### Using this from a web app or plugin
+
+- Avoid `dart:io`-only code paths in the browser.
+- Load files/images/models as bytes (`Uint8List`) using Flutter assets, HTTP, file picker, or drag-and-drop.
+- Run your app with `flutter run -d chrome` and build with `flutter build web`.
+- If you are writing a plugin on top of `flutter_litert`, add a web code path that works with bytes instead of file paths / native handles.
+- For the LiteRT.js path, rely on the auto-loader by default. Provide your own loader or self-hosted URLs only when your app needs stricter CSP, offline operation, or pinned assets.
+
+## Version notes
+
+### Upgrading to 3.0.0
+
+3.0.0 is a major release: it introduces the LiteRT Next `CompiledModel` API and deprecates the manual GPU/Metal/CoreML delegates. The classic `Interpreter` API stays source-compatible; no method signatures changed. Two `IsolateInterpreter` behavior changes are worth knowing about before you upgrade:
+
+- **In-flight calls now queue instead of being silently dropped.** Previously, calling `run()` or `runForMultipleInputs()` while a run was still in flight returned without writing the outputs. Now the call waits its turn and completes with real results. If you relied on that as frame-skipping (for example, one inference per camera frame), skip explicitly instead:
+
+  ```dart
+  if (isolate.state != IsolateInterpreterState.loading) {
+    isolate.runForMultipleInputs(inputs, outputs);
+  }
+  ```
+
+- **Calling `run()` after `close()` now throws `StateError`** instead of returning silently. Closing an interpreter while a run is in flight also throws, rather than reading freed tensors.
+
+The GPU, Metal, and CoreML delegates are deprecated in 3.0.0 (see [Delegates](#delegates)) but remain functional; they are planned for removal in 4.0.0. The `Interpreter` API, the CPU `XNNPackDelegate`, and `FlexDelegate` are not deprecated.
 
 ## Credits
 

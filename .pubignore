@@ -21,6 +21,12 @@ example/flex_test_host/
 # only example-source cloners need them, and they get them from GitHub.
 example/assets/
 
+# README/doc media: pub.dev and GitHub render these directly from the repo
+# (relative README paths resolve against the repository), so they don't need
+# to ship in the package archive. Keeps `pub get` lean; not used at runtime.
+assets/pose-detection-demo.webp
+assets/litert-banner.png
+
 # Local delegate benchmark harnesses. Keep them in the repository for
 # repeatable profiling without shipping machine-specific paths to pub.dev.
 example/integration_test/coreml_model_sweep_test.dart

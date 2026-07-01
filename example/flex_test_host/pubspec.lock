@@ -89,15 +89,15 @@ packages:
       path: "../.."
       relative: true
     source: path
-    version: "3.0.0"
+    version: "3.2.1"
   flutter_litert_flex:
     dependency: "direct main"
     description:
       name: flutter_litert_flex
-      sha256: "31f214032e1a84ba168f21a6f53b7fa7fbef71d9e4d917806b965d66ef21bbdf"
+      sha256: "811695cb238db8738557cf50c9c82ef3daf37f162fd71e387afcb1e13b4b5c68"
       url: "https://pub.dev"
     source: hosted
-    version: "1.2.0"
+    version: "1.3.0"
   flutter_test:
     dependency: "direct dev"
     description: flutter

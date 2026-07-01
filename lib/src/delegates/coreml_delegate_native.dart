@@ -23,6 +23,11 @@ import '../bindings/tensorflow_lite_bindings_generated.dart';
 import '../native/delegate.dart';
 import 'delegate_library_loader.dart';
 
+// Re-export the CoreML device-selection enum so callers using the public
+// barrel can name it without importing the generated bindings.
+export '../bindings/tensorflow_lite_bindings_generated.dart'
+    show TfLiteCoreMlDelegateEnabledDevices;
+
 /// Lazily loaded CoreML-specific binding.
 ///
 /// On iOS the CoreML symbols live in the main process (statically linked from
