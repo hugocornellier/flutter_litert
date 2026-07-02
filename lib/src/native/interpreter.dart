@@ -24,7 +24,8 @@ import '../bindings/bindings.dart';
 import '../bindings/tensorflow_lite_bindings_generated.dart';
 
 import '../ffi/helper.dart';
-import '../util/flutter_asset_utils.dart';
+import '../util/flutter_asset_utils_stub.dart'
+    if (dart.library.ui) '../util/flutter_asset_utils.dart';
 import 'interpreter_options.dart';
 import 'model.dart';
 import 'signature_runner.dart';
@@ -265,9 +266,21 @@ class Interpreter {
 
   /// Run for single input and output
   void run(Object input, Object output) {
-    var map = <int, Object>{};
-    map[0] = output;
-    runForMultipleInputs([input], map);
+    final outputCount = _outputTensorsCount ??=
+        tfliteBinding.TfLiteInterpreterGetOutputTensorCount(_interpreter);
+    if (outputCount != 1) {
+      // Preserve the map path and its missing-output failure mode.
+      runForMultipleInputs([input], <int, Object>{0: output});
+      return;
+    }
+    // Single-output fast path: same steps as runForMultipleInputs without
+    // allocating and indexing the one-entry output map.
+    _inputTensors = null;
+    _outputTensors = null;
+    runInference([input]);
+    Tensor(
+      tfliteBinding.TfLiteInterpreterGetOutputTensor(_interpreter, 0),
+    ).copyTo(output);
   }
 
   /// Run for multiple inputs and outputs
@@ -281,9 +294,14 @@ class Interpreter {
     _inputTensors = null;
     _outputTensors = null;
     runInference(inputs);
-    var outputTensors = getOutputTensors();
-    for (var i = 0; i < outputTensors.length; i++) {
-      outputTensors[i].copyTo(outputs[i]!);
+    // Fresh per-index pointers without rebuilding the wrapper list (the
+    // count is stable between allocateTensors calls, the pointers are not).
+    final outputCount = _outputTensorsCount ??=
+        tfliteBinding.TfLiteInterpreterGetOutputTensorCount(_interpreter);
+    for (var i = 0; i < outputCount; i++) {
+      Tensor(
+        tfliteBinding.TfLiteInterpreterGetOutputTensor(_interpreter, i),
+      ).copyTo(outputs[i]!);
     }
   }
 
@@ -293,23 +311,50 @@ class Interpreter {
       throw ArgumentError('Input error: Inputs should not be null or empty.');
     }
 
-    var inputTensors = getInputTensors();
+    final inputCount = _inputTensorsCount ??=
+        tfliteBinding.TfLiteInterpreterGetInputTensorCount(_interpreter);
+    if (inputs.length > inputCount) {
+      throw RangeError.range(inputs.length - 1, 0, inputCount - 1, 'inputs');
+    }
 
-    for (int i = 0; i < inputs.length; i++) {
-      var tensor = inputTensors.elementAt(i);
+    // Steady-state fast path: allocated and no resize needed. One pass with
+    // a fresh pointer per index, no wrapper list churn. Any resize or
+    // missing allocation falls through to the two-pass path below, which
+    // re-reads every pointer because resize/allocate relocates tensors.
+    var deferred = !_allocated;
+    for (int i = 0; i < inputs.length && !deferred; i++) {
+      final tensor = Tensor(
+        tfliteBinding.TfLiteInterpreterGetInputTensor(_interpreter, i),
+      );
       final newShape = tensor.getInputShapeIfDifferent(inputs[i]);
       if (newShape != null) {
         resizeInputTensor(i, newShape);
+        deferred = true;
+      } else {
+        tensor.setTo(inputs[i]);
       }
     }
 
-    if (!_allocated) {
-      allocateTensors();
-    }
+    if (deferred) {
+      for (int i = 0; i < inputs.length; i++) {
+        final tensor = Tensor(
+          tfliteBinding.TfLiteInterpreterGetInputTensor(_interpreter, i),
+        );
+        final newShape = tensor.getInputShapeIfDifferent(inputs[i]);
+        if (newShape != null) {
+          resizeInputTensor(i, newShape);
+        }
+      }
 
-    inputTensors = getInputTensors();
-    for (int i = 0; i < inputs.length; i++) {
-      inputTensors.elementAt(i).setTo(inputs[i]);
+      if (!_allocated) {
+        allocateTensors();
+      }
+
+      for (int i = 0; i < inputs.length; i++) {
+        Tensor(
+          tfliteBinding.TfLiteInterpreterGetInputTensor(_interpreter, i),
+        ).setTo(inputs[i]);
+      }
     }
 
     _inferenceStopwatch

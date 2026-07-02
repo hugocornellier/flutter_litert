@@ -126,12 +126,21 @@ class PackedYuv {
 ///
 /// Returns null for unsupported shapes (non-positive or odd [width] or
 /// [height]).
+///
+/// [into] optionally receives the packed bytes instead of allocating a
+/// fresh buffer, which matters in per-frame camera loops: a 720p pack
+/// otherwise allocates and zero-fills ~1.4 MB per call. Its length must be
+/// exactly `width * height * 3 ~/ 2` (throws [ArgumentError] otherwise).
+/// Every byte is written (truncated source planes zero-fill their tail),
+/// so a reused buffer needs no clearing and the output is byte-identical
+/// to the allocating form.
 PackedYuv? packYuv420({
   required int width,
   required int height,
   required YuvPlane y,
   required YuvPlane u,
   YuvPlane? v,
+  Uint8List? into,
 }) {
   if (width <= 0 || height <= 0 || (width & 1) != 0 || (height & 1) != 0) {
     return null;
@@ -139,7 +148,14 @@ PackedYuv? packYuv420({
 
   final int ySize = width * height;
   final int uvSize = width * (height ~/ 2);
-  final Uint8List out = Uint8List(ySize + uvSize);
+  if (into != null && into.length != ySize + uvSize) {
+    throw ArgumentError.value(
+      into.length,
+      'into.length',
+      'Expected ${ySize + uvSize} bytes for ${width}x$height YUV420.',
+    );
+  }
+  final Uint8List out = into ?? Uint8List(ySize + uvSize);
 
   _copyPlaneRows(
     src: y.bytes,
@@ -222,18 +238,29 @@ void _copyPlaneRows({
   required Uint8List dst,
   required int dstOffset,
 }) {
+  // Truncated sources zero-fill the uncopied tail so output is identical
+  // whether dst is freshly allocated (already zero) or a reused buffer.
   if (srcStride == rowBytes) {
     final int total = rowBytes * rows;
     final int copy = total <= src.length ? total : src.length;
     dst.setRange(dstOffset, dstOffset + copy, src);
+    if (copy < total) {
+      dst.fillRange(dstOffset + copy, dstOffset + total, 0);
+    }
     return;
   }
   for (int r = 0; r < rows; r++) {
     final int sStart = r * srcStride;
-    if (sStart >= src.length) break;
+    final int dStart = dstOffset + r * rowBytes;
+    if (sStart >= src.length) {
+      dst.fillRange(dStart, dstOffset + rows * rowBytes, 0);
+      return;
+    }
     final int available = src.length - sStart;
     final int copy = available < rowBytes ? available : rowBytes;
-    final int dStart = dstOffset + r * rowBytes;
     dst.setRange(dStart, dStart + copy, src, sStart);
+    if (copy < rowBytes) {
+      dst.fillRange(dStart + copy, dStart + rowBytes, 0);
+    }
   }
 }

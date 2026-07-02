@@ -6,7 +6,7 @@ enum PerformanceMode {
   /// XNNPACK delegate (CPU-optimized, all native platforms).
   xnnpack,
 
-  /// GPU delegate (iOS Metal / Android OpenGL).
+  /// GPU delegate (Metal on iOS and macOS, OpenGL/OpenCL on Android).
   gpu,
 
   /// CoreML delegate (iOS/macOS only).

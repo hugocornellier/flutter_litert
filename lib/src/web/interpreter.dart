@@ -13,8 +13,12 @@ import '../util/flutter_asset_utils.dart';
 
 /// Web implementation of Interpreter.
 ///
-/// Uses TFLite.js WASM runtime for inference. The public API matches the
-/// native Interpreter so consumers don't need conditional code.
+/// Uses the TFLite.js WASM runtime for inference. The supported subset of the
+/// API (`fromAsset`, `fromBytes`, `run`, `runForMultipleInputs`, and the tensor
+/// getters) matches the native Interpreter, so common inference code needs no
+/// conditional branching. Native-only members (`fromFile`, `fromBuffer`,
+/// `fromAddress`, `resizeInputTensor`, the signature-runner and variable-tensor
+/// APIs, and `address`) throw [UnsupportedError] on web.
 class Interpreter {
   TFLiteModel _model;
   bool _deleted = false;
@@ -290,7 +294,10 @@ class Interpreter {
   int get address =>
       throw UnsupportedError('Interpreter.address is not supported on web.');
 
-  /// Whether the interpreter is still allocated.
+  /// Whether the interpreter is still usable (not yet closed).
+  ///
+  /// On web, tensor allocation is a no-op, so this reports open/closed state
+  /// (`!deleted`) rather than native tensor allocation.
   bool get isAllocated => !_deleted;
 
   /// Whether the interpreter has been deleted.

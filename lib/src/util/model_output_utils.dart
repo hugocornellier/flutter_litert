@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'math_utils.dart';
@@ -279,6 +280,18 @@ List<Detection> postProcessDetectionsFlat(
   int? filterClassId,
   bool useFastSingleClass = false,
 }) {
+  // Explicit up-front bound: the SIMD path reads through out.buffer with
+  // absolute offsets, which would otherwise silently read past out's
+  // logical extent (e.g. a view into a larger buffer) where the scalar
+  // element reads threw.
+  if (out.length < channels * anchors) {
+    throw ArgumentError.value(
+      out.length,
+      'out.length',
+      'Expected at least channels * anchors = ${channels * anchors} floats.',
+    );
+  }
+
   // C == 84 -> 4 box coords + 80 class scores (YOLOv8). Otherwise treat
   // channel 4 as objectness and the remainder as class logits (YOLOv5-style),
   // matching postProcessDetections.
@@ -295,6 +308,16 @@ List<Detection> postProcessDetectionsFlat(
       filterClassId != null &&
       filterClassId >= 0 &&
       filterClassId < numClasses;
+
+  // sigmoid is monotonic and any objectness factor is at most 1, so an
+  // anchor whose winning logit maps below [confThres] can never pass the
+  // score check. Comparing logits against the inverted threshold skips the
+  // exp() for the vast majority of anchors that cannot survive.
+  final double logitThres = confThres <= 0
+      ? double.negativeInfinity
+      : confThres >= 1
+      ? double.infinity
+      : math.log(confThres / (1 - confThres));
 
   // Reads the 4 box coords for anchor [a] into the candidate lists.
   void addCandidate(int a, int cls, double score) {
@@ -332,7 +355,8 @@ List<Detection> postProcessDetectionsFlat(
       // the full path keeps) fLogit == bestLogit, so this is identical; when it
       // is not the winner the full path would drop the anchor at the class
       // filter anyway, so pruning here is exact.
-      double score = sigmoid(fLogit) * objScore(a);
+      if (fLogit < logitThres) continue;
+      final double score = sigmoid(fLogit) * objScore(a);
       if (score < confThres) continue;
 
       // Confirm the filter class is the argmax (matches the full path's
@@ -362,6 +386,44 @@ List<Detection> postProcessDetectionsFlat(
       if (argMax != fc) continue;
       addCandidate(a, fc, score);
     }
+  } else if (channelMajor && anchors % 4 == 0 && out.offsetInBytes % 16 == 0) {
+    // Reference path, channel-major, SIMD: each class plane is a contiguous
+    // run of `anchors` floats, so sweep the planes with Float32x4 while
+    // carrying the running max and argmax in vector lanes. greaterThan is
+    // strict, so the first class wins ties exactly like the scalar loop,
+    // and lanes are independent anchors. Class indices ride along as
+    // float32 lanes (exact for any real class count).
+    final int vecCount = anchors ~/ 4;
+    final Float32x4List bestLogits4 = Float32x4List(vecCount);
+    final Float32x4List argMaxes4 = Float32x4List(vecCount);
+    final Float32x4 minusInf = Float32x4.splat(-1e30);
+    for (int i = 0; i < vecCount; i++) {
+      bestLogits4[i] = minusInf;
+    }
+    for (int k = 0; k < numClasses; k++) {
+      final Float32x4List plane = Float32x4List.view(
+        out.buffer,
+        out.offsetInBytes + (classStart + k) * anchors * 4,
+        vecCount,
+      );
+      final Float32x4 kLanes = Float32x4.splat(k.toDouble());
+      for (int i = 0; i < vecCount; i++) {
+        final Float32x4 v = plane[i];
+        final Float32x4 best = bestLogits4[i];
+        final Int32x4 mask = v.greaterThan(best);
+        bestLogits4[i] = mask.select(v, best);
+        argMaxes4[i] = mask.select(kLanes, argMaxes4[i]);
+      }
+    }
+    final Float32List bestFlat = Float32List.view(bestLogits4.buffer);
+    final Float32List argFlat = Float32List.view(argMaxes4.buffer);
+    for (int a = 0; a < anchors; a++) {
+      final double bestLogit = bestFlat[a];
+      if (bestLogit < logitThres) continue;
+      final double score = sigmoid(bestLogit) * objScore(a);
+      if (score < confThres) continue;
+      addCandidate(a, argFlat[a].toInt(), score);
+    }
   } else {
     // Reference path: full argmax over every anchor, no pre-filter.
     // sigmoid is monotonic, so the class argmax needs no sigmoid; apply it only
@@ -390,7 +452,8 @@ List<Detection> postProcessDetectionsFlat(
         }
       }
 
-      double score = sigmoid(bestLogit) * objScore(a);
+      if (bestLogit < logitThres) continue;
+      final double score = sigmoid(bestLogit) * objScore(a);
       if (score < confThres) continue;
       addCandidate(a, argMax, score);
     }

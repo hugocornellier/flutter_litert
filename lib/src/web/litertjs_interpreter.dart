@@ -179,9 +179,9 @@ class LiteRtInterpreter {
   /// [inputs] entries may be `Float32List`, `ByteBuffer`, or `Uint8List` whose
   /// underlying bytes are interpreted as float32.
   ///
-  /// [outputs] is a map from output index to a destination buffer. Currently
-  /// supports `Float32List` (preferred, fast bulk copy) and the legacy nested
-  /// `List<List<List<double>>>` shape used by tflite-js callers.
+  /// [outputs] is a map from output index to a destination buffer. Supports
+  /// `Float32List` (preferred, fast bulk copy), `ByteBuffer`, and the legacy
+  /// nested `List<List<List<double>>>` shape used by tflite-js callers.
   Future<void> runForMultipleInputs(
     List<Object> inputs,
     Map<int, Object> outputs,

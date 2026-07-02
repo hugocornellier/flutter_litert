@@ -74,10 +74,9 @@ class Tensor {
   /// element type; for quantized tensors use [data] instead.
   Float32List asFloat32View() {
     final byteSize = tfliteBinding.TfLiteTensorByteSize(_tensor);
-    checkArgument(
-      byteSize % 4 == 0,
-      message: 'Tensor byte size $byteSize is not float32-aligned.',
-    );
+    if (byteSize % 4 != 0) {
+      throw ArgumentError('Tensor byte size $byteSize is not float32-aligned.');
+    }
     final data = cast<Float>(tfliteBinding.TfLiteTensorData(_tensor));
     checkState(isNotNull(data), message: 'Tensor data is null.');
     return data.asTypedList(byteSize ~/ 4);
@@ -150,13 +149,15 @@ class Tensor {
     }
 
     // Single memcpy straight into the tensor's buffer; no native scratch copy.
+    // Plain if+throw instead of checkState: quiver builds the interpolated
+    // message eagerly, on every successful call in the hot path.
     final tensorByteSize = tfliteBinding.TfLiteTensorByteSize(_tensor);
-    checkState(
-      tensorByteSize == size,
-      message:
-          'TfLiteTensorCopyFromBuffer failed '
-          '(buffer=$size bytes, tensor=$tensorByteSize bytes).',
-    );
+    if (tensorByteSize != size) {
+      throw StateError(
+        'TfLiteTensorCopyFromBuffer failed '
+        '(buffer=$size bytes, tensor=$tensorByteSize bytes).',
+      );
+    }
     final data = cast<Uint8>(tfliteBinding.TfLiteTensorData(_tensor));
     checkState(isNotNull(data), message: 'Tensor data is null.');
     data.asTypedList(tensorByteSize).setRange(0, tensorByteSize, bytes);
@@ -178,12 +179,12 @@ class Tensor {
 
     final tensorType = type;
     if (dst is Uint8List) {
-      checkArgument(
-        dst.length == size,
-        message:
-            'Output object shape mismatch: tensor has $size bytes but the '
-            'provided Uint8List has ${dst.length}.',
-      );
+      if (dst.length != size) {
+        throw ArgumentError(
+          'Output object shape mismatch: tensor has $size bytes but the '
+          'provided Uint8List has ${dst.length}.',
+        );
+      }
       dst.setAll(0, src);
       return dst;
     }
@@ -228,13 +229,13 @@ class Tensor {
     }
     final typed = view as List;
     final out = dst as List;
-    checkArgument(
-      out.length == typed.length,
-      message:
-          'Output object shape mismatch: tensor has ${typed.length} '
-          '$tensorType elements but the provided ${dst.runtimeType} '
-          'has ${out.length}.',
-    );
+    if (out.length != typed.length) {
+      throw ArgumentError(
+        'Output object shape mismatch: tensor has ${typed.length} '
+        '$tensorType elements but the provided ${dst.runtimeType} '
+        'has ${out.length}.',
+      );
+    }
     out.setAll(0, typed);
     return dst;
   }
@@ -247,11 +248,61 @@ class Tensor {
     return ByteConversionUtils.convertBytesToObject(bytes, type, shape);
   }
 
-  List<int>? getInputShapeIfDifferent(Object? input) =>
-      list_utils.getInputShapeIfDifferent(input, shape);
+  List<int>? getInputShapeIfDifferent(Object? input) {
+    if (input == null) return null;
+    if (input is ByteBuffer || input is Uint8List) return null;
+    if (input is TypedData && input is List) {
+      // Same decision as list_utils.getInputShapeIfDifferent for flat typed
+      // data, but derives the element count from the tensor's byte size
+      // instead of materializing the shape list, which costs NumDims plus
+      // one Dim FFI call per axis on every run.
+      final elementSize = _fixedElementByteSize(type);
+      if (elementSize > 0) {
+        final length = (input as List).length;
+        if (length * elementSize ==
+            tfliteBinding.TfLiteTensorByteSize(_tensor)) {
+          return null;
+        }
+        return [length];
+      }
+    }
+    return list_utils.getInputShapeIfDifferent(input, shape);
+  }
 
   @override
   String toString() {
     return 'Tensor{_tensor: $_tensor, name: $name, type: $type, shape: $shape, data: ${data.length}}';
+  }
+}
+
+/// Bytes per element for fixed-width tensor types, or -1 when the element
+/// width is not a per-element constant (strings, packed int4, resources).
+int _fixedElementByteSize(TensorType type) {
+  switch (type) {
+    case TensorType.float32:
+    case TensorType.int32:
+    case TensorType.uint32:
+      return 4;
+    case TensorType.float64:
+    case TensorType.int64:
+    case TensorType.uint64:
+    case TensorType.complex64:
+      return 8;
+    case TensorType.int16:
+    case TensorType.uint16:
+    case TensorType.float16:
+      return 2;
+    case TensorType.int8:
+    case TensorType.uint8:
+    case TensorType.boolean:
+      return 1;
+    case TensorType.complex128:
+      return 16;
+    case TensorType.noType:
+    case TensorType.string:
+    case TensorType.int4:
+    case TensorType.resource:
+    case TensorType.variant:
+      return -1;
   }
 }

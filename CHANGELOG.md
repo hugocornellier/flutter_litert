@@ -18,6 +18,23 @@ unaffected, which is why it only surfaced for consumers on AGP 9.
 * CI now rebuilds the plugin module under AGP 9.x so this class of
   forward-incompatibility is caught before publishing.
 
+Also includes a performance pass over the Dart inference wrappers, verified
+with interleaved AOT A/B benchmarks on macOS and a physical iPhone:
+
+* `Interpreter.run()` with typed-data I/O is ~2x faster (771 -> 364 ns wrapper
+  overhead); `CompiledModel.run()` in managed mode is ~27% faster; the shared
+  YOLO-style decode utility is up to 72% faster (SIMD argmax, logit-space
+  pruning); `packYuv420` accepts an optional reuse buffer so camera loops skip
+  a per-frame ~1.4 MB allocation.
+* `CompiledModel.runAsync`/`dispatchAsync` now run the blocking native call on
+  a lazily spawned per-model helper isolate instead of blocking the calling
+  isolate, keeping the UI thread responsive during inference. Calls against
+  the same model serialize in FIFO order, and sync buffer-touching APIs
+  (`run`, `dispatch`, `writeInput`, `readOutput`, `close`) now throw
+  `StateError` while an async dispatch is in flight. `runAsync` with
+  thread-affine mobile GPU stacks (some Android OpenGL/OpenCL drivers) is
+  unvalidated; prefer `run` there.
+
 ## 3.2.0
 
 Restores the WASM-ready score on pub.dev (back to 160/160), which dropped to

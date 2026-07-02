@@ -1,7 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
-
 import 'list_shape_extension.dart';
 import 'tensor_shape_utils.dart' as shape_utils;
 
@@ -64,6 +62,15 @@ List<int>? getInputShapeIfDifferent(Object? input, List<int> tensorShape) {
     return [length];
   }
   final inputShape = shape_utils.computeShapeOf(input);
-  if (listEquals(inputShape, tensorShape)) return null;
+  if (_intListEquals(inputShape, tensorShape)) return null;
   return inputShape;
+}
+
+bool _intListEquals(List<int> a, List<int> b) {
+  if (identical(a, b)) return true;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }

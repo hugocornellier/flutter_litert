@@ -128,5 +128,66 @@ void main() {
         isNull,
       );
     });
+
+    test('into buffer produces bytes identical to the allocating form', () {
+      const w = 8, h = 4;
+      const stride = w + 2;
+      final y = Uint8List.fromList(
+        List.generate(stride * h, (i) => (i * 7) & 0xff),
+      );
+      final uv = Uint8List.fromList(
+        List.generate(stride * (h ~/ 2), (i) => (i * 13) & 0xff),
+      );
+      final fresh = packYuv420(
+        width: w,
+        height: h,
+        y: (bytes: y, rowStride: stride, pixelStride: 1),
+        u: (bytes: uv, rowStride: stride, pixelStride: 2),
+      )!;
+      // Pre-fill the reused buffer with garbage: every byte must be written.
+      final reuse = Uint8List(w * h * 3 ~/ 2)
+        ..fillRange(0, w * h * 3 ~/ 2, 0xAB);
+      final packed = packYuv420(
+        width: w,
+        height: h,
+        y: (bytes: y, rowStride: stride, pixelStride: 1),
+        u: (bytes: uv, rowStride: stride, pixelStride: 2),
+        into: reuse,
+      )!;
+      expect(identical(packed.bytes, reuse), isTrue);
+      expect(packed.bytes, fresh.bytes);
+    });
+
+    test('into buffer zero-fills tails of truncated source planes', () {
+      const w = 8, h = 4;
+      // Y plane one full row short; the missing row must come back zeroed
+      // even when the reused buffer held stale bytes there.
+      final y = Uint8List.fromList(List.filled(w * (h - 1), 9));
+      final uv = Uint8List.fromList(List.filled(w * (h ~/ 2), 5));
+      final reuse = Uint8List(w * h * 3 ~/ 2)
+        ..fillRange(0, w * h * 3 ~/ 2, 0xAB);
+      final packed = packYuv420(
+        width: w,
+        height: h,
+        y: (bytes: y, rowStride: w, pixelStride: 1),
+        u: (bytes: uv, rowStride: w, pixelStride: 2),
+        into: reuse,
+      )!;
+      expect(packed.bytes.sublist(w * (h - 1), w * h), List.filled(w, 0));
+    });
+
+    test('into buffer with the wrong length throws', () {
+      final p = Uint8List(64);
+      expect(
+        () => packYuv420(
+          width: 4,
+          height: 4,
+          y: (bytes: p, rowStride: 4, pixelStride: 1),
+          u: (bytes: p, rowStride: 4, pixelStride: 2),
+          into: Uint8List(10),
+        ),
+        throwsArgumentError,
+      );
+    });
   });
 }

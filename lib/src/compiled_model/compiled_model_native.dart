@@ -16,12 +16,14 @@
 
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
 import '../bindings/litert_ffi.dart';
 import '../bindings/litert_loader.dart';
+import '../util/async_lock.dart';
 
 const int _kLiteRtStatusOk = 0;
 const int _kLiteRtHwAcceleratorCpu = 1;
@@ -98,11 +100,15 @@ class CompiledModel {
 
   bool _closed = false;
 
-  // Per-dispatch native out-params, allocated once instead of per call.
+  // Per-dispatch native out-param, allocated once instead of per call.
   late final Pointer<Pointer<Void>> _lockScratch = calloc<Pointer<Void>>();
-  late final Pointer<Uint8> _asyncScratch = calloc<Uint8>();
-  late final Pointer<Uint8> _hasEventScratch = calloc<Uint8>();
-  late final Pointer<Pointer<Void>> _eventScratch = calloc<Pointer<Void>>();
+
+  // Async dispatch state: whole runAsync cycles (write, dispatch, read) are
+  // serialized because they share this model's native I/O buffers, and the
+  // blocking native call runs on a lazily-spawned helper isolate.
+  final AsyncLock _runAsyncLock = AsyncLock();
+  _AsyncDispatcher? _asyncDispatcher;
+  bool _dispatchInFlight = false;
 
   /// Number of input tensors for the default signature.
   int get inputCount => _inputCount;
@@ -352,8 +358,12 @@ class CompiledModel {
   }
 
   /// Runs inference with Float32 input tensors and returns Float32 outputs.
+  ///
+  /// Throws [StateError] while an async dispatch is in flight: the helper
+  /// isolate is running the model against the same native I/O buffers.
   List<Float32List> run(List<Float32List> inputs) {
     _ensureOpen();
+    _ensureNoAsyncDispatch('run');
     if (inputs.length != _inputCount) {
       throw ArgumentError.value(
         inputs.length,
@@ -386,7 +396,25 @@ class CompiledModel {
     );
   }
 
-  /// Runs inference asynchronously when the selected accelerator supports it.
+  /// Runs inference without blocking the calling isolate.
+  ///
+  /// The blocking native call executes on a lazily-spawned, per-model helper
+  /// isolate, so the calling isolate's event loop keeps servicing timers,
+  /// microtasks, and UI work while the model runs. Concurrent calls are
+  /// serialized in FIFO order because they share this model's native I/O
+  /// buffers. Each call pays an isolate message round trip on top of the
+  /// inference itself; prefer [run] when blocking is acceptable and the
+  /// model is very fast, or when you are already calling from a background
+  /// isolate you own (there the helper isolate only adds a hop).
+  ///
+  /// [inputs] are copied into the model's buffers when this call's turn in
+  /// the queue arrives, not at call time; do not mutate them until the
+  /// returned future completes.
+  ///
+  /// The helper isolate runs the model on a different thread than the one
+  /// that compiled it. CPU and Apple Metal accelerators are safe; runAsync
+  /// with thread-affine mobile GPU stacks (some Android GL/CL drivers) is
+  /// unvalidated, prefer [run] there until it is.
   Future<List<Float32List>> runAsync(List<Float32List> inputs) async {
     _ensureOpen();
     if (inputs.length != _inputCount) {
@@ -397,13 +425,19 @@ class CompiledModel {
       );
     }
 
-    for (var i = 0; i < _inputCount; i++) {
-      _writeInput(i, inputs[i]);
-    }
+    return _runAsyncLock.run(() async {
+      _ensureOpen();
+      // A bare dispatchAsync does not go through this lock; refuse to write
+      // over the buffers it is still running against.
+      _ensureNoAsyncDispatch('runAsync');
+      for (var i = 0; i < _inputCount; i++) {
+        _writeInput(i, inputs[i]);
+      }
 
-    await _dispatchAsync();
+      await _dispatchAsync();
 
-    return List<Float32List>.generate(_outputCount, _readOutput);
+      return List<Float32List>.generate(_outputCount, _readOutput);
+    });
   }
 
   /// Writes input [index] directly into this model's host-memory tensor buffer.
@@ -413,12 +447,13 @@ class CompiledModel {
   /// by the model-owned 64-byte-aligned host memory passed to
   /// `LiteRtCreateTensorBufferFromHostMemory`.
   ///
-  /// Do not call this while a previous [dispatchAsync] is still pending. The
-  /// current implementation of [dispatchAsync] waits for completion before
-  /// returning, so sequential `writeInput` → `dispatchAsync` → `readOutput`
+  /// Throws [StateError] while an async dispatch is in flight; the
+  /// [dispatchAsync] future completes only after the run finishes, so
+  /// sequential awaited `writeInput` → `dispatchAsync` → `readOutput`
   /// usage is safe.
   void writeInput(int index, void Function(Float32List input) write) {
     _ensureOpen();
+    _ensureNoAsyncDispatch('writeInput');
     _ensureHostMemoryMode('writeInput');
     RangeError.checkValidIndex(index, this, 'index', _inputCount);
     final hostMemory = _inputHostMemory[index]!;
@@ -431,6 +466,7 @@ class CompiledModel {
   /// [TensorBufferMode.hostMemory].
   void dispatch() {
     _ensureOpen();
+    _ensureNoAsyncDispatch('dispatch');
     _ensureHostMemoryMode('dispatch');
     _dispatch();
   }
@@ -439,8 +475,10 @@ class CompiledModel {
   /// [writeInput].
   ///
   /// This is available only when [tensorBufferMode] is
-  /// [TensorBufferMode.hostMemory]. The returned future completes after output
-  /// events have completed or after the runtime reports synchronous completion.
+  /// [TensorBufferMode.hostMemory]. The blocking native call runs on a
+  /// helper isolate and the returned future completes after it finishes, so
+  /// the calling isolate stays responsive meanwhile. Do not overlap calls:
+  /// a dispatch while another is in flight throws [StateError].
   Future<void> dispatchAsync() async {
     _ensureOpen();
     _ensureHostMemoryMode('dispatchAsync');
@@ -455,6 +493,7 @@ class CompiledModel {
   /// copies in hot paths.
   R readOutput<R>(int index, R Function(Float32List output) read) {
     _ensureOpen();
+    _ensureNoAsyncDispatch('readOutput');
     _ensureHostMemoryMode('readOutput');
     RangeError.checkValidIndex(index, this, 'index', _outputCount);
     final hostMemory = _outputHostMemory[index]!;
@@ -463,22 +502,27 @@ class CompiledModel {
 
   Future<void> _dispatchAsync() async {
     _ensureOpen();
-    final asyncOut = _asyncScratch..value = 0;
-    _check(
-      'LiteRtRunCompiledModelAsync',
-      _rt.runCompiledModelAsync(
-        _compiledModel,
-        0,
-        _inputCount,
-        _inputBuffers,
-        _outputCount,
-        _outputBuffers,
-        asyncOut,
-      ),
-    );
-
-    if (asyncOut.value != 0) {
-      _waitForAsyncOutputs();
+    if (_dispatchInFlight) {
+      throw StateError(
+        'CompiledModel dispatch already in flight; await the previous '
+        'runAsync/dispatchAsync call first.',
+      );
+    }
+    _dispatchInFlight = true;
+    try {
+      final dispatcher = _asyncDispatcher ??= await _AsyncDispatcher.spawn();
+      final error = await dispatcher.dispatch(
+        compiledModelAddress: _compiledModel.address,
+        inputCount: _inputCount,
+        inputBuffersAddress: _inputBuffers.address,
+        outputCount: _outputCount,
+        outputBuffersAddress: _outputBuffers.address,
+      );
+      if (error != null) {
+        throw StateError(error);
+      }
+    } finally {
+      _dispatchInFlight = false;
     }
   }
 
@@ -486,15 +530,18 @@ class CompiledModel {
     Pointer<Void> buffer,
     int byteSize,
     int lockMode,
-    String label,
+    String kind,
+    int index,
     R Function(Float32List) fn,
   ) {
     final hostAddress = _lockScratch..value = nullptr;
     var locked = false;
     try {
-      _check(
-        'LiteRtLockTensorBuffer $label',
+      _checkAt(
         _rt.lockTensorBuffer(buffer, hostAddress, lockMode),
+        'LiteRtLockTensorBuffer',
+        kind,
+        index,
       );
       locked = true;
       final bytes = hostAddress.value.cast<Uint8>().asTypedList(byteSize);
@@ -506,21 +553,31 @@ class CompiledModel {
       return fn(floats);
     } finally {
       if (locked) {
-        _check(
-          'LiteRtUnlockTensorBuffer $label',
+        _checkAt(
           _rt.unlockTensorBuffer(buffer),
+          'LiteRtUnlockTensorBuffer',
+          kind,
+          index,
         );
       }
     }
   }
 
   /// Releases native CompiledModel resources.
+  ///
+  /// Throws [StateError] when an async dispatch is still in flight: the
+  /// helper isolate would be running the model against buffers this method
+  /// frees. Await pending [runAsync]/[dispatchAsync] futures first.
   void close() {
     if (_closed) return;
+    if (_dispatchInFlight) {
+      throw StateError(
+        'CompiledModel.close() called while an async dispatch is in flight.',
+      );
+    }
+    _asyncDispatcher?.shutdown();
+    _asyncDispatcher = null;
     calloc.free(_lockScratch);
-    calloc.free(_asyncScratch);
-    calloc.free(_hasEventScratch);
-    calloc.free(_eventScratch);
     _releaseNative(
       _rt,
       inputBuffers: _inputBuffers,
@@ -558,39 +615,10 @@ class CompiledModel {
       _inputBuffers[index],
       _inputByteSizes[index],
       _kLiteRtTensorBufferLockModeWrite,
-      'input[$index]',
+      'input',
+      index,
       (floats) => floats.setAll(0, input),
     );
-  }
-
-  void _waitForAsyncOutputs() {
-    final hasEvent = _hasEventScratch;
-    final eventOut = _eventScratch;
-
-    for (var i = 0; i < _outputCount; i++) {
-      hasEvent.value = 0;
-      _check(
-        'LiteRtHasTensorBufferEvent output[$i]',
-        _rt.hasTensorBufferEvent(_outputBuffers[i], hasEvent),
-      );
-      if (hasEvent.value == 0) continue;
-
-      eventOut.value = nullptr;
-      _check(
-        'LiteRtGetTensorBufferEvent output[$i]',
-        _rt.getTensorBufferEvent(_outputBuffers[i], eventOut),
-      );
-      if (eventOut.value == nullptr) continue;
-
-      // Indefinite wait (-1), the same pattern the runtime itself uses for
-      // sync Run and TensorBuffer::Lock on event-carrying buffers.
-      _check('LiteRtWaitEvent output[$i]', _rt.waitEvent(eventOut.value, -1));
-
-      _check(
-        'LiteRtClearTensorBufferEvent output[$i]',
-        _rt.clearTensorBufferEvent(_outputBuffers[i]),
-      );
-    }
   }
 
   Float32List _readOutput(int index) {
@@ -605,7 +633,8 @@ class CompiledModel {
       _outputBuffers[index],
       _outputByteSizes[index],
       _kLiteRtTensorBufferLockModeRead,
-      'output[$index]',
+      'output',
+      index,
       Float32List.fromList,
     );
   }
@@ -616,6 +645,15 @@ class CompiledModel {
     }
   }
 
+  void _ensureNoAsyncDispatch(String method) {
+    if (_dispatchInFlight) {
+      throw StateError(
+        'CompiledModel.$method called while an async dispatch is in flight; '
+        'await the pending runAsync/dispatchAsync future first.',
+      );
+    }
+  }
+
   void _ensureHostMemoryMode(String method) {
     if (_tensorBufferMode != TensorBufferMode.hostMemory) {
       throw StateError(
@@ -623,6 +661,82 @@ class CompiledModel {
         'TensorBufferMode.${TensorBufferMode.hostMemory.name}.',
       );
     }
+  }
+}
+
+/// Runs blocking `LiteRtRunCompiledModel` calls on a dedicated helper
+/// isolate so awaited dispatches leave the calling isolate's event loop
+/// free.
+///
+/// The native handles are process-wide, so the helper drives the same
+/// compiled model through raw addresses; its own isolate lazily reopens the
+/// runtime library on first use. The owning [CompiledModel] serializes
+/// dispatches, so the helper never runs the model concurrently.
+final class _AsyncDispatcher {
+  _AsyncDispatcher._(this._isolate, this._commands);
+
+  final Isolate _isolate;
+  final SendPort _commands;
+
+  static Future<_AsyncDispatcher> spawn() async {
+    final handshake = ReceivePort();
+    final isolate = await Isolate.spawn(
+      _dispatchLoop,
+      handshake.sendPort,
+      debugName: 'CompiledModel dispatcher',
+    );
+    final commands = await handshake.first as SendPort;
+    return _AsyncDispatcher._(isolate, commands);
+  }
+
+  /// Runs one dispatch; completes with null on success or an error message.
+  Future<String?> dispatch({
+    required int compiledModelAddress,
+    required int inputCount,
+    required int inputBuffersAddress,
+    required int outputCount,
+    required int outputBuffersAddress,
+  }) async {
+    final reply = ReceivePort();
+    _commands.send([
+      reply.sendPort,
+      compiledModelAddress,
+      inputCount,
+      inputBuffersAddress,
+      outputCount,
+      outputBuffersAddress,
+    ]);
+    final result = await reply.first;
+    reply.close();
+    return result as String?;
+  }
+
+  void shutdown() => _isolate.kill(priority: Isolate.immediate);
+
+  static void _dispatchLoop(SendPort handshake) {
+    final commands = ReceivePort();
+    handshake.send(commands.sendPort);
+    commands.listen((message) {
+      final args = message as List<Object?>;
+      final reply = args[0] as SendPort;
+      String? error;
+      try {
+        final status = litert.runCompiledModel(
+          Pointer<Void>.fromAddress(args[1] as int),
+          0,
+          args[2] as int,
+          Pointer<Pointer<Void>>.fromAddress(args[3] as int),
+          args[4] as int,
+          Pointer<Pointer<Void>>.fromAddress(args[5] as int),
+        );
+        if (status != _kLiteRtStatusOk) {
+          error = 'LiteRtRunCompiledModel failed with LiteRtStatus=$status.';
+        }
+      } catch (e) {
+        error = 'CompiledModel async dispatch failed: $e';
+      }
+      reply.send(error);
+    });
   }
 }
 
@@ -1197,5 +1311,16 @@ void _checkLiteRtEnvOptionValueOffset() {
 void _check(String operation, int status) {
   if (status != _kLiteRtStatusOk) {
     throw StateError('$operation failed with LiteRtStatus=$status.');
+  }
+}
+
+/// Like [_check] for per-tensor operations, taking the label pieces so the
+/// happy path never builds an interpolated string. Callers pass const
+/// [operation] and [kind]; the full label exists only when throwing.
+void _checkAt(int status, String operation, String kind, int index) {
+  if (status != _kLiteRtStatusOk) {
+    throw StateError(
+      '$operation $kind[$index] failed with LiteRtStatus=$status.',
+    );
   }
 }

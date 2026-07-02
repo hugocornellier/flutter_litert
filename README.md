@@ -163,15 +163,15 @@ model.close();
 
 ### Async inference
 
-`run` and the zero-copy `dispatch` are synchronous. `CompiledModel` also exposes `runAsync` (and, for the zero-copy path, `dispatchAsync`), which return a `Future` and use LiteRT Next's asynchronous dispatch (`LiteRtRunCompiledModelAsync`) with output-buffer event synchronization:
+`run` and the zero-copy `dispatch` are synchronous: the native call runs on the calling isolate and blocks it until inference finishes. `CompiledModel` also exposes `runAsync` (and, for the zero-copy path, `dispatchAsync`), which return a `Future` and run that same native call on a lazily spawned, per-model helper isolate:
 
 ```dart
 final outputs = await model.runAsync(inputs); // Future<List<Float32List>>
 ```
 
-`runAsync` takes and returns the same `List<Float32List>` shape as `run`. When the selected accelerator dispatches the work asynchronously, `runAsync` waits on each output tensor's completion event before the future resolves; when the accelerator completes synchronously (for example on CPU), there is no event to wait on and the future resolves once the native call returns. On GPU this asynchronous execution path is typically faster than the synchronous `run` because the backend can overlap the work, so it is the preferred call for GPU-backed models; on CPU the two are equivalent. `dispatchAsync` is the zero-copy counterpart to `dispatch`, using the same `writeInput`, `dispatchAsync`, `readOutput` sequence.
+`runAsync` takes and returns the same `List<Float32List>` shape as `run`. It is not a faster way to run the model: it issues the identical native call, so inference latency is the same and each call adds one isolate message round trip. What it buys you is a free calling isolate. Because the blocking call executes on the helper isolate, the calling isolate's event loop keeps servicing timers, microtasks, and UI work while the model runs, so `runAsync` keeps the UI thread responsive without you managing your own isolate. Prefer `run` when blocking the caller is acceptable and the model is very fast, or when you are already calling from a background isolate you own (there, plain `run` avoids the extra hop). Concurrent calls against the same model are serialized in FIFO order because they share its native I/O buffers, so do not mutate `inputs` until the returned future completes. `dispatchAsync` is the zero-copy counterpart to `dispatch`, using the same `writeInput`, `dispatchAsync`, `readOutput` sequence.
 
-> **`runAsync` does not move inference to a background isolate.** The native dispatch and the completion wait both run synchronously on the calling isolate, so awaiting `runAsync` still blocks that isolate for the full duration of the run. Its benefit is a faster accelerator execution path, not concurrency: it is not, on its own, a way to keep the UI thread responsive. To run inference without blocking your UI, run the model inside a background `Isolate` and call `run` or `runAsync` there.
+> **Helper-isolate threading caveat.** The helper runs the model on a different thread than the one that compiled it. CPU and Apple Metal accelerators are safe. `runAsync` with thread-affine mobile GPU stacks (some Android OpenGL/OpenCL drivers) is unvalidated; prefer `run` there until it is.
 
 ### Coming from the Interpreter delegate API
 
@@ -986,7 +986,7 @@ flutter_litert ships two independent native runtimes, one per API. The classic `
 Bundling:
 - Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` from the `2.1.5` AAR.
 - iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` xcframework (release `litert-ios-v1.0.0`, a commit-pinned LiteRT Next build, commit `1adc2475`).
-- macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.1.5 wheel, bundled via CMake.
+- macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.1.5 wheel, bundled via CMake on Windows and Linux and via CocoaPods on macOS.
 - Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.4.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel is not available on web.
 
 > Intel Macs only: the iOS simulator is not supported under Swift Package Manager on x86_64. You have two options: test using a real iOS device or switch to CocoaPods to use the simulator. This applies to Intel Macs only.

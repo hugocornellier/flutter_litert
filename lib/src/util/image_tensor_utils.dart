@@ -1,5 +1,20 @@
 import 'dart:typed_data';
 
+/// 256-entry byte-to-float tables for the two normalizations. Storing the
+/// float32-rounded value keeps results bit-identical to computing
+/// `byte * scale + offset` per element while replacing the int-to-double
+/// conversion, multiply, and add with one indexed load.
+final Float32List _lutUnit = _buildLut(1.0 / 255.0, 0.0);
+final Float32List _lutSigned = _buildLut(1.0 / 127.5, -1.0);
+
+Float32List _buildLut(double scale, double offset) {
+  final lut = Float32List(256);
+  for (var i = 0; i < 256; i++) {
+    lut[i] = i * scale + offset;
+  }
+  return lut;
+}
+
 /// Converts BGR bytes to a flat Float32List with `0.0..1.0` normalization.
 ///
 /// Performs a BGR-to-RGB channel swap and divides each value by 255.
@@ -17,8 +32,7 @@ Float32List bgrBytesToRgbFloat32({
 }) => _bgrToRgbFloat32(
   bytes: bytes,
   totalPixels: totalPixels,
-  scale: 1.0 / 255.0,
-  offset: 0.0,
+  lut: _lutUnit,
   buffer: buffer,
 );
 
@@ -40,25 +54,23 @@ Float32List bgrBytesToSignedFloat32({
 }) => _bgrToRgbFloat32(
   bytes: bytes,
   totalPixels: totalPixels,
-  scale: 1.0 / 127.5,
-  offset: -1.0,
+  lut: _lutSigned,
   buffer: buffer,
 );
 
 Float32List _bgrToRgbFloat32({
   required Uint8List bytes,
   required int totalPixels,
-  required double scale,
-  required double offset,
+  required Float32List lut,
   Float32List? buffer,
 }) {
   final int size = totalPixels * 3;
   final Float32List tensor = buffer ?? Float32List(size);
 
   for (int i = 0, j = 0; i < size && j < size; i += 3, j += 3) {
-    tensor[j] = bytes[i + 2] * scale + offset;
-    tensor[j + 1] = bytes[i + 1] * scale + offset;
-    tensor[j + 2] = bytes[i] * scale + offset;
+    tensor[j] = lut[bytes[i + 2]];
+    tensor[j + 1] = lut[bytes[i + 1]];
+    tensor[j + 2] = lut[bytes[i]];
   }
   return tensor;
 }
@@ -73,12 +85,12 @@ Float32List _bgrToRgbFloat32({
 /// - [rgbaData]: RGBA pixel bytes (length must be a multiple of 4)
 /// - [output]: Pre-allocated buffer (length must be rgbaData.length * 3 ~/ 4)
 void rgbaToRgbFloat32(Uint8List rgbaData, Float32List output) {
-  const double norm = 1.0 / 255.0;
+  final Float32List lut = _lutUnit;
   int dst = 0;
   for (int src = 0; src < rgbaData.length; src += 4) {
-    output[dst++] = rgbaData[src] * norm;
-    output[dst++] = rgbaData[src + 1] * norm;
-    output[dst++] = rgbaData[src + 2] * norm;
+    output[dst++] = lut[rgbaData[src]];
+    output[dst++] = lut[rgbaData[src + 1]];
+    output[dst++] = lut[rgbaData[src + 2]];
   }
 }
 
@@ -93,12 +105,12 @@ void rgbaToRgbFloat32(Uint8List rgbaData, Float32List output) {
 /// - [rgbaData]: RGBA pixel bytes (length must be a multiple of 4)
 /// - [output]: Pre-allocated buffer (length must be rgbaData.length * 3 ~/ 4)
 void rgbaToSignedRgbFloat32(Uint8List rgbaData, Float32List output) {
-  const double norm = 1.0 / 127.5;
+  final Float32List lut = _lutSigned;
   int dst = 0;
   for (int src = 0; src < rgbaData.length; src += 4) {
-    output[dst++] = rgbaData[src] * norm - 1.0;
-    output[dst++] = rgbaData[src + 1] * norm - 1.0;
-    output[dst++] = rgbaData[src + 2] * norm - 1.0;
+    output[dst++] = lut[rgbaData[src]];
+    output[dst++] = lut[rgbaData[src + 1]];
+    output[dst++] = lut[rgbaData[src + 2]];
   }
 }
 
