@@ -18,10 +18,19 @@ A Flutter plugin for on-device ML inference using LiteRT (formerly TensorFlow Li
 
 It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutter), the TensorFlow Lite plugin for Flutter, and keeps that interpreter API source-compatible on native platforms. This plugin adds the modern LiteRT Next CompiledModel path, auto bundles the native dynamic libraries, adds newer utilities, adds and improves delegate support, and adds web support.
 
+<!--
+  Demo WebPs below: encode ALL-KEYFRAMES so no frame blends over a previous one.
+  The rounded phone bezels carry semi-transparent shadow pixels; under
+  dispose:none + blend:yes some browser GPU compositors accumulate them
+  frame-over-frame and darken the corners ("black corners"). Encoding every
+  frame as a full-canvas keyframe (blend=no) makes that impossible.
+  Encode: img2webp -kmin 1 -kmax 1 -exact -lossy -q <Q> -m 6 -d <ms> <frames...>
+  Keep each file under 10 MB.
+-->
 <p align="center">
-  <img src="assets/pose-detection-demo.webp" alt="Real-time on-device pose detection running on iPhone, built with flutter_litert" width="270">
-  <br>
-  <sub><i>Real-time on-device pose detection</i></sub>
+  <img src="assets/pose-detection-demo.webp" alt="Real-time on-device pose detection running on iPhone, built with flutter_litert" height="380" align="middle">
+  &nbsp;&nbsp;&nbsp;
+  <img src="assets/hand-detection-demo.webp" alt="Real-time on-device hand tracking running on iPhone, built with flutter_litert" height="258" align="middle">
 </p>
 
 ## Two runtimes, one package
@@ -675,7 +684,7 @@ Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex) to you
 
 ```yaml
 dependencies:
-  flutter_litert: ^3.2.1
+  flutter_litert: ^3.2.2
   flutter_litert_flex: ^1.3.0
 ```
 

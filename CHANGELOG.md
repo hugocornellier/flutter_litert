@@ -1,3 +1,12 @@
+## 3.2.2
+
+Documentation-only release. No Dart, native, or web code changed, so runtime
+behavior is identical to 3.2.1.
+
+* README: added a real-time hand-tracking demo (origami then megaminx hand
+  detection) beside the pose-detection demo, and enlarged the pose mockup to
+  match. Both demo animations are all-keyframe WebP renders kept under 10 MB.
+
 ## 3.2.1
 
 Fixes an Android build failure on Android Gradle Plugin (AGP) 9.x (issue #14).
