@@ -24,8 +24,12 @@ example/assets/
 # README/doc media: pub.dev and GitHub render these directly from the repo
 # (relative README paths resolve against the repository), so they don't need
 # to ship in the package archive. Keeps `pub get` lean; not used at runtime.
-assets/pose-detection-demo.webp
 assets/litert-banner.png
+assets/pose-then-face-demo.webp
+assets/hand-detection-demo.webp
+# Orphaned older demo, no longer referenced by the README. Kept out of the
+# archive until the tracked file is removed from the repo.
+assets/pose-detection-demo.webp
 
 # Local delegate benchmark harnesses. Keep them in the repository for
 # repeatable profiling without shipping machine-specific paths to pub.dev.

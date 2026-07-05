@@ -22,6 +22,7 @@ export 'util/async_lock.dart';
 export 'util/compiled_io_utils.dart';
 export 'util/decode_failure.dart';
 export 'util/one_euro_filter.dart';
+export 'util/frame_throttle.dart';
 export 'performance_config.dart';
 export 'ssd_anchors.dart';
 export 'round_robin_pool.dart';

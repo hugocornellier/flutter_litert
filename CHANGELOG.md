@@ -1,11 +1,22 @@
-## 3.2.2
+## 3.3.0
 
-Documentation-only release. No Dart, native, or web code changed, so runtime
-behavior is identical to 3.2.1.
+Adds camera-agnostic helpers for building live detection previews, and documents
+the end-to-end live-camera pipeline in the README. No native or web runtime code
+changed. Additive and backward compatible.
 
-* README: added a real-time hand-tracking demo (origami then megaminx hand
-  detection) beside the pose-detection demo, and enlarged the pose mockup to
-  match. Both demo animations are all-keyframe WebP renders kept under 10 MB.
+* `FrameThrottle`: a single-slot gate that drops camera frames arriving while a
+  previous frame is still being processed, replacing the hand-rolled
+  `bool _isProcessing` plus `try`/`finally` pattern in downstream apps.
+* `CoverFitTransform`: maps detector coordinates onto a cover-fitted camera
+  preview (uniform scale, centered overflow, optional front-camera mirroring),
+  wrapping the existing `coverFitScaleOffset`. Use `map` for points and
+  `scaleLength` for radii and stroke widths.
+* README: new "Live camera" section covering the full pipeline (frame prep,
+  rotation, throttling, overlay coordinate mapping, FPS, smoothing).
+* README: also rolls in the real-time hand-tracking demo (origami then megaminx
+  hand detection) beside the pose-detection demo, plus an enlarged pose mockup,
+  that had been staged for an unreleased 3.2.2. Both demo animations are
+  all-keyframe WebP renders kept under 10 MB.
 
 ## 3.2.1
 

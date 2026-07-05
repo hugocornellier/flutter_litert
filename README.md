@@ -28,7 +28,7 @@ It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutt
   Keep each file under 10 MB.
 -->
 <p align="center">
-  <img src="assets/pose-detection-demo.webp" alt="Real-time on-device pose detection running on iPhone, built with flutter_litert" height="380" align="middle">
+  <img src="assets/pose-then-face-demo.webp" alt="Real-time on-device pose detection and face mesh tracking running on iPhone, built with flutter_litert" height="380" align="middle">
   &nbsp;&nbsp;&nbsp;
   <img src="assets/hand-detection-demo.webp" alt="Real-time on-device hand tracking running on iPhone, built with flutter_litert" height="258" align="middle">
 </p>
@@ -978,6 +978,76 @@ final originalBox = scaleFromLetterbox(
   dh,                 // vertical padding
 );
 ```
+
+### Live camera
+
+flutter_litert ships camera-agnostic helpers for building a real-time detection preview on top of any camera source (for example `package:camera`). The package deliberately does not depend on a camera plugin, so you own the `CameraController`; these helpers cover the parts every live-detection app repeats: turning a frame into detector input, throttling, orientation, and mapping results back onto the preview.
+
+The pieces:
+
+- `prepareCameraFrame(...)` / `prepareCameraFrameFromImage(cameraImage)` pack a camera frame (BGRA or RGBA on desktop, YUV420 on mobile) into a backend-neutral `CameraFrame` for inference, with no copy on the desktop path.
+- `rotationForFrame(...)` computes the upright rotation from the sensor and device orientation; `detectionSize(...)` gives the post-rotation, post-downscale image size your overlay maps against.
+- `FrameThrottle` drops frames that arrive while the previous one is still being processed, so inference never queues up.
+- `CoverFitTransform` maps detector coordinates onto the cover-fitted preview, with optional horizontal mirroring for the front camera. `FpsCounter` and `OneEuroFilter` cover on-screen FPS and landmark smoothing.
+
+A minimal image-stream handler (detector-agnostic):
+
+```dart
+import 'package:camera/camera.dart';
+import 'package:flutter_litert/flutter_litert.dart';
+
+final _throttle = FrameThrottle();
+final _fpsCounter = FpsCounter();
+int _fps = 0;
+
+void _onCameraImage(CameraImage image) {
+  _throttle.run(() async {
+    final rotation = rotationForFrame(
+      width: image.width,
+      height: image.height,
+      sensorOrientation: camera.sensorOrientation,
+      isFrontCamera: camera.lensDirection == CameraLensDirection.front,
+      deviceOrientation: controller.value.deviceOrientation,
+    );
+    final size = detectionSize(
+      width: image.width,
+      height: image.height,
+      rotation: rotation,
+      maxDim: 640,
+    );
+
+    // Pack the frame into backend-neutral input (no copy on desktop), then run
+    // your model off the UI thread and decode its output. This step is yours:
+    // feed `frame` to an IsolateInterpreter or a CompiledModel and turn the
+    // result into the shapes your overlay draws.
+    final frame = prepareCameraFrameFromImage(image);
+    final results = await runYourModel(frame, rotation);
+
+    if (_fpsCounter.tick() && mounted) setState(() => _fps = _fpsCounter.fps);
+    if (mounted) setState(() { _results = results; _imageSize = size; });
+  });
+}
+```
+
+In the overlay `CustomPainter`, map results onto the preview with a single transform:
+
+```dart
+@override
+void paint(Canvas canvas, Size size) {
+  final t = CoverFitTransform.cover(
+    sourceWidth: imageSize.width,
+    sourceHeight: imageSize.height,
+    viewWidth: size.width,
+    viewHeight: size.height,
+    mirror: isFrontCamera,
+  );
+  for (final p in landmarks) {
+    canvas.drawCircle(t.map(p.x, p.y), t.scaleLength(3), paint);
+  }
+}
+```
+
+The `runYourModel` call is the one piece flutter_litert leaves to you: `prepareCameraFrameFromImage` hands you a `CameraFrame`, you run it through an `IsolateInterpreter` or `CompiledModel` off the UI thread (see the runtime sections above), and you decode the output into the points or boxes your overlay draws. Everything around it (frame packing, throttling, orientation, cover-fit mapping) is what these helpers cover. The face, hand, and pose detection packages built on flutter_litert are complete working examples of the whole pipeline.
 
 ## Platform support
 

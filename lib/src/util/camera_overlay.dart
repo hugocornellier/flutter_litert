@@ -1,4 +1,4 @@
-import 'dart:ui' show Size;
+import 'dart:ui' show Offset, Size;
 
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform;
@@ -186,4 +186,97 @@ class FpsCounter {
     _framesSinceLastUpdate = 0;
     _lastUpdate = null;
   }
+}
+
+/// A precomputed cover-fit mapping from source-image pixel coordinates to
+/// viewport coordinates, with optional horizontal mirroring for a front-camera
+/// preview.
+///
+/// Overlay painters receive detector coordinates in the source image's pixel
+/// space (the post-rotation, post-downscale size reported by [detectionSize])
+/// and must map them onto the on-screen preview, which is cover-fitted to the
+/// widget. Build one transform per `paint` call and use [map] for points and
+/// [scaleLength] for radii or stroke widths:
+///
+/// ```dart
+/// @override
+/// void paint(Canvas canvas, Size size) {
+///   final t = CoverFitTransform.cover(
+///     sourceWidth: imageSize.width,
+///     sourceHeight: imageSize.height,
+///     viewWidth: size.width,
+///     viewHeight: size.height,
+///     mirror: mirrorHorizontally,
+///   );
+///   final p = t.map(landmark.x, landmark.y);
+///   canvas.drawCircle(p, t.scaleLength(3), paint);
+/// }
+/// ```
+///
+/// The scale is uniform (aspect ratio preserved) and the overflowing axis is
+/// centered via [offsetX] / [offsetY]. This is the same fit
+/// [coverFitScaleOffset] computes, wrapped with point mapping and mirroring.
+class CoverFitTransform {
+  /// Uniform scale factor from source pixels to viewport pixels.
+  final double scale;
+
+  /// Horizontal offset added after scaling, centering the covered axis.
+  final double offsetX;
+
+  /// Vertical offset added after scaling, centering the covered axis.
+  final double offsetY;
+
+  /// Source image width in pixels, used to reflect x when [mirror] is set.
+  final double sourceWidth;
+
+  /// Whether x is mirrored about [sourceWidth] before scaling (front camera).
+  final bool mirror;
+
+  /// Creates a transform from a precomputed [scale] and offsets. Most callers
+  /// use [CoverFitTransform.cover] instead.
+  const CoverFitTransform({
+    required this.scale,
+    required this.offsetX,
+    required this.offsetY,
+    required this.sourceWidth,
+    this.mirror = false,
+  });
+
+  /// Builds a cover-fit transform mapping a [sourceWidth] x [sourceHeight]
+  /// image onto a [viewWidth] x [viewHeight] viewport, preserving aspect ratio
+  /// and centering the overflow. Set [mirror] for a mirrored front-camera
+  /// preview.
+  factory CoverFitTransform.cover({
+    required double sourceWidth,
+    required double sourceHeight,
+    required double viewWidth,
+    required double viewHeight,
+    bool mirror = false,
+  }) {
+    final fit = coverFitScaleOffset(
+      sourceWidth.round(),
+      sourceHeight.round(),
+      viewWidth,
+      viewHeight,
+    );
+    return CoverFitTransform(
+      scale: fit.scale,
+      offsetX: fit.offsetX,
+      offsetY: fit.offsetY,
+      sourceWidth: sourceWidth,
+      mirror: mirror,
+    );
+  }
+
+  /// Maps a source-space point ([x], [y]) to viewport space.
+  Offset map(double x, double y) {
+    final double sx = mirror ? sourceWidth - x : x;
+    return Offset(sx * scale + offsetX, y * scale + offsetY);
+  }
+
+  /// Maps a source-space [point] to viewport space.
+  Offset mapOffset(Offset point) => map(point.dx, point.dy);
+
+  /// Scales a source-space length (radius, stroke width) to viewport space.
+  double scaleLength(double length) => length * scale;
 }
