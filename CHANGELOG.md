@@ -1,3 +1,23 @@
+## 3.3.2
+
+Fixes nondeterministic detection counts on Apple Silicon (ARM64). The
+channel-major SIMD decode in `postProcessDetectionsFlat` carried the class
+argmax in `Float32x4` lanes via `greaterThan().select()`, a pattern the Dart
+ARM64 JIT miscompiles: the same byte-identical model output decoded to a
+different number of detections across successive calls (varying with the
+optimizer tier) and could invent phantom boxes. The max reduction stays in
+SIMD; the winning class is now recovered with a scalar argmax over the few
+anchors that clear the threshold, so the decode is deterministic and matches the
+scalar reference on every call. Affects every downstream detector that decodes
+channel-major YOLO output; no API change.
+
+## 3.3.1
+
+Fixes the two hero demo images stacking vertically on the pub.dev package page.
+pub.dev's README stylesheet forces `img{height:auto}`, so they are now sized with
+percentage `width` (honored by both pub.dev and GitHub) and stay side by side.
+Documentation only; no code, API, or runtime change.
+
 ## 3.3.0
 
 Adds camera-agnostic helpers for building live detection previews, and documents

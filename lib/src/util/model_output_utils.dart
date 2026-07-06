@@ -387,15 +387,15 @@ List<Detection> postProcessDetectionsFlat(
       addCandidate(a, fc, score);
     }
   } else if (channelMajor && anchors % 4 == 0 && out.offsetInBytes % 16 == 0) {
-    // Reference path, channel-major, SIMD: each class plane is a contiguous
-    // run of `anchors` floats, so sweep the planes with Float32x4 while
-    // carrying the running max and argmax in vector lanes. greaterThan is
-    // strict, so the first class wins ties exactly like the scalar loop,
-    // and lanes are independent anchors. Class indices ride along as
-    // float32 lanes (exact for any real class count).
+    // Channel-major SIMD: each class plane is a contiguous run of `anchors`
+    // floats, so sweep the planes with Float32x4 to carry the running max
+    // logit per anchor in vector lanes (lanes are independent anchors).
+    // greaterThan is strict, so the first class wins ties exactly like the
+    // scalar loop. The winning class index is recovered with a scalar argmax
+    // below, only for the anchors that clear the threshold; see the comment
+    // there for why the argmax is not carried in SIMD lanes.
     final int vecCount = anchors ~/ 4;
     final Float32x4List bestLogits4 = Float32x4List(vecCount);
-    final Float32x4List argMaxes4 = Float32x4List(vecCount);
     final Float32x4 minusInf = Float32x4.splat(-1e30);
     for (int i = 0; i < vecCount; i++) {
       bestLogits4[i] = minusInf;
@@ -406,23 +406,36 @@ List<Detection> postProcessDetectionsFlat(
         out.offsetInBytes + (classStart + k) * anchors * 4,
         vecCount,
       );
-      final Float32x4 kLanes = Float32x4.splat(k.toDouble());
       for (int i = 0; i < vecCount; i++) {
         final Float32x4 v = plane[i];
         final Float32x4 best = bestLogits4[i];
-        final Int32x4 mask = v.greaterThan(best);
-        bestLogits4[i] = mask.select(v, best);
-        argMaxes4[i] = mask.select(kLanes, argMaxes4[i]);
+        bestLogits4[i] = v.greaterThan(best).select(v, best);
       }
     }
     final Float32List bestFlat = Float32List.view(bestLogits4.buffer);
-    final Float32List argFlat = Float32List.view(argMaxes4.buffer);
+    // Recover the winning class with a scalar argmax over the (few) anchors that
+    // clear the threshold. The earlier SIMD variant carried the argmax in
+    // Float32x4 lanes via greaterThan().select(); the Dart ARM64 JIT
+    // miscompiles that carry (nondeterministic across optimization tiers,
+    // yielding a wrong argmax that invents phantom detections), so keep only the
+    // max reduction in SIMD and argmax scalar per survivor.
     for (int a = 0; a < anchors; a++) {
       final double bestLogit = bestFlat[a];
       if (bestLogit < logitThres) continue;
       final double score = sigmoid(bestLogit) * objScore(a);
       if (score < confThres) continue;
-      addCandidate(a, argFlat[a].toInt(), score);
+      int argMax = 0;
+      double argBest = -1e30;
+      int idx = classStart * anchors + a;
+      for (int k = 0; k < numClasses; k++) {
+        final double v = out[idx];
+        if (v > argBest) {
+          argBest = v;
+          argMax = k;
+        }
+        idx += anchors;
+      }
+      addCandidate(a, argMax, score);
     }
   } else {
     // Reference path: full argmax over every anchor, no pre-filter.

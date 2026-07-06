@@ -26,16 +26,26 @@ It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutt
   frame as a full-canvas keyframe (blend=no) makes that impossible.
   Encode: img2webp -kmin 1 -kmax 1 -exact -lossy -q <Q> -m 6 -d <ms> <frames...>
   Keep each file under 10 MB.
+
+  Size these with percentage width= (NOT height=). pub.dev's README stylesheet
+  forces `img{height:auto}`, discarding any height= attribute, so height-sized
+  devices render at natural width (1238px / 939px) and wrap onto separate lines.
+  Percentage width= is honored by both pub.dev and GitHub (see the 100% banner
+  above), scales with the column, and keeps the phone and laptop side by side.
+  The phone is ~0.61 aspect and the laptop ~1.31, so 30% + 64% renders them at
+  matching height while the total stays under 100% (they never wrap).
 -->
 <p align="center">
-  <img src="assets/pose-then-face-demo.webp" alt="Real-time on-device pose detection and face mesh tracking running on iPhone, built with flutter_litert" height="380" align="middle">
+  <img src="assets/pose-then-face-demo.webp" alt="Real-time on-device pose detection and face mesh tracking running on iPhone, built with flutter_litert" width="30%" align="middle">
   &nbsp;&nbsp;&nbsp;
-  <img src="assets/hand-detection-demo.webp" alt="Real-time on-device hand tracking running on iPhone, built with flutter_litert" height="258" align="middle">
+  <img src="assets/hand-detection-demo.webp" alt="Real-time on-device hand tracking running on a laptop, built with flutter_litert" width="64%" align="middle">
+  <br>
+  <sub><i style="color: #888;">Performant, cross-platform on-device ML inference, from a single Flutter codebase.</i></sub>
 </p>
 
 ## Two runtimes, one package
 
-`flutter_litert` exposes two inference APIs. Reach for `CompiledModel` first, then fall back to `Interpreter` when your use case needs it.
+`flutter_litert` supports two inference APIs: `CompiledModel`, the recommended default, and `Interpreter`, for cases that need it.
 
 - **`CompiledModel` (LiteRT Next), recommended.** The modern path and the recommended way to get GPU and NPU acceleration. See [CompiledModel (LiteRT Next)](#compiledmodel-litert-next) 
 - **`Interpreter` (classic), fully supported.** The TensorFlow Lite / LiteRT runtime, source-compatible with `tflite_flutter`. See [Interpreter (classic API)](#interpreter-classic-api)
@@ -684,7 +694,7 @@ Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex) to you
 
 ```yaml
 dependencies:
-  flutter_litert: ^3.2.2
+  flutter_litert: ^3.3.2
   flutter_litert_flex: ^1.3.0
 ```
 

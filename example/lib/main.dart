@@ -544,7 +544,7 @@ class EngineConfig {
   final bool runAsync;
 
   const EngineConfig({
-    this.kind = EngineKind.interpreter,
+    this.kind = EngineKind.compiledModel,
     this.perfMode = PerformanceMode.auto,
     this.accelerators = const {Accelerator.gpu, Accelerator.cpu},
     this.precision = Precision.fp16,
@@ -619,6 +619,13 @@ String cmGpuReason() => Platform.isAndroid
     ? 'CompiledModel GPU not bundled on Android yet'
     : 'GPU not available on this platform';
 
+/// Default engine on first launch: CompiledModel, GPU-accelerated where the
+/// accelerator is bundled (Apple/Linux/Windows), CPU-only where it is not
+/// (Android). Mirrors the settings dialog's GPU→CPU clamp.
+EngineConfig defaultEngine() => cmGpuAvailable()
+    ? const EngineConfig()
+    : const EngineConfig(accelerators: {Accelerator.cpu});
+
 const _kSamples = <(String, String)>[
   ('Street', 'assets/samples/street.jpg'),
   ('Cat', 'assets/samples/cat.jpg'),
@@ -643,7 +650,7 @@ class _DetectionDemoState extends State<_DetectionDemo> {
   String? _error;
   int _sampleIdx = 0;
   double _threshold = 0.6;
-  EngineConfig _engine = const EngineConfig();
+  EngineConfig _engine = defaultEngine();
 
   @override
   void initState() {

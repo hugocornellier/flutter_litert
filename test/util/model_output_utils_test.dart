@@ -212,5 +212,29 @@ void main() {
         run(cm, 6, 512, channelMajor: true),
       );
     });
+
+    // Regression: the channel-major SIMD decode used to carry the class argmax
+    // in Float32x4 lanes via greaterThan().select(). The Dart ARM64 JIT
+    // miscompiled that carry, so the same byte-identical buffer decoded to
+    // different detection counts across successive calls (nondeterministic
+    // across optimization tiers) and invented phantom person detections. A
+    // single decode could not catch it; this loops long enough to reach the
+    // optimized tier and requires every decode to match the first and the
+    // scalar reference. The fix keeps only the max reduction in SIMD and
+    // recovers the argmax with a scalar pass over survivors.
+    test('SIMD channel-major decode is deterministic across JIT tiers', () {
+      const channels = 84;
+      const anchors = 8192; // multiple of 4 -> SIMD path, large enough to JIT
+      final (cm, am) = buildBothLayouts(channels, anchors, math.Random(42));
+      final reference = run(am, channels, anchors, channelMajor: false);
+      final first = run(cm, channels, anchors, channelMajor: true);
+      expectSameDetections(reference, first);
+      for (var i = 0; i < 200; i++) {
+        expectSameDetections(
+          first,
+          run(cm, channels, anchors, channelMajor: true),
+        );
+      }
+    });
   });
 }
