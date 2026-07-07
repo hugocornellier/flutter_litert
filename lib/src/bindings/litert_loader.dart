@@ -65,18 +65,19 @@ DynamicLibrary _loadAndroidLibrary() {
 }
 
 DynamicLibrary _loadIosLibrary() {
-  // Two embedded layouts exist, one per distribution channel:
-  // - SwiftPM ships bare dylibs inside library-type xcframeworks, embedded
-  //   into the app's Frameworks directory under their original file names.
-  //   Preserving the names matters: the runtime registers the GPU
-  //   accelerator by dlopen'ing `libLiteRtMetalAccelerator.dylib` from the
-  //   directory passed as kLiteRtEnvOptionTagRuntimeLibraryDir
-  //   (litertRuntimeDir).
-  // - CocoaPods rejects bare-dylib xcframeworks, so it ships conventional
-  //   framework bundles (LiteRt.framework/LiteRt). There the file-name scan
-  //   cannot match, and the Metal accelerator is registered by the
-  //   LiteRtRegisterGpuAccelerator shim in ios/Classes (found by the
-  //   runtime's RTLD_DEFAULT registration probe).
+  // Both distribution channels embed the runtime as conventional framework
+  // bundles (LiteRt.framework/LiteRt): CocoaPods rejects bare-dylib
+  // xcframeworks at install time, and App Store validation rejects the
+  // loose dylibs Xcode embeds for bare-dylib SwiftPM binary targets
+  // (ITMS-90426, issue #15). The framework rename defeats LiteRT's
+  // GPU-plugin file-name scan (`libLiteRtMetalAccelerator.dylib` inside the
+  // directory passed as kLiteRtEnvOptionTagRuntimeLibraryDir,
+  // litertRuntimeDir), so the Metal accelerator is registered by the
+  // LiteRtRegisterGpuAccelerator shim in ios/Classes instead, found by the
+  // runtime's RTLD_DEFAULT registration probe. The bare-dylib probe below
+  // stays first for apps still built against pre-fix SwiftPM package
+  // versions, where the loose-dylib layout (and the runtime's own file-name
+  // scan) still applies.
   final frameworksDir =
       '${Directory(Platform.resolvedExecutable).parent.path}/Frameworks';
   final attemptedPaths = <String>[];

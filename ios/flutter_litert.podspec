@@ -60,8 +60,9 @@ LiteRT (formerly TensorFlow Lite) plugin for Flutter apps.
   # conventional framework-wrapped variants (built by
   # scripts/wrap_litert_ios_frameworks.sh). The framework rename breaks
   # LiteRT's GPU-plugin file-name scan; Classes/litert_gpu_accelerator_shim.c
-  # registers the Metal accelerator instead. (The SwiftPM channel ships
-  # bare-dylib xcframeworks where the runtime's own scan works.)
+  # registers the Metal accelerator instead. (The SwiftPM channel ships the
+  # same framework-wrapped xcframeworks: App Store validation rejects loose
+  # bare dylibs in Frameworks/, ITMS-90426, issue #15.)
   # Check BOTH slices: a stale download may carry only an arm64-only
   # `ios-arm64-simulator` slice (no x86_64), whose identifier does not match
   # the `ios-arm64_x86_64-simulator` that CocoaPods' slice selection expects.

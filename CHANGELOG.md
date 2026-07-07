@@ -1,6 +1,22 @@
 ## 3.3.2
 
-Fixes nondeterministic detection counts on Apple Silicon (ARM64). The
+Fixes App Store uploads being rejected with ITMS-90426 ("Invalid Swift
+Support") when flutter_litert is installed through Swift Package Manager
+(#15). The SwiftPM channel shipped the LiteRT Next runtime and Metal
+accelerator as bare-dylib xcframeworks, which Xcode embeds as loose
+`libLiteRt.dylib` / `libLiteRtMetalAccelerator.dylib` files in the app's
+`Frameworks/` directory, a bundle shape App Store validation rejects. SwiftPM
+now ships the same framework-wrapped xcframeworks as CocoaPods (identical
+binaries, release `litert-ios-v1.0.1`) and registers the Metal accelerator
+through the shared `LiteRtRegisterGpuAccelerator` shim, so GPU CompiledModel
+keeps working. No API change; run `flutter clean` and rebuild to pick up the
+new artifacts. Note: Flutter's SwiftPM support independently embeds a
+`FlutterFramework_..._PackageProduct.framework` built at minos iOS 12.0,
+which can also trigger ITMS-90426. If uploads still fail after upgrading,
+disable SwiftPM (`flutter: config: enable-swift-package-manager: false` in
+pubspec.yaml) until flutter_tools is fixed.
+
+Also fixes nondeterministic detection counts on Apple Silicon (ARM64). The
 channel-major SIMD decode in `postProcessDetectionsFlat` carried the class
 argmax in `Float32x4` lanes via `greaterThan().select()`, a pattern the Dart
 ARM64 JIT miscompiles: the same byte-identical model output decoded to a

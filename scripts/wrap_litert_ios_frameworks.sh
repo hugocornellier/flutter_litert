@@ -2,16 +2,25 @@
 # Wraps the prebuilt LiteRT Next iOS dylibs into conventional .framework
 # bundles and assembles framework-type xcframeworks.
 #
-# CocoaPods rejects vendored xcframeworks that contain bare dynamic libraries,
-# so the CocoaPods channel ships these framework-wrapped variants. The rename
-# (libLiteRt.dylib -> LiteRt.framework/LiteRt) breaks LiteRT's GPU-plugin
-# file-name scan; ios/Classes/litert_gpu_accelerator_shim.c compensates by
-# exporting LiteRtRegisterGpuAccelerator. The SwiftPM channel keeps bare-dylib
-# (library-type) xcframeworks, where the runtime's own scan works.
+# Both distribution channels ship these framework-wrapped variants: CocoaPods
+# rejects vendored xcframeworks that contain bare dynamic libraries, and App
+# Store validation rejects IPAs with loose dylibs in Frameworks/ (ITMS-90426,
+# issue #15), which is what SwiftPM bare-dylib binary targets embed. The
+# rename (libLiteRt.dylib -> LiteRt.framework/LiteRt) breaks LiteRT's
+# GPU-plugin file-name scan; ios/Classes/litert_gpu_accelerator_shim.c
+# compensates by exporting LiteRtRegisterGpuAccelerator.
 #
 # Usage: wrap_litert_ios_frameworks.sh <prebuilt_dir> <out_dir>
 #   <prebuilt_dir> must contain ios_arm64/ and ios_sim_arm64/ with
 #   libLiteRt.dylib and libLiteRtMetalAccelerator.dylib in each.
+#
+# Outputs per runtime, in <out_dir>:
+#   <name>.xcframework          vendored by the CocoaPods podspec (release
+#                               assets zip them together as
+#                               litert-ios-frameworks.zip)
+#   <name>-spm.xcframework.zip  SwiftPM binary-target artifact; pin the
+#                               printed checksum in
+#                               ios/flutter_litert/Package.swift
 set -euo pipefail
 
 PREBUILT=$1
@@ -66,4 +75,13 @@ for name in LiteRt LiteRtMetalAccelerator; do
     -framework "$WORK/ios_arm64/$name.framework" \
     -framework "$WORK/ios_sim_arm64/$name.framework" \
     -output "$OUT/$name.xcframework"
+  ditto -c -k --keepParent "$OUT/$name.xcframework" \
+    "$OUT/$name-spm.xcframework.zip"
+done
+
+# SwiftPM's binary-target checksum for zip artifacts is the plain SHA-256
+# (same value `swift package compute-checksum` prints).
+echo "SwiftPM checksums for ios/flutter_litert/Package.swift:"
+for name in LiteRt LiteRtMetalAccelerator; do
+  echo "  $name: $(shasum -a 256 "$OUT/$name-spm.xcframework.zip" | cut -d' ' -f1)"
 done

@@ -192,6 +192,25 @@ Verified against the LiteRT source:
   stack. The integration test keeps the fallback test sync-only so CI stays
   deterministic.
 
+## iOS: SwiftPM channel must ship framework bundles too (2026-07-07)
+
+- App Store validation rejects IPAs whose `Frameworks/` directory contains
+  loose bare dylibs, surfacing as ITMS-90426 "Invalid Swift Support" (#15).
+  SwiftPM bare-dylib (library-type) binary targets embed exactly that shape,
+  so the SPM channel now ships the same framework-wrapped xcframeworks as
+  CocoaPods (release `litert-ios-v1.0.1`, identical binaries re-wrapped) and
+  both channels register the Metal accelerator through the
+  `LiteRtRegisterGpuAccelerator` shim. The 2026-06-11 packaging note above
+  describes the pre-#15 bare-dylib SPM layout; the Dart loader keeps probing
+  `<app>/Frameworks/libLiteRt.dylib` first for apps built against those
+  older versions.
+- Caveat from #15: with SwiftPM enabled, flutter_tools also embeds a
+  `FlutterFramework_..._PackageProduct.framework` built at minos iOS 12.0
+  linking `@rpath/libswiftCore.dylib` (`createFlutterFrameworkSwiftPackage`
+  hardcodes `platforms: []`), which plausibly triggers the same ITMS-90426
+  on its own. Not fixable from this package; needs an upstream
+  flutter/flutter fix.
+
 ## Android: CompiledModel CPU path (2026-06-11)
 
 - Bundled `libLiteRt.so` from the API-pinned prebuilt commit (`1adc2475`,

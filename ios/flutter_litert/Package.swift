@@ -25,10 +25,13 @@ let package = Package(
         // root cause of iOS SPM builds breaking; CocoaPods was unaffected because its
         // podspec rewrites the Info.plist at install time.
         //
-        // The simulator slices are arm64-only (Bazel `--cpu=ios_sim_arm64`), so
-        // iOS-simulator SPM builds work on Apple Silicon only. For x86_64 (Intel)
-        // simulator support, also build `--cpu=ios_sim_x86_64`, lipo into a universal
-        // simulator slice, and recreate the xcframework.
+        // The TensorFlowLite* simulator slices are arm64-only (Bazel
+        // `--cpu=ios_sim_arm64`), so iOS-simulator SPM builds work on Apple
+        // Silicon only. For x86_64 (Intel) simulator support, also build
+        // `--cpu=ios_sim_x86_64`, lipo into a universal simulator slice, and
+        // recreate the xcframework. (The LiteRt* targets below already ship
+        // universal simulator slices: arm64 plus an empty x86_64 stub, see
+        // scripts/wrap_litert_ios_frameworks.sh.)
         .binaryTarget(
             name: "TensorFlowLiteC",
             url: "https://github.com/hugocornellier/flutter_litert/releases/download/flex-v1.1.1/TensorFlowLiteC-spm.xcframework.zip",
@@ -45,19 +48,26 @@ let package = Package(
             checksum: "69e9c00536e15fca060bf8542e3e8f5ee6f8b7017226ed2407db4939db0bf6ae"
         ),
         // LiteRT Next runtime + Metal accelerator (CompiledModel API). These
-        // are library-type xcframeworks holding bare dylibs: the file names
-        // must stay `libLiteRt.dylib` / `libLiteRtMetalAccelerator.dylib`
-        // because the runtime registers the GPU accelerator by scanning the
-        // embedded Frameworks directory for that exact accelerator file name.
+        // are the same conventional framework-wrapped xcframeworks the
+        // CocoaPods channel ships (built by
+        // scripts/wrap_litert_ios_frameworks.sh). Earlier releases shipped
+        // library-type xcframeworks holding bare dylibs so that LiteRT's
+        // GPU-plugin file-name scan (`libLiteRtMetalAccelerator.dylib`) would
+        // work, but Xcode embeds those as loose dylibs in the app's
+        // Frameworks/ directory, and App Store validation rejects that bundle
+        // shape (ITMS-90426, issue #15). The framework rename breaks the
+        // file-name scan, so the flutter_litert_gpu_shim target exports
+        // LiteRtRegisterGpuAccelerator, which the runtime finds through its
+        // RTLD_DEFAULT registration probe instead.
         .binaryTarget(
             name: "LiteRt",
-            url: "https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v1.0.0/LiteRt-spm.xcframework.zip",
-            checksum: "0b51264db16b729d9f1c2fc9a9f4bf864e9406e8426555b305f0d77b979a0c62"
+            url: "https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v1.0.1/LiteRt-spm.xcframework.zip",
+            checksum: "766be1c952263f698845616b117e00a15090876588689301706430fbbe2e67c5"
         ),
         .binaryTarget(
             name: "LiteRtMetalAccelerator",
-            url: "https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v1.0.0/LiteRtMetalAccelerator-spm.xcframework.zip",
-            checksum: "de52f942c0733e8f6344d10388c4ef81526186a9ad326c0c68080717574a5125"
+            url: "https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v1.0.1/LiteRtMetalAccelerator-spm.xcframework.zip",
+            checksum: "4dc00b21b3afba1210ff6bfa6d68b3d03cf95c3dc704aac2d108c871888e9b37"
         ),
         .target(
             name: "flutter_litert",
@@ -69,6 +79,7 @@ let package = Package(
                 .target(name: "LiteRtMetalAccelerator"),
                 .target(name: "flutter_litert_delegate_symbols"),
                 .target(name: "flutter_litert_custom_ops"),
+                .target(name: "flutter_litert_gpu_shim"),
                 .product(name: "FlutterFramework", package: "FlutterFramework"),
             ],
             path: "Sources/flutter_litert",
@@ -100,6 +111,21 @@ let package = Package(
             ],
             path: "Sources/flutter_litert_custom_ops",
             publicHeadersPath: "include"
+        ),
+        // Registers the Metal accelerator with the LiteRT Next runtime. The
+        // framework-wrapped LiteRt binaries defeat the runtime's bare-dylib
+        // file-name scan, so this exports the LiteRtRegisterGpuAccelerator
+        // probe target (shared with the CocoaPods channel via
+        // ios/Classes/litert_gpu_accelerator_shim.c). No binary-target
+        // dependency: the shim talks to the runtime purely through
+        // dlopen/dlsym at run time.
+        .target(
+            name: "flutter_litert_gpu_shim",
+            path: "Sources/flutter_litert_gpu_shim",
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .linkedFramework("CoreFoundation", .when(platforms: [.iOS])),
+            ]
         )
     ]
 )

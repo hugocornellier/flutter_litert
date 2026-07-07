@@ -1,12 +1,15 @@
-// GPU (Metal) accelerator registration shim for the CocoaPods channel.
+// GPU (Metal) accelerator registration shim for iOS.
 //
-// CocoaPods refuses to install vendored xcframeworks that contain bare
-// dynamic libraries ("Use dynamic frameworks for dynamic linking instead"),
-// so for CocoaPods the LiteRT Next runtime and Metal accelerator ship as
-// conventional .framework bundles. That breaks LiteRT's own GPU plugin
-// discovery, which dlopen's the exact file name
-// `libLiteRtMetalAccelerator.dylib` from the RuntimeLibraryDir environment
-// option and reads its exported `LiteRtAcceleratorImpl` definition.
+// Both distribution channels ship the LiteRT Next runtime and Metal
+// accelerator as conventional .framework bundles: CocoaPods refuses to
+// install vendored xcframeworks that contain bare dynamic libraries ("Use
+// dynamic frameworks for dynamic linking instead"), and App Store validation
+// rejects IPAs whose Frameworks/ directory holds the loose dylibs Xcode
+// embeds for bare-dylib SwiftPM binary targets (ITMS-90426, issue #15). The
+// framework shape breaks LiteRT's own GPU plugin discovery, which dlopen's
+// the exact file name `libLiteRtMetalAccelerator.dylib` from the
+// RuntimeLibraryDir environment option and reads its exported
+// `LiteRtAcceleratorImpl` definition.
 //
 // LiteRT's registration has a documented second probe: it looks up a
 // function named `LiteRtRegisterGpuAccelerator` and, if the dlopen by file
@@ -24,8 +27,11 @@
 // binaries are built from — and is guarded by the same static_asserts plus a
 // runtime version check.
 //
-// On the SwiftPM channel the accelerator ships as a bare dylib and LiteRT's
-// own file-name scan succeeds first, so this function is never called there.
+// CocoaPods compiles this file via the podspec's Classes/** source glob;
+// SwiftPM compiles it through the Sources/flutter_litert_gpu_shim forwarder
+// target. (SwiftPM builds of package versions before the #15 fix shipped
+// bare dylibs, where LiteRT's own file-name scan succeeded first and this
+// function was never called.)
 
 #include <TargetConditionals.h>
 
