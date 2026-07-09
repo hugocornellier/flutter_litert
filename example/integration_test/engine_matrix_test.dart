@@ -18,10 +18,11 @@
 //
 // Results are emitted two ways: a human-readable table to stdout, and structured
 // long-format rows via `binding.reportData`, which test_driver/integration_test
-// .dart appends to RESULTS.csv on the host (one row per model x mode).
+// .dart appends to test/benchmark/RESULTS.csv on the host (one row per model x
+// mode).
 //
 // Run (profile mode, required for representative numbers) via the wrapper:
-//   tool/run_matrix.sh <device>            # e.g. macos / linux / windows / <id>
+//   test/benchmark/run_matrix.sh <device>  # e.g. macos / linux / windows / <id>
 // or directly:
 //   flutter drive --profile \
 //     --driver=test_driver/integration_test.dart \
@@ -486,7 +487,7 @@ void main() {
       }
       print('=' * 130);
       print(
-        'Structured rows emitted via reportData -> RESULTS.csv '
+        'Structured rows emitted via reportData -> test/benchmark/RESULTS.csv '
         '(${rows.length} rows).',
       );
     });

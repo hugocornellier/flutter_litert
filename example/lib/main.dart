@@ -202,7 +202,7 @@ class _Detector {
             .toSet();
         final precision = Precision.values.byName(data.precisionName);
         final bool useAsync = data.runAsync;
-        final cm = CompiledModel.fromBuffer(
+        final cm = await CompiledModel.fromBufferAsync(
           modelBytes,
           accelerators: accelerators,
           precision: precision,
@@ -752,7 +752,7 @@ class _DetectionDemoState extends State<_DetectionDemo> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
               child: Text(
-                '${_inferenceUs}us',
+                '${_inferenceUs}µs',
                 style: const TextStyle(color: Colors.white70),
               ),
             ),

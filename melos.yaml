@@ -32,4 +32,4 @@ scripts:
   ffigen:
     name: ffigen
     description: Call ffigen and generate bindings for `src/tensorflow_lite/c_api.h`.
-    run: flutter pub run ffigen --config ffigen_tensorflow_lite.yaml
+    run: dart run ffigen --config ffigen_tensorflow_lite.yaml

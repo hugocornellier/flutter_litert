@@ -1,31 +1,93 @@
-## 3.3.2
+## 3.4.1
 
-Fixes App Store uploads being rejected with ITMS-90426 ("Invalid Swift
-Support") when flutter_litert is installed through Swift Package Manager
-(#15). The SwiftPM channel shipped the LiteRT Next runtime and Metal
-accelerator as bare-dylib xcframeworks, which Xcode embeds as loose
-`libLiteRt.dylib` / `libLiteRtMetalAccelerator.dylib` files in the app's
-`Frameworks/` directory, a bundle shape App Store validation rejects. SwiftPM
-now ships the same framework-wrapped xcframeworks as CocoaPods (identical
-binaries, release `litert-ios-v1.0.1`) and registers the Metal accelerator
-through the shared `LiteRtRegisterGpuAccelerator` shim, so GPU CompiledModel
-keeps working. No API change; run `flutter clean` and rebuild to pick up the
-new artifacts. Note: Flutter's SwiftPM support independently embeds a
-`FlutterFramework_..._PackageProduct.framework` built at minos iOS 12.0,
-which can also trigger ITMS-90426. If uploads still fail after upgrading,
-disable SwiftPM (`flutter: config: enable-swift-package-manager: false` in
-pubspec.yaml) until flutter_tools is fixed.
+Web `CompiledModel` robustness fix. No API changes.
 
-Also fixes nondeterministic detection counts on Apple Silicon (ARM64). The
-channel-major SIMD decode in `postProcessDetectionsFlat` carried the class
-argmax in `Float32x4` lanes via `greaterThan().select()`, a pattern the Dart
-ARM64 JIT miscompiles: the same byte-identical model output decoded to a
-different number of detections across successive calls (varying with the
-optimizer tier) and could invent phantom boxes. The max reduction stays in
-SIMD; the winning class is now recovered with a scalar argmax over the few
-anchors that clear the threshold, so the decode is deterministic and matches the
-scalar reference on every call. Affects every downstream detector that decodes
-channel-major YOLO output; no API change.
+* A WebGPU compile attempt that neither resolves nor rejects no longer hangs
+  the WASM fallback paths. LiteRT.js 2.4.0's compile promise can, very
+  rarely, fail to settle on machines without a usable GPU (observed once on
+  GPU-less headless Chrome in CI, where an engine rebuild stalled
+  indefinitely); `fromBufferWithGpuFallbackAsync` and `{gpu, cpu}`
+  accelerator sets now bound the WebGPU attempt with a 60-second watchdog
+  and fall back to WASM when it trips, honoring their always-yield-a-model
+  contract. If the abandoned compile settles later, its model is disposed.
+  Strict `{gpu}` requests are never timed out and keep surfacing whatever
+  the runtime does.
+* Web integration-test harness (CI-only, not part of the published package):
+  the drive suites now record which poll timed out and what the app showed
+  into `integration_response_data.json`, the custom driver writes that file
+  on failure too, and CI prints it when a drive fails, so a recurrence
+  pinpoints the stalled stage instead of reporting an empty failure detail.
+
+## 3.4.0
+
+Brings `CompiledModel` to the web via Google's LiteRT.js (the same
+auto-loaded `@litertjs/core` that powers `LiteRtInterpreter`), fixes App
+Store uploads for SwiftPM installs (#15), and fixes a nondeterministic ARM64
+detection decode. Additive and backward compatible.
+
+Web `CompiledModel`:
+
+* New async factories on every platform, `CompiledModel.fromBufferAsync` and
+  `fromBufferWithGpuFallbackAsync`; pair them with the existing `runAsync`
+  for portable code. LiteRT.js compilation is Promise-based, so on the web
+  they are the only way to build a model: the synchronous `fromFile`,
+  `fromBuffer`, `fromBufferWithGpuFallback`, and `run` throw
+  `UnsupportedError` there.
+* Web accelerator mapping: `cpu` compiles on WASM, `gpu` on WebGPU, and
+  `{gpu, cpu}` tries WebGPU with a WASM fallback; `model.accelerators`
+  reports what LiteRT.js actually resolved (including `{gpu, cpu}` for
+  partially accelerated WebGPU models). `npu` throws `ArgumentError` on the
+  web, `precision` is accepted but ignored, and the zero-copy
+  `TensorBufferMode.hostMemory` path stays native-only.
+* Inference-time WebGPU failures (device lost, GPU out of memory) throw
+  `LiteRtRuntimeError`, so callers can dispose the model and rebuild it with
+  `{Accelerator.cpu}`.
+* The `Accelerator`/`Precision`/`TensorBufferMode` enums moved to a shared
+  source file (no API change), and the example app now builds its
+  `CompiledModel` with `fromBufferAsync`.
+
+Web backend selection and Safari compatibility:
+
+* The default LiteRT.js WASM location is now the package's `wasm/` directory
+  instead of a pinned file, so LiteRT.js's feature probe serves Safari the
+  compat build (relaxed SIMD is default-off there) while Chrome and Firefox
+  keep the fast relaxed-SIMD build. URLs pinned via
+  `configureLiteRtWebLoader` are unaffected.
+* New `resolveWebAccelerator('auto' | 'webgpu' | 'wasm')` in
+  `web_detector_utils.dart`: `'auto'` picks WebGPU only on Chromium with a
+  hardware (non-software) adapter, probed once per page load; explicit
+  values pass through. Firefox's WebGPU works but runs ~22x slower than its
+  WASM SIMD, so API presence alone must not select it.
+* New `WebGpuFallback.maybeSwapIfWebGpuSlow`: times a few warmup inferences
+  after an `'auto'` init that landed on WebGPU and swaps to WASM past a
+  budget (default 50ms median), catching slow-but-functional GPU stacks the
+  error-driven fallback cannot see.
+* `WebGpuFallback.withFallback` now swaps only on `LiteRtRuntimeError`, so
+  logic bugs surface instead of masquerading as GPU fallbacks, and marks
+  `fellBackToWasm` only after a successful swap. All compile-time, runtime,
+  and warmup fallbacks now log their cause via `debugPrint`.
+
+iOS fix (#15): App Store validation rejects the loose `libLiteRt.dylib` /
+`libLiteRtMetalAccelerator.dylib` files that SwiftPM's bare-dylib
+xcframeworks embedded in the app's `Frameworks/` directory, surfacing as
+ITMS-90426 ("Invalid Swift Support"). SwiftPM now ships the same
+framework-wrapped xcframeworks as CocoaPods (identical binaries, release
+`litert-ios-v1.0.1`) and registers the Metal accelerator through the shared
+`LiteRtRegisterGpuAccelerator` shim, so GPU `CompiledModel` keeps working.
+No API change; run `flutter clean` and rebuild. Note: Flutter's SwiftPM
+support independently embeds a framework built at minos iOS 12.0 that can
+also trigger ITMS-90426; if uploads still fail, disable SwiftPM
+(`flutter: config: enable-swift-package-manager: false` in pubspec.yaml)
+until flutter_tools is fixed.
+
+ARM64 fix: on Apple Silicon, the SIMD decode in `postProcessDetectionsFlat`
+could return a different detection count (or phantom boxes) for
+byte-identical model output, because the Dart ARM64 JIT miscompiles the
+`greaterThan().select()` lane-carried argmax it used. The winning class is
+now recovered with a scalar argmax over the few anchors that clear the
+threshold, so the decode is deterministic and matches the scalar reference.
+Affects every downstream detector that decodes channel-major YOLO output; no
+API change.
 
 ## 3.3.1
 

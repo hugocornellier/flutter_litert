@@ -7,8 +7,8 @@
 # Both are compiled to AOT executables and run interleaved (A B A B ...)
 # from the repository root so they share dylibs, models, and machine state.
 #
-# Usage: tool/bench/run_ab.sh [rounds] [base_ref] [bench args passed to both]
-# Example: tool/bench/run_ab.sh 6 HEAD --filter=cm_ --samples=60
+# Usage: test/benchmark/run_ab.sh [rounds] [base_ref] [bench args passed to both]
+# Example: test/benchmark/run_ab.sh 6 HEAD --filter=cm_ --samples=60
 
 set -euo pipefail
 
@@ -25,12 +25,15 @@ WORK="$(mktemp -d)"
 trap 'git worktree remove --force "$WORK/base" 2>/dev/null || true; rm -rf "$WORK"' EXIT
 
 echo "== compiling B (working tree) =="
-dart compile exe tool/bench/bench.dart -o "$WORK/bench_b" >/dev/null
+dart compile exe test/benchmark/bench.dart -o "$WORK/bench_b" >/dev/null
 
 echo "== preparing A (worktree at $BASE_REF) =="
 git worktree add --detach "$WORK/base" "$BASE_REF" >/dev/null 2>&1
 (cd "$WORK/base" && { flutter pub get --offline >/dev/null 2>&1 || flutter pub get >/dev/null; })
-(cd "$WORK/base" && dart compile exe tool/bench/bench.dart -o "$WORK/bench_a" >/dev/null)
+# Refs older than the tool/ -> test/ merge keep the harness at tool/bench/.
+A_SRC="test/benchmark/bench.dart"
+[ -f "$WORK/base/$A_SRC" ] || A_SRC="tool/bench/bench.dart"
+(cd "$WORK/base" && dart compile exe "$A_SRC" -o "$WORK/bench_a" >/dev/null)
 
 A_OUT="$OUT_DIR/last_a.jsonl"
 B_OUT="$OUT_DIR/last_b.jsonl"
@@ -47,4 +50,4 @@ for i in $(seq 1 "$ROUNDS"); do
 done
 
 echo "== verdict (A=$BASE_REF, B=working tree) =="
-dart run tool/bench/compare.dart "$A_OUT" "$B_OUT"
+dart run test/benchmark/compare.dart "$A_OUT" "$B_OUT"

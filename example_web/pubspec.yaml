@@ -1,5 +1,5 @@
-name: flutter_litert_example
-description: Example app and integration-test host for flutter_litert.
+name: flutter_litert_example_web
+description: Web example app for flutter_litert (LiteRT.js runtime), with browser integration tests.
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -11,22 +11,21 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_litert: ^3.4.1
-  opencv_dart: ^2.2.1+4
 
 dev_dependencies:
+  flutter_driver:
+    sdk: flutter
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   integration_test:
     sdk: flutter
-  device_info_plus: ^11.1.0
 
 dependency_overrides:
   flutter_litert:
-    path: ../
+    path: ..
 
 flutter:
   uses-material-design: true
   assets:
     - assets/
-    - assets/samples/

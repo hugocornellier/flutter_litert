@@ -16,6 +16,8 @@ import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show debugPrint;
+
 import 'tensor.dart';
 import 'js_interop/litertjs_bindings.dart' as lrt;
 
@@ -127,6 +129,11 @@ class LiteRtInterpreter {
       if (accelerator == 'webgpu') {
         // Fall back: not all ops are supported on webgpu. WASM should
         // accept everything that tflite-js accepts.
+        debugPrint(
+          'flutter_litert: WebGPU compile failed, falling back to WASM '
+          '(inspect activeAccelerator on the returned interpreter). '
+          'Cause: $e',
+        );
         compiled = await lrt.loadAndCompile(bytes, accelerator: 'wasm');
         resolved = 'wasm';
       } else {

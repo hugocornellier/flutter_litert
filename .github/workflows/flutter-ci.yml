@@ -1,5 +1,6 @@
 name: build
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
@@ -21,6 +22,13 @@ jobs:
         run: flutter config --enable-macos-desktop
 
       - name: Install dependencies
+        run: flutter pub get
+
+      # Repo-wide analyze below needs example_web's package config resolved;
+      # a fresh checkout has no .dart_tool there and analyze would fail on
+      # its unresolved package: imports.
+      - name: Install web example dependencies
+        working-directory: example_web
         run: flutter pub get
 
       - name: Verify formatting
@@ -70,6 +78,11 @@ jobs:
         run: flutter config --enable-linux-desktop
 
       - name: Install dependencies
+        run: flutter pub get
+
+      # Same as build-macos: resolve example_web before the repo-wide analyze.
+      - name: Install web example dependencies
+        working-directory: example_web
         run: flutter pub get
 
       - name: Verify formatting
@@ -136,6 +149,87 @@ jobs:
         working-directory: example
         run: flutter test integration_test/compiled_model_test.dart -d windows --timeout 600s
 
+  build-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Runs the browser-tagged unit tests in headless Chrome (preinstalled on
+      # ubuntu-latest). The LiteRT.js runtime and its WASM binary are fetched
+      # from cdn.jsdelivr.net at test time. Runners have no GPU, so WebGPU
+      # compilation fails and the fallback tests take the WASM path. The
+      # detector-utils suite fakes its detector and stubs window.navigator, so
+      # every accelerator-resolution and fallback branch runs deterministically
+      # here too; the loader suite poisons its page with a bogus module URL on
+      # purpose, which is why it is a separate file.
+      - name: Run web unit tests in headless Chrome
+        run: >-
+          flutter test --platform chrome
+          test/compiled_model_web_test.dart
+          test/web_detector_utils_web_test.dart
+          test/litert_web_loader_test.dart
+
+      - name: Install web example dependencies
+        working-directory: example_web
+        run: flutter pub get
+
+      # Real end-to-end inference in a WebDriver-controlled Chrome, two
+      # targets: the engine matrix (every web stack running YOLOv8n on the
+      # bundled samples and asserting the cats in cat.jpg are found) and the
+      # app UI suite (sample picker, settings dialog, status readout).
+      # Drives run in profile mode: the integration binding force-enables
+      # semantics, and debug builds hit a framework-only semantics assert
+      # (rendering/object.dart identical(childRenderObject,
+      # parentRenderObject)) when the settings dialog opens over the
+      # confidence Slider; profile compiles the asserts out and matches how
+      # the example ships.
+      # GPU-flavored tests key off a WebGPU capability probe, so on these
+      # GPU-less runners they assert the WASM-fallback and failure semantics
+      # instead of real WebGPU. ubuntu-latest preinstalls a version-matched
+      # chromedriver at $CHROMEWEBDRIVER.
+      # The response-data cat runs on failure too: web drives report failure
+      # details as an empty string, so the reportData the suites record (the
+      # WebGPU probe outcome, and which poll timed out with what on screen)
+      # is the only diagnostic a failed run leaves behind.
+      - name: Run web integration tests (chromedriver)
+        working-directory: example_web
+        run: |
+          "$CHROMEWEBDRIVER/chromedriver" --port=4444 &
+          flutter drive --profile \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/web_object_detection_test.dart \
+            -d web-server --browser-name=chrome \
+            || { cat build/integration_response_data.json || true; exit 1; }
+          cat build/integration_response_data.json || true
+          flutter drive --profile \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/web_app_ui_test.dart \
+            -d web-server --browser-name=chrome \
+            || { cat build/integration_response_data.json || true; exit 1; }
+          cat build/integration_response_data.json || true
+
+      # The same engine matrix on Firefox (preinstalled with a matching
+      # geckodriver at $GECKOWEBDRIVER), exercising the wasm-directory
+      # runtime serving and the WASM fallbacks on a non-Chromium engine.
+      - name: Run web integration tests on Firefox (geckodriver)
+        working-directory: example_web
+        run: |
+          "$GECKOWEBDRIVER/geckodriver" --port=4445 &
+          flutter drive --profile \
+            --driver=test_driver/integration_test.dart \
+            --target=integration_test/web_object_detection_test.dart \
+            -d web-server --browser-name=firefox --driver-port=4445 \
+            || { cat build/integration_response_data.json || true; exit 1; }
+          cat build/integration_response_data.json || true
+
   build-android:
     runs-on: ubuntu-latest
     steps:
@@ -161,7 +255,10 @@ jobs:
 
       # Runs real CompiledModel inference (CPU; strict-GPU skips — emulators
       # have no working OpenCL) against libLiteRt.so bundled by the Gradle
-      # download task.
+      # download task. Up to three attempts: Gradle's SDK-component install
+      # can receive a corrupted NDK archive ("Error on ZipFile unknown
+      # archive"), which fails assembleDebug; purging the partial NDK
+      # between attempts makes the retry re-download it cleanly.
       - name: Run CompiledModel integration tests (Android emulator)
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -169,7 +266,15 @@ jobs:
           arch: x86_64
           profile: pixel_6
           working-directory: example
-          script: flutter test integration_test/compiled_model_test.dart -d emulator-5554 --timeout 600s
+          # One line on purpose: the action runs each script line as its own
+          # sh command, which tears a multi-line loop apart.
+          script: >-
+            bash -c 'set +e; rc=1; for attempt in 1 2 3; do
+            flutter test integration_test/compiled_model_test.dart -d emulator-5554 --timeout 600s; rc=$?;
+            [ "$rc" -eq 0 ] && break;
+            echo "::warning::Android integration tests attempt $attempt failed (rc=$rc)";
+            [ "$attempt" -lt 3 ] && rm -rf "$ANDROID_HOME"/ndk/* "$ANDROID_HOME"/.temp;
+            done; exit "$rc"'
 
   # Forward-compatibility guard for newer Android Gradle Plugin (AGP 9.x).
   # The example app pins AGP 8.11.1, so the build-android job above only ever
@@ -306,6 +411,13 @@ jobs:
               echo "::warning::$test_file attempt $attempt failed/timed out (rc=$rc)"
               if [ "$attempt" -lt "$max" ]; then
                 echo "Recycling simulator before retry"
+                # The watchdog kill above only reaches the flutter process;
+                # its xcodebuild/XCBBuildService children survive and keep
+                # DerivedData's build database locked, so without reaping
+                # them the retry dies on "unable to attach DB: database is
+                # locked ... two concurrent builds".
+                pkill -9 xcodebuild 2>/dev/null || true
+                pkill -9 -f XCBBuildService 2>/dev/null || true
                 xcrun simctl shutdown "$SIMULATOR_UDID" 2>/dev/null || true
                 xcrun simctl boot "$SIMULATOR_UDID" 2>/dev/null || true
                 xcrun simctl bootstatus "$SIMULATOR_UDID" -b

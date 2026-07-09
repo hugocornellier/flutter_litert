@@ -4,12 +4,12 @@
 // hot paths (CompiledModel and Interpreter).
 //
 // Runs on the plain Dart VM so it can be compiled AOT:
-//   JIT:  dart run tool/bench/bench.dart
-//   AOT:  dart compile exe tool/bench/bench.dart -o bench && ./bench
+//   JIT:  dart run test/benchmark/bench.dart
+//   AOT:  dart compile exe test/benchmark/bench.dart -o bench && ./bench
 //
 // Always run from the repository root: native libraries and model assets
 // are resolved relative to the working directory. Results append to a
-// JSONL file with --out for A/B comparison via tool/bench/compare.dart.
+// JSONL file with --out for A/B comparison via test/benchmark/compare.dart.
 //
 // Timing model: the wall clock ticks in microseconds, so a sample is one
 // timed batch of N iterations and ns/op = batch_time / N. N is calibrated

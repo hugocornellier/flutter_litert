@@ -24,6 +24,9 @@ import 'package:ffi/ffi.dart';
 import '../bindings/litert_ffi.dart';
 import '../bindings/litert_loader.dart';
 import '../util/async_lock.dart';
+import 'compiled_model_types.dart';
+
+export 'compiled_model_types.dart';
 
 const int _kLiteRtStatusOk = 0;
 const int _kLiteRtHwAcceleratorCpu = 1;
@@ -38,24 +41,6 @@ const int _kLiteRtAnyValueOffset = 8;
 const int _kLiteRtEnvOptionSize = 24;
 const int _kLiteRtEnvOptionValueOffset = 8;
 const int _kHostMemoryAlignment = 64;
-
-/// Hardware accelerator requested for LiteRT Next compilation.
-enum Accelerator { cpu, gpu, npu }
-
-/// GPU precision mode for LiteRT Next compilation.
-enum Precision { fp16, fp32 }
-
-/// Tensor buffer allocation mode for CompiledModel I/O.
-///
-/// [managed] uses LiteRT-managed buffers and copies host data through the
-/// documented lock/write/unlock and lock/read/unlock path. [hostMemory] wraps
-/// package-owned, 64-byte-aligned host memory with
-/// `LiteRtCreateTensorBufferFromHostMemory`.
-///
-/// Host-memory buffers are opt-in because performance is model- and
-/// accelerator-dependent: they can reduce lock/copy overhead for some strict
-/// GPU models, but are slower for others.
-enum TensorBufferMode { managed, hostMemory }
 
 /// LiteRT Next CompiledModel inference API.
 class CompiledModel {
@@ -167,6 +152,27 @@ class CompiledModel {
     );
   }
 
+  /// Creates a compiled model from model bytes without requiring synchronous
+  /// compilation.
+  ///
+  /// Portable alternative to [fromBuffer]: on the web, LiteRT.js compilation
+  /// is Promise-based and only this variant is available, so code that must
+  /// also run on the web should prefer it. On native platforms compilation
+  /// still runs synchronously inside this call.
+  static Future<CompiledModel> fromBufferAsync(
+    Uint8List bytes, {
+    Set<Accelerator> accelerators = const {Accelerator.cpu},
+    Precision precision = Precision.fp16,
+    TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
+  }) async {
+    return fromBuffer(
+      bytes,
+      accelerators: accelerators,
+      precision: precision,
+      tensorBufferMode: tensorBufferMode,
+    );
+  }
+
   /// Creates a compiled model from [bytes], preferring GPU with a CPU fallback.
   ///
   /// Requests `{gpu, cpu}` at [precision] (default [Precision.fp32], since
@@ -209,6 +215,28 @@ class CompiledModel {
         tensorBufferMode: tensorBufferMode,
       );
     }
+  }
+
+  /// Creates a compiled model from [bytes], preferring GPU with a CPU
+  /// fallback, without requiring synchronous compilation.
+  ///
+  /// Portable alternative to [fromBufferWithGpuFallback]: on the web only
+  /// this variant is available. On native platforms compilation still runs
+  /// synchronously inside this call.
+  static Future<CompiledModel> fromBufferWithGpuFallbackAsync(
+    Uint8List bytes, {
+    bool forceCpu = false,
+    Precision precision = Precision.fp32,
+    TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
+    void Function(Object error)? onFallback,
+  }) async {
+    return fromBufferWithGpuFallback(
+      bytes,
+      forceCpu: forceCpu,
+      precision: precision,
+      tensorBufferMode: tensorBufferMode,
+      onFallback: onFallback,
+    );
   }
 
   /// Process-wide (per-isolate) shared LiteRT environment.

@@ -46,8 +46,8 @@ class _Stats {
   @override
   String toString() => median < 0
       ? '${name.padRight(28)} $note'
-      : '${name.padRight(28)} median ${'$median'.padLeft(7)} us   '
-            'p90 ${'$p90'.padLeft(7)} us   $note';
+      : '${name.padRight(28)} median ${'$median'.padLeft(7)} µs   '
+            'p90 ${'$p90'.padLeft(7)} µs   $note';
 }
 
 _Stats _bench(String name, void Function() body, {String note = ''}) {

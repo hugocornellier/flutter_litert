@@ -41,9 +41,10 @@ String _csv(Object? v) {
   return s;
 }
 
-// Appends the matrix rows from the on-device test to RESULTS.csv on the host.
-// The output path comes from MATRIX_CSV (set by tool/run_matrix.sh); defaults to
-// RESULTS.csv in the current working directory.
+// Appends the matrix rows from the on-device test to test/benchmark/RESULTS.csv
+// on the host. The output path comes from MATRIX_CSV (set by
+// test/benchmark/run_matrix.sh); defaults to RESULTS.csv in the current working
+// directory.
 Future<void> main() => integrationDriver(
   responseDataCallback: (data) async {
     final matrix = data?['matrix'] as Map<String, dynamic>?;

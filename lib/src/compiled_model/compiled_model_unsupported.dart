@@ -16,14 +16,9 @@
 
 import 'dart:typed_data';
 
-/// Hardware accelerator requested for LiteRT Next compilation.
-enum Accelerator { cpu, gpu, npu }
+import 'compiled_model_types.dart';
 
-/// GPU precision mode for LiteRT Next compilation.
-enum Precision { fp16, fp32 }
-
-/// Tensor buffer allocation mode for CompiledModel I/O.
-enum TensorBufferMode { managed, hostMemory }
+export 'compiled_model_types.dart';
 
 /// LiteRT Next CompiledModel inference API.
 class CompiledModel {
@@ -49,8 +44,31 @@ class CompiledModel {
     throw UnsupportedError('CompiledModel is not supported on this platform.');
   }
 
+  /// Creates a compiled model from model bytes without requiring synchronous
+  /// compilation.
+  static Future<CompiledModel> fromBufferAsync(
+    Uint8List bytes, {
+    Set<Accelerator> accelerators = const {Accelerator.cpu},
+    Precision precision = Precision.fp16,
+    TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
+  }) {
+    throw UnsupportedError('CompiledModel is not supported on this platform.');
+  }
+
   /// Creates a compiled model from [bytes], preferring GPU with a CPU fallback.
   static CompiledModel fromBufferWithGpuFallback(
+    Uint8List bytes, {
+    bool forceCpu = false,
+    Precision precision = Precision.fp32,
+    TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
+    void Function(Object error)? onFallback,
+  }) {
+    throw UnsupportedError('CompiledModel is not supported on this platform.');
+  }
+
+  /// Creates a compiled model from [bytes], preferring GPU with a CPU
+  /// fallback, without requiring synchronous compilation.
+  static Future<CompiledModel> fromBufferWithGpuFallbackAsync(
     Uint8List bytes, {
     bool forceCpu = false,
     Precision precision = Precision.fp32,

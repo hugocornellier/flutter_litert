@@ -2,7 +2,7 @@
 //
 // A/B comparison for bench.dart JSONL output.
 //
-//   dart run tool/bench/compare.dart a.jsonl b.jsonl [--floor-pct=0.5]
+//   dart run test/benchmark/compare.dart a.jsonl b.jsonl [--floor-pct=0.5]
 //
 // Pools all samples per bench per side, then reports the median delta with
 // a seeded bootstrap 95% confidence interval on the difference of medians.

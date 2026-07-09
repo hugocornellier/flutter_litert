@@ -1,6 +1,6 @@
 # Micro-benchmark history
 
-Method: `tool/bench/run_ab.sh` compiles the base ref and the working tree to
+Method: `test/benchmark/run_ab.sh` compiles the base ref and the working tree to
 separate AOT binaries and runs them interleaved (A B A B ...) from the repo
 root, so both sides share dylibs, models, and machine state. Verdicts use the
 median delta with a seeded bootstrap 95% CI (`compare.dart`). All numbers are

@@ -7,13 +7,13 @@ accelerator, on real devices.
 - **Raw data:** [`RESULTS.csv`](RESULTS.csv): long format, one row per
   (run × model × mode), append-only. Every committed run adds rows; the tables
   below are human-readable summaries regenerated from it.
-- **Test:** [`example/integration_test/engine_matrix_test.dart`](example/integration_test/engine_matrix_test.dart)
-- **Runner:** [`tool/run_matrix.sh`](tool/run_matrix.sh)
+- **Test:** [`example/integration_test/engine_matrix_test.dart`](../../example/integration_test/engine_matrix_test.dart)
+- **Runner:** [`test/benchmark/run_matrix.sh`](run_matrix.sh)
 
 ## How to run
 
 ```sh
-tool/run_matrix.sh macos      # or: linux | windows | <android/ios device id>
+test/benchmark/run_matrix.sh macos   # or: linux | windows | <android/ios device id>
 ```
 
 This runs the matrix in **profile mode** (required; debug numbers are not
@@ -25,7 +25,7 @@ each run so the file accumulates a record across hardware.
 > has a broken x86_64 slice that fails to link in profile/release builds. The
 > macOS profile/release builds are therefore pinned to arm64 (see
 > `EXCLUDED_ARCHS` in `example/macos/Runner/Configs/Release.xcconfig`), so
-> `tool/run_matrix.sh macos` builds cleanly with `opencv_dart` enabled on Apple
+> `test/benchmark/run_matrix.sh macos` builds cleanly with `opencv_dart` enabled on Apple
 > Silicon, no workaround needed. Linux/Windows/mobile are unaffected.
 
 ## Columns
@@ -128,12 +128,13 @@ fall back to the classic Interpreter instead, which is what
 
 ## Linux: _pending_
 
-Run `tool/run_matrix.sh linux` on the target box and commit the updated CSV +
+Run `test/benchmark/run_matrix.sh linux` on the target box and commit the updated CSV +
 table. Expectations to verify: `gpu_metal`/`coreml` are `unsupported`; the new
 `libLiteRtWebGpuAccelerator.so` (Vulkan) drives the `cm_gpu*`/`cm_g+c` columns;
 `gpu_glcl` availability depends on the GL/CL delegate.
 
 ## Windows: _pending_
 
-Run `tool/run_matrix.sh windows`. The WebGPU (Dawn/D3D12) accelerator drives the
+Run `test/benchmark/run_matrix.sh windows`. The WebGPU (Dawn/D3D12) accelerator
+drives the
 `cm_gpu*` columns; watch the fp16 `parity_maxdiff` on weak D3D12 drivers.

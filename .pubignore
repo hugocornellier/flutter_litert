@@ -17,6 +17,9 @@ build/
 # flex integration-test host: local-only, not a consumer-facing example
 example/flex_test_host/
 
+# web integration-test host: CI-only, not a consumer-facing example
+example_web/
+
 # Example binary assets (model + sample images): consumers never use these;
 # only example-source cloners need them, and they get them from GitHub.
 example/assets/
@@ -31,38 +34,36 @@ assets/hand-detection-demo.webp
 # archive until the tracked file is removed from the repo.
 assets/pose-detection-demo.webp
 
-# Local delegate benchmark harnesses. Keep them in the repository for
-# repeatable profiling without shipping machine-specific paths to pub.dev.
-example/integration_test/coreml_model_sweep_test.dart
-example/integration_test/full_delegate_sweep_test.dart
-example/integration_test/gpu_fp16_test.dart
-example/integration_test/ios_delegate_sweep_test.dart
-example/integration_test/ios_engine_matrix_test.dart
+# Local benchmark harness entrypoint under example/lib (the example/lib dir
+# itself is kept for the pub.dev Example tab; the integration-test harnesses
+# are covered by the example exclusions below).
 example/lib/ios_sweep_main.dart
 
-# Engine-overhead benchmark harness + its model asset. Kept in the
-# repository for repeatable profiling; not consumer-facing.
-test/benchmark/
-test/assets/face_detection_short_range.tflite
+# Package tests, incl. the benchmark harness and test model assets: not
+# needed by consumers of the published archive.
+test/
 
 # Old example subdirectories (leftover from tflite_flutter)
 example/live_object_detection_ssd_mobilenet/
 example/reinforcement_learning/
 example/text_classification/
 
+# Example app: keep example/lib and example/pubspec.yaml (pub.dev Example tab
+# and pana); exclude runner scaffolding and tests, which only matter when
+# cloning from GitHub.
+example/android/
+example/ios/
+example/macos/
+example/windows/
+example/linux/
+example/web/
+example/integration_test/
+example/test_driver/
+example/test/
+
 # Dev/CI files
 .github/
 .claude/
-makefile
 melos.yaml
 scripts/
-tool/
-flutter-tflite.code-workspace
 ffigen_tensorflow_lite.yaml
-
-# Internal benchmark results and findings (not consumer-facing).
-# The plugin builds and runs without these; they would only expose internal
-# profiling data.
-RESULTS.md
-RESULTS.csv
-COMPILEDMODEL_FINDINGS.md

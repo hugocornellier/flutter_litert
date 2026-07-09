@@ -17,12 +17,17 @@ import 'dart:typed_data';
 const String _defaultLiteRtModuleUrl =
     'https://cdn.jsdelivr.net/npm/@litertjs/core@2.4.0/+esm';
 
-/// Default WASM .js URL passed to `LiteRt.loadLiteRt(...)`. The non-threaded
-/// variant is used to avoid the SharedArrayBuffer-dependent `_threaded`
-/// build, which would require COOP/COEP headers the Flutter dev server
-/// does not set.
+/// Default WASM location passed to `LiteRt.loadLiteRt(...)`. A DIRECTORY
+/// (trailing slash) so LiteRT.js's runtime feature probe picks the right
+/// build per engine: the fast relaxed-SIMD `litert_wasm_internal` build on
+/// Chrome/Firefox, and `litert_wasm_compat_internal` on Safari, which ships
+/// relaxed SIMD behind a default-off flag and rejects the fast build at
+/// parse time ("relaxed simd instructions not supported"). Pinning a full
+/// `.js` file here would bypass that selection and break Safari entirely.
+/// Threaded builds are only chosen when explicitly requested; they need
+/// SharedArrayBuffer and thus COOP/COEP headers most hosts do not set.
 const String _defaultLiteRtWasmUrl =
-    'https://cdn.jsdelivr.net/npm/@litertjs/core@2.4.0/wasm/litert_wasm_internal.js';
+    'https://cdn.jsdelivr.net/npm/@litertjs/core@2.4.0/wasm/';
 
 String _liteRtModuleUrl = _defaultLiteRtModuleUrl;
 String _liteRtWasmUrl = _defaultLiteRtWasmUrl;

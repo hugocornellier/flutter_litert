@@ -40,7 +40,7 @@ It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutt
   &nbsp;&nbsp;&nbsp;
   <img src="assets/hand-detection-demo.webp" alt="Real-time on-device hand tracking running on a laptop, built with flutter_litert" width="64%" align="middle">
   <br>
-  <sub><i style="color: #888;">Performant, cross-platform on-device ML inference, from a single Flutter codebase.</i></sub>
+  <sub><i style="color: #888; display: inline-block; margin-bottom: 5px;">Performant, cross-platform on-device ML inference, from a single Flutter codebase.</i></sub>
 </p>
 
 ## Two runtimes, one package
@@ -127,9 +127,9 @@ Packages built on flutter_litert:
 
 ## CompiledModel (LiteRT Next)
 
-`CompiledModel` is the LiteRT Next inference path and the recommended way to run models with GPU or NPU acceleration. Instead of manually creating and attaching a delegate, you request a set of accelerators and the runtime selects the best available backend (CPU, GPU, or NPU) for the model. This follows Google's [LiteRT Next guidance](https://developers.google.com/edge/litert/next/get_started). Supported on Android, iOS, macOS, Windows, and Linux.
+`CompiledModel` is the LiteRT Next inference path and the recommended way to run models with GPU or NPU acceleration. Instead of manually creating and attaching a delegate, you request a set of accelerators and the runtime selects the best available backend (CPU, GPU, or NPU) for the model. This follows Google's [LiteRT Next guidance](https://developers.google.com/edge/litert/next/get_started). Supported on Android, iOS, macOS, Windows, Linux, and web (async API only; see [CompiledModel on the web](#compiledmodel-on-the-web)).
 
-`CompiledModel` runs Float32 models only (`run()` takes `List<Float32List>` and returns `List<Float32List>`) and is not available on web. For web, on-device training, custom ops, named signatures, or quantized and integer I/O, use the [Interpreter (classic API)](#interpreter-classic-api) instead.
+`CompiledModel` runs Float32 models only (`run()` takes `List<Float32List>` and returns `List<Float32List>`). For on-device training, custom ops, named signatures, or quantized and integer I/O, use the [Interpreter (classic API)](#interpreter-classic-api) instead.
 
 ### Accelerator selection and precision
 
@@ -157,6 +157,29 @@ final model = CompiledModel.fromBufferWithGpuFallback(modelBytes);
 
 This requests `{gpu, cpu}` for you and reports any GPU initialization failure through an optional callback.
 
+### CompiledModel on the web
+
+On the web, `CompiledModel` is backed by Google's LiteRT.js runtime: `Accelerator.cpu` maps to the WASM backend and `Accelerator.gpu` to WebGPU. Compilation and inference are Promise-based in the browser, so only the asynchronous API is available there. The async variants also work on native (where they wrap the synchronous path), so portable code should use them:
+
+```dart
+final model = await CompiledModel.fromBufferAsync(
+  modelBytes,
+  accelerators: {Accelerator.gpu, Accelerator.cpu}, // WebGPU with WASM fallback
+);
+final outputs = await model.runAsync(inputs);
+model.close();
+```
+
+`CompiledModel.fromBufferWithGpuFallbackAsync(modelBytes)` is the async counterpart of `fromBufferWithGpuFallback` and likewise works on every platform.
+
+Web specifics:
+
+- The synchronous members (`fromFile`, `fromBuffer`, `fromBufferWithGpuFallback`, `run`) throw `UnsupportedError` on the web; use the async variants.
+- `model.accelerators` reports what LiteRT.js actually resolved: `{Accelerator.gpu}` for a fully accelerated WebGPU model, `{Accelerator.cpu}` for WASM, and `{Accelerator.gpu, Accelerator.cpu}` when the runtime reports a WebGPU model as only partially accelerated.
+- `precision` is accepted but ignored (LiteRT.js does not expose a precision option), and the zero-copy `TensorBufferMode.hostMemory` path is native-only.
+- The first `fromBufferAsync` call auto-loads the LiteRT.js runtime from jsDelivr, exactly like `LiteRtInterpreter`; call `configureLiteRtWebLoader(...)` first to self-host the module and WASM files or to disable auto-loading.
+- Inference-time WebGPU failures (device lost, GPU out of memory) throw `LiteRtRuntimeError`, the same typed error the web `LiteRtInterpreter` uses; dispose the model and rebuild it with `{Accelerator.cpu}` to recover.
+
 ### Zero-copy hot path
 
 `CompiledModel.run` takes a `List<Float32List>` (one entry per input tensor) and returns a fresh `List<Float32List>` (one per output tensor). For a hot path that avoids those per-call allocations, build the model with `tensorBufferMode: TensorBufferMode.hostMemory` and use `writeInput`, `dispatch`, and `readOutput`, which read and write the native tensor buffers in place.
@@ -178,7 +201,7 @@ model.readOutput(0, (output) {
 model.close();
 ```
 
-> The default is `TensorBufferMode.managed`. `writeInput`, `dispatch`, and `readOutput` throw a `StateError` unless the model is built with `TensorBufferMode.hostMemory`.
+> The default is `TensorBufferMode.managed`. `writeInput`, `dispatch`, and `readOutput` throw a `StateError` unless the model is built with `TensorBufferMode.hostMemory`. The zero-copy path is native-only; it is not available on the web.
 
 ### Async inference
 
@@ -694,7 +717,7 @@ Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex) to you
 
 ```yaml
 dependencies:
-  flutter_litert: ^3.3.2
+  flutter_litert: ^3.4.1
   flutter_litert_flex: ^1.3.0
 ```
 
@@ -1070,13 +1093,13 @@ flutter_litert ships two independent native runtimes, one per API. The classic `
 | macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
 | Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
 | Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
-| Web | LiteRT.js 2.4.0 / TFLite.js (WASM) | not supported |
+| Web | LiteRT.js 2.4.0 / TFLite.js (WASM) | LiteRT.js 2.4.0 (WASM / WebGPU) |
 
 Bundling:
 - Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` from the `2.1.5` AAR.
 - iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` xcframework (release `litert-ios-v1.0.1` for SPM, `litert-ios-v1.0.0` for CocoaPods; both the same commit-pinned LiteRT Next build, commit `1adc2475`).
 - macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.1.5 wheel, bundled via CMake on Windows and Linux and via CocoaPods on macOS.
-- Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.4.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel is not available on web.
+- Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.4.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).
 
 > Intel Macs only: the iOS simulator is not supported under Swift Package Manager on x86_64. You have two options: test using a real iOS device or switch to CocoaPods to use the simulator. This applies to Intel Macs only.
 
@@ -1084,10 +1107,11 @@ iOS and macOS will be migrated to LiteRT as official CocoaPods artifacts become 
 
 ## Web support
 
-`flutter_litert` supports Flutter Web with two interchangeable runtimes:
+`flutter_litert` supports Flutter Web with three inference surfaces across two runtimes:
 
 1. **`Interpreter`** (standard cross-platform class). Bound to the third-party `tflite-js` runtime via `tf-tflite.min.js`. Pure CPU/WASM execution. Existing API, no setup beyond `initializeWeb()`.
 2. **`LiteRtInterpreter`** (opt-in LiteRT.js runtime, since 2.5.0). Google's official **LiteRT.js** runtime. Defaults to WASM; pass `accelerator: 'webgpu'` to use the **WebGPU** delegate with WASM fallback. Same .tflite models, dramatically faster on browsers that support WebGPU. Async: `runForMultipleInputs(...)` returns a `Future`.
+3. **`CompiledModel`** (since 3.4.0). The recommended cross-platform API, backed by the same LiteRT.js runtime on web. Only the async variants (`fromBufferAsync`, `fromBufferWithGpuFallbackAsync`, `runAsync`) are available in the browser. See [CompiledModel on the web](#compiledmodel-on-the-web).
 
 ### Web Demo / Example
 
@@ -1135,9 +1159,11 @@ To self-host or pin a specific build, call `configureLiteRtWebLoader(...)` once 
 ```dart
 configureLiteRtWebLoader(
   moduleUrl: '/assets/litertjs/index.js',          // your bundled path
-  wasmUrl  : '/assets/litertjs/litert_wasm_internal.js',
+  wasmUrl  : '/assets/litertjs/wasm/',             // a directory, not a single .js file
 );
 ```
+
+Point `wasmUrl` at a **directory** (trailing slash) rather than a specific `.js` file so LiteRT.js can select the right WASM build per engine: the fast relaxed-SIMD build on Chrome and Firefox, and a compatibility build on Safari (which rejects the relaxed-SIMD build at parse time). Pinning `litert_wasm_internal.js` directly bypasses that selection and fails to load on Safari.
 
 Or disable the auto-loader entirely if you want to load it from your own `<script>` tag:
 
@@ -1150,8 +1176,21 @@ Notes:
 - `runForMultipleInputs` is **async** on this runtime; await it.
 - Output buffers may be `Float32List` (preferred, single bulk copy), `ByteBuffer`, or the legacy `List<List<List<double>>>` shape used by tflite-js callers.
 - `webgpu` falls back to `wasm` if LiteRT.js cannot compile the model for the WebGPU delegate.
-- The WebGPU path requires Chrome / Edge 113 or newer (or Firefox / Safari with the flag enabled). On unsupported browsers, pass `accelerator: 'wasm'` directly.
+- The WebGPU path is production-ready on Chrome / Edge 113 or newer. Firefox and Safari (the latter behind a flag) also expose WebGPU and compile these models without error, but run them far slower than WASM SIMD (Firefox measured ~22x slower on small vision models), so in practice treat WebGPU as Chromium-only and pass `accelerator: 'wasm'` elsewhere. The `resolveWebAccelerator('auto')` helper below does this gating for you.
 - The default loader points at the non-threaded WASM build because the threaded variant requires `SharedArrayBuffer` (which needs COOP/COEP headers Flutter's dev server doesn't set). The SIMD non-threaded variant is still substantially faster than the tflite-js path.
+
+#### Automatic backend selection
+
+Passing `accelerator: 'webgpu'` forces WebGPU (falling back to WASM only if compilation fails). To pick the backend per browser instead, resolve `'auto'` first with `resolveWebAccelerator`:
+
+```dart
+final accelerator = await resolveWebAccelerator('auto');
+final lrt = await LiteRtInterpreter.fromBytes(modelBytes, accelerator: accelerator);
+```
+
+`resolveWebAccelerator` returns `'webgpu'` only on Chromium browsers backed by a hardware GPU adapter, and `'wasm'` everywhere else (Firefox, Safari, software adapters, headless CI). Explicit `'webgpu'` / `'wasm'` values pass through unchanged, and the probe runs once per page load and is cached.
+
+Because a few WebGPU stacks compile and run without error yet are unusably slow, the `WebGpuFallback` mixin also offers `maybeSwapIfWebGpuSlow(probe: ...)`: call it once after an `'auto'` init that landed on WebGPU, and it times a couple of warmup inferences and permanently swaps every runner to WASM if the median exceeds a budget (50ms by default). That mixin also provides `withFallback`, which transparently retries on WASM after a runtime `LiteRtRuntimeError` (WebGPU device loss or GPU OOM).
 
 ### Web-specific API differences
 
