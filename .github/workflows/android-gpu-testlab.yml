@@ -1,0 +1,134 @@
+name: Android physical GPU (Firebase Test Lab)
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_model:
+        description: Firebase Test Lab physical-device model ID
+        required: true
+        default: panther
+        type: string
+      android_version:
+        description: Android API/version ID supported by the selected device
+        required: true
+        default: '33'
+        type: string
+  # This lets the feature branch prove the workflow before it reaches the
+  # default branch, where workflow_dispatch becomes available. Remove this
+  # temporary branch trigger after the first green physical-device run.
+  push:
+    branches:
+      - android-gpu-implementation
+    paths:
+      - .github/workflows/android-gpu-testlab.yml
+      - android/**
+      - example/android/**
+      - example/assets/mobilefacenet.tflite
+      - example/assets/simple_model.tflite
+      - example/integration_test/android_compiled_model_gpu_test.dart
+      - example/pubspec.yaml
+      - lib/src/bindings/litert_ffi.dart
+      - lib/src/bindings/litert_loader.dart
+      - lib/src/compiled_model/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-physical-gpu-testlab
+  cancel-in-progress: false
+
+jobs:
+  strict-gpu:
+    name: Strict GPU on physical Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      FIREBASE_PROJECT_ID: flutter-litert
+      DEVICE_MODEL: ${{ inputs.device_model || 'panther' }}
+      ANDROID_VERSION: ${{ inputs.android_version || '33' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install example dependencies
+        working-directory: example
+        run: flutter pub get
+
+      # A debug build is required: release builds omit package:integration_test.
+      # The final Gradle invocation selects the dedicated strict-GPU Dart target.
+      - name: Build app and instrumentation APKs
+        working-directory: example
+        run: |
+          flutter build apk --config-only --debug
+          cd android
+          ./gradlew app:assembleAndroidTest \
+            -PflutterLitert.testLabAbi=arm64-v8a \
+            --stacktrace
+          ./gradlew app:assembleDebug \
+            -Ptarget="$GITHUB_WORKSPACE/example/integration_test/android_compiled_model_gpu_test.dart" \
+            -PflutterLitert.testLabAbi=arm64-v8a \
+            --stacktrace
+
+      - name: Authenticate to Firebase Test Lab
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.FIREBASE_TEST_LAB_CREDENTIALS }}
+
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.FIREBASE_PROJECT_ID }}
+
+      - name: Reject virtual or incompatible device selections
+        shell: bash
+        run: |
+          DEVICE_FORM="$(gcloud firebase test android models describe "$DEVICE_MODEL" \
+            --project "$FIREBASE_PROJECT_ID" --format='value(form)')"
+          if [[ "${DEVICE_FORM^^}" != "PHYSICAL" ]]; then
+            echo "::error::Test Lab model $DEVICE_MODEL is $DEVICE_FORM, not PHYSICAL"
+            exit 1
+          fi
+          gcloud firebase test android models describe "$DEVICE_MODEL" \
+            --project "$FIREBASE_PROJECT_ID"
+
+      - name: Run strict CompiledModel GPU test on physical hardware
+        run: |
+          set -o pipefail
+          gcloud firebase test android run \
+            --project "$FIREBASE_PROJECT_ID" \
+            --type instrumentation \
+            --app example/build/app/outputs/apk/debug/app-debug.apk \
+            --test example/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
+            --device "model=$DEVICE_MODEL,version=$ANDROID_VERSION,locale=en,orientation=portrait" \
+            --timeout 10m \
+            --results-history-name flutter-litert-android-gpu \
+            2>&1 | tee testlab.log
+
+      # On-device failure details (assertion message, stack, LiteRT logcat
+      # lines) live in the results bucket, not in gcloud's summary table.
+      # Dump them here so a red run is diagnosable straight from this log.
+      - name: Dump Test Lab artifacts on failure
+        if: failure()
+        run: |
+          RESULTS_PATH="$(grep -oE 'storage/browser/[^]]+' testlab.log | head -1 \
+            | sed -e 's#storage/browser/##' -e 's#/$##')"
+          if [ -z "$RESULTS_PATH" ]; then
+            echo "No results path found in gcloud output; nothing to dump."
+            exit 0
+          fi
+          echo "===== instrumentation results"
+          gsutil cat "gs://$RESULTS_PATH/*/instrumentation.results" || true
+          echo "===== logcat (LiteRT/TFLite lines)"
+          gsutil cat "gs://$RESULTS_PATH/*/logcat" \
+            | grep -iE 'litert|tflite|opencl|accelerator' | tail -200 || true

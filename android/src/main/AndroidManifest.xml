@@ -1,2 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Apps targeting Android 12+ (SDK 31+) may only load vendor-provided
+             native libraries that are declared here. The LiteRT Next AAR
+             declares these in its own manifest, but this plugin extracts only
+             the .so files from that AAR (see android/build.gradle.kts), so the
+             declarations must be made here for them to reach consuming apps.
+             They are also independent of the deprecated classic litert-gpu
+             dependency, whose manifest currently supplies the libOpenCL
+             entries but is slated for removal in 4.0.0. All are optional:
+             absent libraries fail the runtime's GPU probe gracefully and
+             CompiledModel falls back to the CPU. -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false"/>
+        <uses-native-library android:name="libOpenCL-car.so" android:required="false"/>
+        <uses-native-library android:name="libOpenCL-pixel.so" android:required="false"/>
+        <uses-native-library android:name="libvndksupport.so" android:required="false"/>
+    </application>
 </manifest>

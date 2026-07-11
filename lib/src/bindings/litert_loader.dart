@@ -49,17 +49,18 @@ final DynamicLibrary litertDynamicLibrary = () {
 }();
 
 DynamicLibrary _loadAndroidLibrary() {
-  // libLiteRt.so is bundled as a jniLib by android/build.gradle.kts
-  // (downloaded at build time from the API-pinned release), so the Android
-  // linker resolves the bare soname from the app's native library directory.
+  // LiteRT Next native libraries are bundled as jniLibs by
+  // android/build.gradle.kts (downloaded at build time from the API-pinned
+  // release), so the Android linker resolves bare sonames from the app's
+  // native library directory.
   //
   // _litertRuntimeDir stays null on purpose: native libraries may be loaded
   // straight from the APK (extractNativeLibs=false), so there is no reliable
   // directory to scan. With no RuntimeLibraryDir option, the runtime's GPU
   // probe degenerates to dlopen'ing the bare accelerator sonames
   // (e.g. `libLiteRtClGlAccelerator.so`), which the Android linker resolves
-  // from the same native library path, so the bundled GPU accelerator is
-  // still discoverable.
+  // from the same native library path, so an accelerator bundled for the
+  // current ABI is still discoverable.
   _litertRuntimeDir = null;
   return DynamicLibrary.open('libLiteRt.so');
 }

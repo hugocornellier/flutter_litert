@@ -130,6 +130,11 @@ class _Detector {
 
   bool get isReady => _worker?.isReady ?? false;
 
+  /// True when the engine requested GPU with CPU fallback and the GPU attempt
+  /// failed, so inference is actually running on the CPU.
+  bool get gpuFellBack => _gpuFellBack;
+  bool _gpuFellBack = false;
+
   Future<void> initialize({EngineConfig engine = const EngineConfig()}) async {
     final modelData = await rootBundle.load('assets/efficientdet_lite0.tflite');
     final labelsData = await rootBundle.load('assets/labelmap.txt');
@@ -139,6 +144,9 @@ class _Detector {
       labelsBytes: labelsData.buffer.asUint8List(),
       engine: engine,
     );
+    final Map<String, dynamic> info = await worker
+        .sendRequest<Map<String, dynamic>>('engineInfo', {});
+    _gpuFellBack = info['gpuFellBack'] as bool? ?? false;
     _worker = worker;
   }
 
@@ -176,6 +184,7 @@ class _Detector {
     Interpreter? interpreter;
     Delegate? delegate;
     CompiledModel? compiled;
+    Object? gpuFallbackError;
     List<List<double>>? anchors;
     List<String>? labels;
     int inputW = 0, inputH = 0;
@@ -202,11 +211,24 @@ class _Detector {
             .toSet();
         final precision = Precision.values.byName(data.precisionName);
         final bool useAsync = data.runAsync;
-        final cm = await CompiledModel.fromBufferAsync(
-          modelBytes,
-          accelerators: accelerators,
-          precision: precision,
-        );
+        final bool gpuWithCpuFallback =
+            accelerators.length == 2 &&
+            accelerators.contains(Accelerator.gpu) &&
+            accelerators.contains(Accelerator.cpu);
+        final cm = gpuWithCpuFallback
+            ? await CompiledModel.fromBufferWithGpuFallbackAsync(
+                modelBytes,
+                precision: precision,
+                onFallback: (error) {
+                  gpuFallbackError = error;
+                  debugPrint('CompiledModel GPU fallback to CPU: $error');
+                },
+              )
+            : await CompiledModel.fromBufferAsync(
+                modelBytes,
+                accelerators: accelerators,
+                precision: precision,
+              );
         compiled = cm;
 
         // CompiledModel exposes byte sizes, not shapes. Derive the geometry:
@@ -403,6 +425,12 @@ class _Detector {
             } finally {
               src.dispose();
             }
+
+          case 'engineInfo':
+            mainSendPort.send({
+              'id': id,
+              'result': {'gpuFellBack': gpuFallbackError != null},
+            });
 
           case 'dispose':
             interpreter?.close();
@@ -607,21 +635,19 @@ String? perfModeReason(PerformanceMode m) {
   };
 }
 
-/// CompiledModel GPU acceleration: Metal on Apple, WebGPU on Linux/Windows.
-/// The Android GL/CL accelerator is not bundled yet, so Android is CPU-only.
+/// CompiledModel GPU acceleration: Metal on Apple, OpenCL/GL on Android, and
+/// WebGPU on Linux/Windows.
 bool cmGpuAvailable() =>
     Platform.isMacOS ||
     Platform.isIOS ||
+    Platform.isAndroid ||
     Platform.isLinux ||
     Platform.isWindows;
 
-String cmGpuReason() => Platform.isAndroid
-    ? 'CompiledModel GPU not bundled on Android yet'
-    : 'GPU not available on this platform';
+String cmGpuReason() => 'GPU not available on this platform';
 
-/// Default engine on first launch: CompiledModel, GPU-accelerated where the
-/// accelerator is bundled (Apple/Linux/Windows), CPU-only where it is not
-/// (Android). Mirrors the settings dialog's GPU→CPU clamp.
+/// Default engine on first launch: CompiledModel with GPU and CPU fallback
+/// where the accelerator is bundled, CPU-only where it is not.
 EngineConfig defaultEngine() => cmGpuAvailable()
     ? const EngineConfig()
     : const EngineConfig(accelerators: {Accelerator.cpu});
@@ -651,6 +677,7 @@ class _DetectionDemoState extends State<_DetectionDemo> {
   int _sampleIdx = 0;
   double _threshold = 0.6;
   EngineConfig _engine = defaultEngine();
+  bool _gpuFellBack = false;
 
   @override
   void initState() {
@@ -662,6 +689,7 @@ class _DetectionDemoState extends State<_DetectionDemo> {
     setState(() => _busy = true);
     try {
       await _detector.initialize(engine: _engine);
+      if (mounted) setState(() => _gpuFellBack = _detector.gpuFellBack);
       await _runOnSample(_sampleIdx);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -705,6 +733,7 @@ class _DetectionDemoState extends State<_DetectionDemo> {
     try {
       await _detector.dispose();
       await _detector.initialize(engine: engine);
+      if (mounted) setState(() => _gpuFellBack = _detector.gpuFellBack);
       await _runOnSample(_sampleIdx);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -742,8 +771,13 @@ class _DetectionDemoState extends State<_DetectionDemo> {
               style: TextStyle(color: Colors.white, fontSize: 18),
             ),
             Text(
-              _engine.label,
-              style: const TextStyle(color: Colors.white54, fontSize: 11),
+              _gpuFellBack
+                  ? '${_engine.label} · GPU unavailable, running on CPU'
+                  : _engine.label,
+              style: TextStyle(
+                color: _gpuFellBack ? Colors.amber : Colors.white54,
+                fontSize: 11,
+              ),
             ),
           ],
         ),
@@ -752,7 +786,7 @@ class _DetectionDemoState extends State<_DetectionDemo> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
               child: Text(
-                '${_inferenceUs}µs',
+                '$_inferenceUsµs',
                 style: const TextStyle(color: Colors.white70),
               ),
             ),

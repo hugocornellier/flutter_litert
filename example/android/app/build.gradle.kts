@@ -6,6 +6,8 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val testLabAbi = providers.gradleProperty("flutterLitert.testLabAbi").orNull
+
 val agpVersion = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION
     .substringBefore('.')
     .toInt()
@@ -33,6 +35,20 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Physical Test Lab devices are arm64. Keep normal example/emulator
+        // builds multi-ABI, but avoid uploading a several-hundred-MB fat debug
+        // APK for the dedicated cloud test.
+        if (testLabAbi != null) {
+            require(testLabAbi == "arm64-v8a") {
+                "flutterLitert.testLabAbi only supports arm64-v8a"
+            }
+            ndk {
+                abiFilters.clear()
+                abiFilters.add(testLabAbi)
+            }
+        }
     }
 
     buildTypes {
@@ -45,6 +61,15 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    // Match the versions resolved by Flutter's integration_test plugin on the
+    // app runtime classpath; AGP enforces consistent debug/androidTest graphs.
+    androidTestImplementation("androidx.test:runner:1.3.0")
+    androidTestImplementation("androidx.test:rules:1.2.0")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.3.0")
 }
 
 extensions.findByType<KotlinAndroidProjectExtension>()?.apply {

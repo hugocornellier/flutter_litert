@@ -1,4 +1,4 @@
-// ignore_for_file: avoid_print
+// ignore_for_file: avoid_print, deprecated_member_use
 
 // Comprehensive delegate sweep across every .tflite model in the sibling
 // detection repos. Delegates are built DIRECTLY (not via InterpreterFactory)
@@ -12,7 +12,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:flutter_litert/native.dart';
 
 const int iterations = 25;
 const int warmup = 8;

@@ -232,11 +232,11 @@ void _gpuTestOrSkip(CompiledModel Function() build) {
 /// real failure.
 ///
 /// On macOS the Metal accelerator is always bundled, so only the documented
-/// headless-compilation status (504) is acceptable. On Linux the WebGPU
-/// accelerator is now bundled, but headless CI runners expose no adapter
-/// ("Found 0 adapters"), so the create fails with a runtime status (3); on
-/// Windows only the runtime library is staged. On either, any LiteRT status
-/// from a GPU-requesting create means the accelerator is unavailable in CI.
+/// headless-compilation status (504) is acceptable. Linux and Windows bundle
+/// the WebGPU (Dawn) accelerator, but headless CI runners expose no adapter
+/// ("Found 0 adapters"), so the create fails with a runtime status. On
+/// either, any LiteRT status from a GPU-requesting create means the
+/// accelerator is unavailable in CI.
 bool _isGpuUnavailable(StateError e) {
   if (e.message.contains('LiteRtStatus=504')) return true;
   return (Platform.isLinux || Platform.isWindows) &&

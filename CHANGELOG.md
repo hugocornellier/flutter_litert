@@ -1,3 +1,22 @@
+## 3.5.0
+
+Adds Android OpenCL/GL acceleration to the LiteRT Next `CompiledModel` path.
+
+* Android builds now bundle `libLiteRtClGlAccelerator.so` from the pinned
+  LiteRT 2.1.5 AAR by default for `arm64-v8a` and `x86_64`.
+  `armeabi-v7a` remains CPU-only.
+* The plugin manifest now declares the optional vendor GPU libraries
+  (`libOpenCL.so`, `libOpenCL-car.so`, `libOpenCL-pixel.so`, and
+  `libvndksupport.so`, all `required="false"`), so apps targeting
+  Android 12+ can load them without adding their own
+  `uses-native-library` entries.
+* Android emulators do not provide working OpenCL, so direct `{gpu, cpu}`
+  compilation can fail after the accelerator registers. The
+  `fromBufferWithGpuFallback` factories catch that error and retry CPU-only.
+* Apps that do not need CompiledModel GPU acceleration can set
+  `flutterLitert.bundleGpuAccelerator=false` to omit about 3 MB per ABI. The
+  classic Interpreter runtime and GPU delegate are unchanged.
+
 ## 3.4.1
 
 Web `CompiledModel` robustness fix. No API changes.

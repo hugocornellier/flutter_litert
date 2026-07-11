@@ -1,4 +1,4 @@
-// ignore_for_file: avoid_print
+// ignore_for_file: avoid_print, deprecated_member_use
 
 // Standalone on-device delegate sweep, runnable via `flutter run` (avoids the
 // integration_test VM-service handshake that fails on physical iOS devices).
@@ -11,7 +11,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:flutter_litert/native.dart';
 
 const int iterations = 25;
 const int warmup = 8;

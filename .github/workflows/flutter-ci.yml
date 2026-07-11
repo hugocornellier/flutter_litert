@@ -113,8 +113,8 @@ jobs:
       # Builds the example app and runs real CompiledModel inference inside
       # it, proving the production load path end to end: CMake bundles
       # linux/lib/libLiteRt.so into the app bundle and the loader resolves it
-      # from execDir/lib. GPU tests skip (runners have no GPU and the GPU
-      # accelerator library is not bundled on Linux).
+      # from execDir/lib. GPU tests skip (the bundled WebGPU accelerator
+      # finds no adapter on headless runners).
       - name: Run CompiledModel integration tests (Linux desktop)
         working-directory: example
         run: xvfb-run -a flutter test integration_test/compiled_model_test.dart -d linux --timeout 600s
@@ -143,8 +143,8 @@ jobs:
       # it — the only place windows/CMakeLists.txt is configured in CI —
       # proving the production load path end to end: CMake bundles
       # libLiteRt.dll next to the executable and the loader resolves it from
-      # execDir. GPU tests skip (runners have no GPU and the GPU accelerator
-      # library is not bundled on Windows).
+      # execDir. GPU tests skip (the bundled WebGPU accelerator finds no
+      # adapter on headless runners).
       - name: Run CompiledModel integration tests (Windows desktop)
         working-directory: example
         run: flutter test integration_test/compiled_model_test.dart -d windows --timeout 600s
@@ -253,9 +253,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # Runs real CompiledModel inference (CPU; strict-GPU skips — emulators
-      # have no working OpenCL) against libLiteRt.so bundled by the Gradle
-      # download task. Up to three attempts: Gradle's SDK-component install
+      # Runs real CompiledModel inference. CPU and fallback-factory tests pass.
+      # The bundled x86_64 accelerator registers, while direct combined and
+      # strict-GPU tests skip because emulators have no working OpenCL. Up to
+      # three attempts: Gradle's SDK-component install
       # can receive a corrupted NDK archive ("Error on ZipFile unknown
       # archive"), which fails assembleDebug; purging the partial NDK
       # between attempts makes the retry re-download it cleanly.
@@ -283,7 +284,8 @@ jobs:
   # consumers on AGP 9 (issue #14). This job rebuilds just the plugin module
   # under AGP 9.x: no emulator and no app compile, but it both catches the
   # configuration-time failure and asserts the native libraries still merge into
-  # the AAR (the CMake custom-ops lib plus the downloaded libLiteRt.so).
+  # the AAR (the CMake custom-ops lib plus the downloaded LiteRT Next runtime
+  # and GPU accelerator).
   build-android-agp9:
     runs-on: ubuntu-latest
     steps:
@@ -324,11 +326,21 @@ jobs:
         run: |
           AAR=example/build/flutter_litert/outputs/aar/flutter_litert-release.aar
           echo "Inspecting $AAR"
-          unzip -l "$AAR" | grep -E 'jni/.*/libLiteRt\.so' \
-            || { echo '::error::libLiteRt.so missing from AAR under AGP 9'; exit 1; }
+          for ABI in arm64-v8a armeabi-v7a x86_64; do
+            unzip -l "$AAR" | grep -E "jni/$ABI/libLiteRt\\.so" \
+              || { echo "::error::libLiteRt.so missing for $ABI under AGP 9"; exit 1; }
+          done
+          for ABI in arm64-v8a x86_64; do
+            unzip -l "$AAR" | grep -E "jni/$ABI/libLiteRtClGlAccelerator\\.so" \
+              || { echo "::error::GPU accelerator missing for $ABI under AGP 9"; exit 1; }
+          done
+          if unzip -l "$AAR" | grep -q -E 'jni/armeabi-v7a/libLiteRtClGlAccelerator\.so'; then
+            echo '::error::GPU accelerator must not be packaged for armeabi-v7a'
+            exit 1
+          fi
           unzip -l "$AAR" | grep -E 'jni/.*/libtflite_custom_ops\.so' \
             || { echo '::error::CMake custom-ops .so missing from AAR under AGP 9'; exit 1; }
-          echo 'AGP 9 build packaged both native libraries.'
+          echo 'AGP 9 build packaged the expected native libraries.'
 
   build-ios:
     runs-on: macos-15

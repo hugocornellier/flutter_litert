@@ -85,35 +85,48 @@ dependencies {
     add("implementation", "com.google.ai.edge.litert:litert-gpu:$litert")
 }
 
-// LiteRT Next runtime (CompiledModel API) libLiteRt.so, sourced directly from
+// LiteRT Next native libraries (CompiledModel API), sourced directly from
 // Google's official Maven AAR (com.google.ai.edge.litert:litert:<ver>, the 2.x
 // line) instead of a hand-packaged release zip. Downloaded at build time (not
-// shipped in the pub package) and extracted as a jniLib, additively alongside
-// the classic litert:1.4.x artifact above — the Interpreter path is unchanged.
+// shipped in the pub package) and extracted as jniLibs alongside the classic
+// litert:1.4.x artifact above. The Interpreter path is unchanged.
 //
-// The 2.x AAR ships libLiteRt.so for arm64-v8a, armeabi-v7a AND x86_64 (the
-// GPU accelerator, libLiteRtClGlAccelerator.so, ships for arm64-v8a/x86_64
-// only). armeabi-v7a support comes for free here — the old hand-packaged zip
-// was arm64-v8a/x86_64 only.
+// The 2.x AAR ships libLiteRt.so for arm64-v8a, armeabi-v7a, and x86_64. Its
+// GPU accelerator, libLiteRtClGlAccelerator.so, ships for arm64-v8a and x86_64
+// only, so armeabi-v7a remains fully supported on the CPU.
 //
 // Why fetch+extract rather than a normal Gradle `implementation` dependency:
 // the classic Interpreter still needs litert:1.4.x (libtensorflowlite_jni.so),
 // and the 2.x AAR dropped that .so in favour of libLiteRt.so. Declaring both
 // versions of the same module would resolve to a single version and break one
-// of the two runtimes. Extracting only libLiteRt.so keeps them side by side.
+// of the two runtimes. Selectively extracting the 2.x native libraries keeps
+// them side by side.
 val litertNextVersion = "2.1.5"
 
-// libLiteRt.so is contributed to the build as a GENERATED jniLibs source through
+// The GPU accelerator is bundled by default. Apps that do not use it can set
+// flutterLitert.bundleGpuAccelerator=false in android/gradle.properties.
+val shouldBundleGpuAccelerator =
+    providers.gradleProperty("flutterLitert.bundleGpuAccelerator").orNull?.let { value ->
+        value.toBooleanStrictOrNull()
+            ?: throw GradleException(
+                "[flutter_litert] flutterLitert.bundleGpuAccelerator must be true or false"
+            )
+    } ?: true
+
+// The LiteRT Next libraries are contributed as a GENERATED jniLibs source through
 // the AGP Variant API (androidComponents.onVariants -> jniLibs
 // .addGeneratedSourceDirectory). This is the AGP-9 replacement for the old
 // `android.sourceSets["main"].jniLibs.srcDir(<Provider>)` wiring: AGP 9 defaults
 // `android.sourceset.disallowProvider` to true and rejects passing a Provider to
 // the legacy SourceSet API. Modelling it as a generated source also lets AGP own
-// the task dependency (no manual preBuild hook) and makes a litertNextVersion bump
-// re-download, because the version is a tracked task input.
+// the task dependency (no manual preBuild hook). The LiteRT version and GPU bundle
+// flag are tracked task inputs, so changing either one regenerates the shared output.
 abstract class DownloadLitertJniTask : DefaultTask() {
     @get:Input
     abstract val litertVersion: Property<String>
+
+    @get:Input
+    abstract val bundleGpuAccelerator: Property<Boolean>
 
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
@@ -127,12 +140,20 @@ abstract class DownloadLitertJniTask : DefaultTask() {
     @TaskAction
     fun download() {
         val version = litertVersion.get()
+        val shouldBundleGpu = bundleGpuAccelerator.get()
         val outDir = outputDir.get().asFile
-        val marker = File(outDir, "arm64-v8a/libLiteRt.so")
         val aar = File(temporaryDir, "litert-$version.aar")
         val url = "https://dl.google.com/dl/android/maven2/com/google/ai/edge/" +
             "litert/litert/$version/litert-$version.aar"
-        logger.lifecycle("[flutter_litert] Downloading LiteRT Next runtime (libLiteRt.so) from Maven $version...")
+        val libraryNames = if (shouldBundleGpu) {
+            "libLiteRt.so and libLiteRtClGlAccelerator.so"
+        } else {
+            "libLiteRt.so"
+        }
+        logger.lifecycle(
+            "[flutter_litert] Downloading LiteRT Next native libraries " +
+                "($libraryNames) from Maven $version..."
+        )
         fileSystemOperations.delete {
             delete(outDir)
             delete(aar)
@@ -144,28 +165,62 @@ abstract class DownloadLitertJniTask : DefaultTask() {
         }
         fileSystemOperations.copy {
             from(archiveOperations.zipTree(aar)) {
-                // CPU runtime only for now. libLiteRtClGlAccelerator.so is in
-                // the same AAR (arm64-v8a/x86_64) but stays unbundled: when it
-                // registers in an environment without working OpenCL (every
-                // emulator), even GPU|CPU-fallback compilation fails with a
-                // runtime error instead of falling back. Bundle it once the GPU
-                // path is validated on real hardware.
+                // Android emulators do not provide working OpenCL. If this
+                // accelerator registers but cannot initialize, a combined GPU
+                // and CPU compilation can fail instead of falling back inside
+                // LiteRT. The Dart fallback factories catch that error and
+                // retry CPU-only.
                 include("jni/**/libLiteRt.so")
+                if (shouldBundleGpu) {
+                    include(
+                        "jni/arm64-v8a/libLiteRtClGlAccelerator.so",
+                        "jni/x86_64/libLiteRtClGlAccelerator.so"
+                    )
+                }
                 // Strip the AAR's leading "jni/" so files land at the jniLibs
-                // layout <abi>/libLiteRt.so.
+                // layout <abi>/libLiteRt*.so.
                 eachFile { path = path.substringAfter("jni/") }
                 includeEmptyDirs = false
             }
             into(outDir)
         }
-        if (!marker.exists()) {
-            throw GradleException("[flutter_litert] LiteRT Next Maven AAR did not yield $marker")
+
+        val expectedLibraries = mutableListOf(
+            "arm64-v8a/libLiteRt.so",
+            "armeabi-v7a/libLiteRt.so",
+            "x86_64/libLiteRt.so"
+        )
+        if (shouldBundleGpu) {
+            expectedLibraries += listOf(
+                "arm64-v8a/libLiteRtClGlAccelerator.so",
+                "x86_64/libLiteRtClGlAccelerator.so"
+            )
+        }
+        val unexpectedLibraries = if (shouldBundleGpu) {
+            listOf("armeabi-v7a/libLiteRtClGlAccelerator.so")
+        } else {
+            listOf(
+                "arm64-v8a/libLiteRtClGlAccelerator.so",
+                "armeabi-v7a/libLiteRtClGlAccelerator.so",
+                "x86_64/libLiteRtClGlAccelerator.so"
+            )
+        }
+        val missing = expectedLibraries.filterNot { File(outDir, it).isFile }
+        val unexpected = unexpectedLibraries.filter { File(outDir, it).exists() }
+        if (missing.isNotEmpty() || unexpected.isNotEmpty()) {
+            val problems = missing.map { "missing $it" } +
+                unexpected.map { "unexpected $it" }
+            throw GradleException(
+                "[flutter_litert] LiteRT Next Maven AAR yielded an invalid " +
+                    "native library set: ${problems.joinToString()}"
+            )
         }
     }
 }
 
 val downloadLitertJni = tasks.register<DownloadLitertJniTask>("downloadLitertJni") {
     litertVersion.set(litertNextVersion)
+    bundleGpuAccelerator.set(shouldBundleGpuAccelerator)
 }
 
 androidComponents {

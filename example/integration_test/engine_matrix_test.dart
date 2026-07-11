@@ -1,4 +1,4 @@
-// ignore_for_file: avoid_print
+// ignore_for_file: avoid_print, deprecated_member_use
 
 // Cross-platform engine x accelerator benchmark + correctness matrix.
 //
@@ -36,7 +36,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:flutter_litert/native.dart';
 
 const int iterations = int.fromEnvironment('MATRIX_ITERS', defaultValue: 25);
 const int warmup = int.fromEnvironment('MATRIX_WARMUP', defaultValue: 8);

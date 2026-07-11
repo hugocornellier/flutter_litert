@@ -1,9 +1,13 @@
+// This suite intentionally covers the legacy delegate API until its planned
+// removal in flutter_litert 4.0.0.
+// ignore_for_file: deprecated_member_use
+
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:flutter_litert/native.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();

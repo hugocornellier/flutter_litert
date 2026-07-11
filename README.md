@@ -143,9 +143,10 @@ final outputs = model.run(inputs); // List<Float32List> in, List<Float32List> ou
 model.close();
 ```
 
-- Include `Accelerator.cpu` in the `accelerators` set so the model still runs when the GPU or NPU backend is unavailable on a device.
+- Include `Accelerator.cpu` in the `accelerators` set to allow CPU placement when compilation succeeds. When a bundled GPU accelerator is present but cannot initialize, combined `{gpu, cpu}` compilation can still fail instead of falling back internally. Use the convenience factory below when a working GPU-to-CPU retry is required.
 - `precision` accepts `Precision.fp16` or `Precision.fp32`.
 - On Apple platforms, `Accelerator.npu` targets the Neural Engine, the replacement for `CoreMlDelegate`.
+- On Android, `Accelerator.gpu` uses the bundled OpenCL/GL accelerator on `arm64-v8a` and `x86_64`. `armeabi-v7a` remains CPU-only.
 
 ### GPU with CPU fallback (convenience method)
 
@@ -155,7 +156,24 @@ For the common "GPU if available, otherwise CPU" case there is a convenience met
 final model = CompiledModel.fromBufferWithGpuFallback(modelBytes);
 ```
 
-This requests `{gpu, cpu}` for you and reports any GPU initialization failure through an optional callback.
+This first requests `{gpu, cpu}`. If compilation fails because the GPU is unavailable, an operation is unsupported, or a driver fails, it reports the error through the optional `onFallback` callback and retries CPU-only. `CompiledModel.fromBufferWithGpuFallbackAsync` provides the same guaranteed-model path through the portable async API.
+
+Android emulators are a common case: the accelerator library can register, but emulators do not provide working OpenCL, so direct `{gpu, cpu}` compilation returns an error. The fallback factories catch that error and return a CPU model.
+
+### CompiledModel GPU on Android
+
+Android builds bundle `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64`. GPU compilation requires a compatible physical device and driver. `armeabi-v7a` continues to use `libLiteRt.so` on the CPU.
+
+The plugin manifest declares the vendor GPU libraries the accelerator may load (`libOpenCL.so` and variants, `libvndksupport.so`) as optional `uses-native-library` entries, which Android 12+ requires for apps targeting SDK 31+. Apps need no manifest changes of their own.
+
+Apps that do not use CompiledModel GPU acceleration can remove the accelerator from their Android builds:
+
+```properties
+# android/gradle.properties
+flutterLitert.bundleGpuAccelerator=false
+```
+
+The accelerator adds about 2.7 MB on arm64 or 3.4 MB on x86_64 before APK compression. ABI-split APKs and Play-delivered app bundles normally deliver only the matching ABI. This property affects only the CompiledModel accelerator; the classic Interpreter runtime and its GPU delegate are unchanged.
 
 ### CompiledModel on the web
 
@@ -717,7 +735,7 @@ Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex) to you
 
 ```yaml
 dependencies:
-  flutter_litert: ^3.4.1
+  flutter_litert: ^3.5.0
   flutter_litert_flex: ^1.3.0
 ```
 
@@ -1088,7 +1106,7 @@ flutter_litert ships two independent native runtimes, one per API. The classic `
 
 | Platform | Interpreter runtime | CompiledModel runtime |
 |----------|---------------------|-----------------------|
-| Android | LiteRT 1.4.2 | LiteRT Next 2.1.5 |
+| Android | LiteRT 1.4.2 | LiteRT Next 2.1.5 (CPU / OpenCL/GL GPU) |
 | iOS | TensorFlow Lite 2.20.0 | LiteRT Next |
 | macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
 | Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
@@ -1096,7 +1114,7 @@ flutter_litert ships two independent native runtimes, one per API. The classic `
 | Web | LiteRT.js 2.4.0 / TFLite.js (WASM) | LiteRT.js 2.4.0 (WASM / WebGPU) |
 
 Bundling:
-- Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` from the `2.1.5` AAR.
+- Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, plus `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64`, from the `2.1.5` AAR.
 - iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` xcframework (release `litert-ios-v1.0.1` for SPM, `litert-ios-v1.0.0` for CocoaPods; both the same commit-pinned LiteRT Next build, commit `1adc2475`).
 - macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.1.5 wheel, bundled via CMake on Windows and Linux and via CocoaPods on macOS.
 - Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.4.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).

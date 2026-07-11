@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:flutter_litert/native.dart';
 import 'package:flutter_litert/src/bindings/litert_loader.dart'
     show litertRuntimeDir;
 
@@ -16,7 +16,7 @@ import 'package:flutter_litert/src/bindings/litert_loader.dart'
 /// resolves it from there, not from the package checkout. GPU tests assert
 /// success when the platform accelerator initializes and skip when it cannot
 /// (headless or emulated environments without a working GPU stack, or
-/// platforms where the GPU accelerator library is not bundled).
+/// armeabi-v7a Android, the one ABI upstream ships no accelerator for).
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -140,6 +140,27 @@ void main() {
       expect(output[0][0], closeTo(7.0, 1e-3));
     });
 
+    testWidgets('GPU fallback factory always yields a working model', (
+      tester,
+    ) async {
+      Object? fallbackError;
+      final cm = await CompiledModel.fromBufferWithGpuFallbackAsync(
+        modelBytes,
+        onFallback: (error) => fallbackError = error,
+      );
+      addTearDown(cm.close);
+
+      if (fallbackError != null) {
+        expect(cm.accelerators, {Accelerator.cpu});
+      }
+      final input = Float32List(cm.inputByteSizes[0] ~/ 4);
+      input[0] = 3.0;
+      final output = cm.run([input]);
+      expect(output, hasLength(cm.outputCount));
+      expect(output[0], hasLength(cm.outputByteSizes[0] ~/ 4));
+      expect(output[0][0], closeTo(7.0, 1e-3));
+    });
+
     testWidgets('compiles and runs on the strict GPU accelerator '
         'when the GPU stack is available', (tester) async {
       final CompiledModel cm;
@@ -168,15 +189,20 @@ void main() {
 /// Whether [e] means "the GPU accelerator can't run here", as opposed to a
 /// real failure.
 ///
-/// On Apple platforms the Metal accelerator is always bundled, so only the
-/// documented headless-compilation status (504) is acceptable. On Android the
-/// OpenCL/GL accelerator depends on the device or emulator GPU stack, so any
-/// LiteRT status from a strict-GPU create means the accelerator is absent
-/// (emulators in particular have no working OpenCL). On Linux the WebGPU
-/// accelerator is now bundled, but headless runners expose no adapter, so the
-/// create fails with a runtime status; on Windows the GPU accelerator library
-/// is not bundled at all. On either, any LiteRT status from a GPU create means
-/// the accelerator is unavailable here.
+/// Every native platform bundles a GPU accelerator: Metal ships with the
+/// package on Apple platforms, Windows and Linux download the WebGPU
+/// (Dawn) accelerator at build time in the platform CMakeLists, and Android
+/// extracts the OpenCL/GL accelerator from the LiteRT AAR for arm64-v8a and
+/// x86_64 (upstream ships none for armeabi-v7a). A skip here is therefore
+/// about the machine, never missing packaging. On Apple the accelerator
+/// always initializes, so only the documented gpu-only compilation refusal
+/// (status 504, an op with no GPU implementation) is acceptable. Elsewhere
+/// the stack itself can be absent: Android emulators have no working OpenCL,
+/// and headless Windows/Linux runners expose no usable WebGPU adapter, so on
+/// those platforms any LiteRT status from a strict-GPU create means the
+/// accelerator cannot run here. Real-hardware GPU execution is validated
+/// separately by the Firebase Test Lab gate
+/// (android_compiled_model_gpu_test.dart).
 bool _isGpuUnavailable(StateError e) {
   if (e.message.contains('LiteRtStatus=504')) return true;
   return (Platform.isAndroid || Platform.isLinux || Platform.isWindows) &&

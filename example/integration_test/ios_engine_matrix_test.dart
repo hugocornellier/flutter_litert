@@ -1,4 +1,4 @@
-// ignore_for_file: avoid_print
+// ignore_for_file: avoid_print, deprecated_member_use
 
 // On-device engine x accelerator matrix: every bundled model through BOTH
 // runtimes: classic Interpreter (cpu / xnnpack / Metal GPU delegate / CoreML)
@@ -17,7 +17,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:flutter_litert/native.dart';
 
 const int iterations = 25;
 const int warmup = 8;
