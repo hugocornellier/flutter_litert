@@ -13,23 +13,6 @@ on:
         required: true
         default: '33'
         type: string
-  # This lets the feature branch prove the workflow before it reaches the
-  # default branch, where workflow_dispatch becomes available. Remove this
-  # temporary branch trigger after the first green physical-device run.
-  push:
-    branches:
-      - android-gpu-implementation
-    paths:
-      - .github/workflows/android-gpu-testlab.yml
-      - android/**
-      - example/android/**
-      - example/assets/mobilefacenet.tflite
-      - example/assets/simple_model.tflite
-      - example/integration_test/android_compiled_model_gpu_test.dart
-      - example/pubspec.yaml
-      - lib/src/bindings/litert_ffi.dart
-      - lib/src/bindings/litert_loader.dart
-      - lib/src/compiled_model/**
 
 permissions:
   contents: read
