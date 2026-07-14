@@ -18,6 +18,153 @@ Float32List _flat(List<List<double>> rows) {
 }
 
 void main() {
+  group('probability score outputs', () {
+    List<double> probabilityRow(double cx, double probability) => [
+      cx,
+      320.0,
+      50.0,
+      50.0,
+      probability,
+      ...List.filled(79, 0.0),
+    ];
+
+    test(
+      'flat decoder preserves probabilities and applies threshold directly',
+      () {
+        final rows = [
+          probabilityRow(100, 0.0),
+          probabilityRow(300, 0.5),
+          probabilityRow(500, 0.9),
+        ];
+        final dets = postProcessDetectionsFlat(
+          _flat(rows),
+          channels: 84,
+          anchors: rows.length,
+          channelMajor: false,
+          inputWidth: 640,
+          inputHeight: 640,
+          r: 1.0,
+          dw: 0,
+          dh: 0,
+          imageWidth: 640,
+          imageHeight: 640,
+          confThres: 0.5,
+          iouThres: 0.5,
+          maxDet: 10,
+          scoresAreProbabilities: true,
+        );
+
+        expect(dets, hasLength(2));
+        expect(dets.map((d) => d.score), [closeTo(0.9, 1e-6), 0.5]);
+      },
+    );
+
+    test(
+      'nested decoder preserves probabilities and applies threshold directly',
+      () {
+        final rows = [
+          probabilityRow(100, 0.0),
+          probabilityRow(300, 0.35),
+          probabilityRow(500, 0.8),
+        ];
+        final dets = postProcessDetections(
+          outputs: [
+            [rows],
+          ],
+          inputWidth: 640,
+          inputHeight: 640,
+          r: 1.0,
+          dw: 0,
+          dh: 0,
+          imageWidth: 640,
+          imageHeight: 640,
+          confThres: 0.35,
+          iouThres: 0.5,
+          topkPreNms: 0,
+          maxDet: 10,
+          scoresAreProbabilities: true,
+        );
+
+        expect(dets, hasLength(2));
+        expect(dets.map((d) => d.score), [
+          closeTo(0.8, 1e-6),
+          closeTo(0.35, 1e-6),
+        ]);
+      },
+    );
+
+    test('probability mode is identical across output layouts', () {
+      final rows = [
+        probabilityRow(80, 0.1),
+        probabilityRow(240, 0.8),
+        probabilityRow(400, 0.3),
+        probabilityRow(560, 0.6),
+      ];
+      final anchorMajor = _flat(rows);
+      final channelMajor = Float32List(84 * rows.length);
+      for (var anchor = 0; anchor < rows.length; anchor++) {
+        for (var channel = 0; channel < 84; channel++) {
+          channelMajor[channel * rows.length + anchor] = rows[anchor][channel];
+        }
+      }
+
+      List<Detection> decode(Float32List output, bool channelMajorLayout) =>
+          postProcessDetectionsFlat(
+            output,
+            channels: 84,
+            anchors: rows.length,
+            channelMajor: channelMajorLayout,
+            inputWidth: 640,
+            inputHeight: 640,
+            r: 1.0,
+            dw: 0,
+            dh: 0,
+            imageWidth: 640,
+            imageHeight: 640,
+            confThres: 0.25,
+            iouThres: 0.5,
+            maxDet: 10,
+            scoresAreProbabilities: true,
+          );
+
+      final anchorMajorDetections = decode(anchorMajor, false);
+      final channelMajorDetections = decode(channelMajor, true);
+      expect(channelMajorDetections, hasLength(anchorMajorDetections.length));
+      for (var i = 0; i < anchorMajorDetections.length; i++) {
+        expect(
+          channelMajorDetections[i].score,
+          closeTo(anchorMajorDetections[i].score, 1e-9),
+        );
+        expect(
+          channelMajorDetections[i].bboxXYXY,
+          anchorMajorDetections[i].bboxXYXY,
+        );
+      }
+    });
+
+    test('legacy logits contract remains the default', () {
+      final rows = [probabilityRow(320, 0.0)];
+      final dets = postProcessDetectionsFlat(
+        _flat(rows),
+        channels: 84,
+        anchors: 1,
+        channelMajor: false,
+        inputWidth: 640,
+        inputHeight: 640,
+        r: 1.0,
+        dw: 0,
+        dh: 0,
+        imageWidth: 640,
+        imageHeight: 640,
+        confThres: 0.5,
+        iouThres: 0.5,
+        maxDet: 10,
+      );
+
+      expect(dets.single.score, closeTo(0.5, 1e-6));
+    });
+  });
+
   group('postProcessDetectionsFlat threshold pruning', () {
     // No-objectness layout (channels == 84): score is sigmoid of the best
     // class logit. Anchors sit below, exactly at, and above confThres; the

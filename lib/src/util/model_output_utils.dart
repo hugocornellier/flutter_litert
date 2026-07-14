@@ -61,6 +61,9 @@ List<Map<String, dynamic>> decodeAndSplitOutputs(List<dynamic> outputs) {
 /// - [topkPreNms]: Number of top candidates to keep before NMS (0 = auto-scale).
 /// - [maxDet]: Maximum number of detections to return after NMS.
 /// - [filterClassId]: If non-null, only detections with this class ID are kept.
+/// - [scoresAreProbabilities]: Whether class/objectness values are already
+///   probabilities. Defaults to false, preserving the logits + sigmoid
+///   contract used by existing callers.
 List<Detection> postProcessDetections({
   required List<dynamic> outputs,
   required int inputWidth,
@@ -75,6 +78,7 @@ List<Detection> postProcessDetections({
   required int topkPreNms,
   required int maxDet,
   int? filterClassId,
+  bool scoresAreProbabilities = false,
 }) {
   final List<Map<String, dynamic>> decoded = decodeAndSplitOutputs(outputs);
   final List<int> clsIds = <int>[];
@@ -94,7 +98,7 @@ List<Detection> postProcessDetections({
       int argMax = 0;
       double best = -1e9;
       for (int i = 0; i < rest.length; i++) {
-        final double s = sigmoid(rest[i]);
+        final double s = scoresAreProbabilities ? rest[i] : sigmoid(rest[i]);
         if (s > best) {
           best = s;
           argMax = i;
@@ -104,12 +108,14 @@ List<Detection> postProcessDetections({
       clsIds.add(argMax);
       xywhs.add(xywh);
     } else {
-      final double obj = sigmoid(rest[0]);
+      final double obj = scoresAreProbabilities ? rest[0] : sigmoid(rest[0]);
       final List<double> clsLogits = rest.sublist(1, 81);
       int argMax = 0;
       double best = -1e9;
       for (int i = 0; i < clsLogits.length; i++) {
-        final double s = sigmoid(clsLogits[i]);
+        final double s = scoresAreProbabilities
+            ? clsLogits[i]
+            : sigmoid(clsLogits[i]);
         if (s > best) {
           best = s;
           argMax = i;
@@ -236,12 +242,16 @@ List<Detection> postProcessDetections({
 ///
 /// Here the per-anchor candidate loop reads straight from [out] by index and
 /// only the post-confidence-filter candidate set (small) uses lists. The same
-/// sigmoid / letterbox / top-k / NMS helpers are reused, so results are
-/// identical to [postProcessDetections].
+/// score activation / letterbox / top-k / NMS helpers are reused, so results
+/// are identical to [postProcessDetections].
 ///
 /// [channelMajor] true means [out] is laid out as `[1, channels, anchors]`
 /// (value at channel c, anchor a is `out[c * anchors + a]`, the YOLOv8 default);
 /// false means `[1, anchors, channels]` (`out[a * channels + c]`).
+///
+/// [scoresAreProbabilities] skips sigmoid for models whose class/objectness
+/// outputs already contain probabilities. It defaults to false for backward
+/// compatibility with models that emit logits.
 ///
 /// [useFastSingleClass] (default false) selects an EXPERIMENTAL fast path that,
 /// when [filterClassId] is set, prunes each anchor on the filter-class channel
@@ -279,6 +289,7 @@ List<Detection> postProcessDetectionsFlat(
   required int maxDet,
   int? filterClassId,
   bool useFastSingleClass = false,
+  bool scoresAreProbabilities = false,
 }) {
   // Explicit up-front bound: the SIMD path reads through out.buffer with
   // absolute offsets, which would otherwise silently read past out's
@@ -309,15 +320,20 @@ List<Detection> postProcessDetectionsFlat(
       filterClassId >= 0 &&
       filterClassId < numClasses;
 
-  // sigmoid is monotonic and any objectness factor is at most 1, so an
-  // anchor whose winning logit maps below [confThres] can never pass the
-  // score check. Comparing logits against the inverted threshold skips the
-  // exp() for the vast majority of anchors that cannot survive.
-  final double logitThres = confThres <= 0
+  // Any objectness factor is at most 1, so an anchor whose winning class value
+  // is below the activation-specific threshold cannot pass the final score
+  // check. Probability outputs compare directly; logit outputs compare against
+  // the inverse-sigmoid threshold to avoid exp() for rejected anchors.
+  final double classValueThres = scoresAreProbabilities
+      ? confThres
+      : confThres <= 0
       ? double.negativeInfinity
       : confThres >= 1
       ? double.infinity
       : math.log(confThres / (1 - confThres));
+
+  double activateScore(double value) =>
+      scoresAreProbabilities ? value : sigmoid(value);
 
   // Reads the 4 box coords for anchor [a] into the candidate lists.
   void addCandidate(int a, int cls, double score) {
@@ -340,35 +356,37 @@ List<Detection> postProcessDetectionsFlat(
   }
 
   double objScore(int a) => hasObjectness
-      ? sigmoid(channelMajor ? out[4 * anchors + a] : out[a * channels + 4])
+      ? activateScore(
+          channelMajor ? out[4 * anchors + a] : out[a * channels + 4],
+        )
       : 1.0;
 
   if (fastSingleClass) {
     // Fast path: prune on the filter-class channel, argmax only on survivors.
     final int fc = filterClassId;
     for (int a = 0; a < anchors; a++) {
-      final double fLogit = channelMajor
+      final double fValue = channelMajor
           ? out[(classStart + fc) * anchors + a]
           : out[a * channels + classStart + fc];
       // Same score expression and threshold as the full path, computed from the
-      // filter-class logit. When the filter class is the winner (the only case
-      // the full path keeps) fLogit == bestLogit, so this is identical; when it
+      // filter-class value. When the filter class is the winner (the only case
+      // the full path keeps) fValue == bestValue, so this is identical; when it
       // is not the winner the full path would drop the anchor at the class
       // filter anyway, so pruning here is exact.
-      if (fLogit < logitThres) continue;
-      final double score = sigmoid(fLogit) * objScore(a);
+      if (fValue < classValueThres) continue;
+      final double score = activateScore(fValue) * objScore(a);
       if (score < confThres) continue;
 
       // Confirm the filter class is the argmax (matches the full path's
       // cls == filterClassId filter); skip the rare non-winning survivors.
       int argMax = 0;
-      double bestLogit = -1e30;
+      double bestValue = -1e30;
       if (channelMajor) {
         int idx = classStart * anchors + a;
         for (int k = 0; k < numClasses; k++) {
           final double v = out[idx];
-          if (v > bestLogit) {
-            bestLogit = v;
+          if (v > bestValue) {
+            bestValue = v;
             argMax = k;
           }
           idx += anchors;
@@ -377,8 +395,8 @@ List<Detection> postProcessDetectionsFlat(
         final int base = a * channels + classStart;
         for (int k = 0; k < numClasses; k++) {
           final double v = out[base + k];
-          if (v > bestLogit) {
-            bestLogit = v;
+          if (v > bestValue) {
+            bestValue = v;
             argMax = k;
           }
         }
@@ -395,10 +413,10 @@ List<Detection> postProcessDetectionsFlat(
     // below, only for the anchors that clear the threshold; see the comment
     // there for why the argmax is not carried in SIMD lanes.
     final int vecCount = anchors ~/ 4;
-    final Float32x4List bestLogits4 = Float32x4List(vecCount);
+    final Float32x4List bestValues4 = Float32x4List(vecCount);
     final Float32x4 minusInf = Float32x4.splat(-1e30);
     for (int i = 0; i < vecCount; i++) {
-      bestLogits4[i] = minusInf;
+      bestValues4[i] = minusInf;
     }
     for (int k = 0; k < numClasses; k++) {
       final Float32x4List plane = Float32x4List.view(
@@ -408,11 +426,11 @@ List<Detection> postProcessDetectionsFlat(
       );
       for (int i = 0; i < vecCount; i++) {
         final Float32x4 v = plane[i];
-        final Float32x4 best = bestLogits4[i];
-        bestLogits4[i] = v.greaterThan(best).select(v, best);
+        final Float32x4 best = bestValues4[i];
+        bestValues4[i] = v.greaterThan(best).select(v, best);
       }
     }
-    final Float32List bestFlat = Float32List.view(bestLogits4.buffer);
+    final Float32List bestFlat = Float32List.view(bestValues4.buffer);
     // Recover the winning class with a scalar argmax over the (few) anchors that
     // clear the threshold. The earlier SIMD variant carried the argmax in
     // Float32x4 lanes via greaterThan().select(); the Dart ARM64 JIT
@@ -420,9 +438,9 @@ List<Detection> postProcessDetectionsFlat(
     // yielding a wrong argmax that invents phantom detections), so keep only the
     // max reduction in SIMD and argmax scalar per survivor.
     for (int a = 0; a < anchors; a++) {
-      final double bestLogit = bestFlat[a];
-      if (bestLogit < logitThres) continue;
-      final double score = sigmoid(bestLogit) * objScore(a);
+      final double bestValue = bestFlat[a];
+      if (bestValue < classValueThres) continue;
+      final double score = activateScore(bestValue) * objScore(a);
       if (score < confThres) continue;
       int argMax = 0;
       double argBest = -1e30;
@@ -439,17 +457,17 @@ List<Detection> postProcessDetectionsFlat(
     }
   } else {
     // Reference path: full argmax over every anchor, no pre-filter.
-    // sigmoid is monotonic, so the class argmax needs no sigmoid; apply it only
-    // once (twice with objectness) per anchor after the argmax.
+    // The configured activation is monotonic, so the class argmax can operate
+    // on raw values and activation happens once per surviving anchor.
     for (int a = 0; a < anchors; a++) {
       int argMax = 0;
-      double bestLogit = -1e30;
+      double bestValue = -1e30;
       if (channelMajor) {
         int idx = classStart * anchors + a;
         for (int k = 0; k < numClasses; k++) {
           final double v = out[idx];
-          if (v > bestLogit) {
-            bestLogit = v;
+          if (v > bestValue) {
+            bestValue = v;
             argMax = k;
           }
           idx += anchors;
@@ -458,15 +476,15 @@ List<Detection> postProcessDetectionsFlat(
         final int base = a * channels + classStart;
         for (int k = 0; k < numClasses; k++) {
           final double v = out[base + k];
-          if (v > bestLogit) {
-            bestLogit = v;
+          if (v > bestValue) {
+            bestValue = v;
             argMax = k;
           }
         }
       }
 
-      if (bestLogit < logitThres) continue;
-      final double score = sigmoid(bestLogit) * objScore(a);
+      if (bestValue < classValueThres) continue;
+      final double score = activateScore(bestValue) * objScore(a);
       if (score < confThres) continue;
       addCandidate(a, argMax, score);
     }

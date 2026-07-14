@@ -1,3 +1,14 @@
+## 3.5.1
+
+Adds explicit support for detection models whose confidence tensors are
+already activated probabilities.
+
+* `postProcessDetections` and `postProcessDetectionsFlat` now accept
+  `scoresAreProbabilities: true`, which skips sigmoid for class and
+  objectness values and compares probability thresholds directly.
+* The new option is additive and defaults to `false`, preserving the existing
+  logits contract and output for all current callers.
+
 ## 3.5.0
 
 Adds Android OpenCL/GL acceleration to the LiteRT Next `CompiledModel` path.

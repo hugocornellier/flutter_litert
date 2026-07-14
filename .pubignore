@@ -43,6 +43,10 @@ example/lib/ios_sweep_main.dart
 # needed by consumers of the published archive.
 test/
 
+# Local planning/generated documentation that is not part of the package API.
+doc/MODEL_STORE_PLAN.md
+doc/api/
+
 # Old example subdirectories (leftover from tflite_flutter)
 example/live_object_detection_ssd_mobilenet/
 example/reinforcement_learning/
