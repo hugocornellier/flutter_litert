@@ -183,6 +183,10 @@ class CompiledModel {
   /// for a detector whose detection counts are sensitive to GPU floating-point
   /// variance).
   ///
+  /// [precision] applies to every path, including the [forceCpu] shortcut and
+  /// the CPU retry, so a model never silently drops to a precision the caller
+  /// did not ask for.
+  ///
   /// [onFallback] is invoked with the GPU error when the CPU retry happens, so
   /// callers can log it; the library itself stays free of a logging dependency.
   /// Use [accelerators] (via [fromBuffer]) directly if you need a custom set.
@@ -197,6 +201,7 @@ class CompiledModel {
       return fromBuffer(
         bytes,
         accelerators: const {Accelerator.cpu},
+        precision: precision,
         tensorBufferMode: tensorBufferMode,
       );
     }
@@ -212,6 +217,7 @@ class CompiledModel {
       return fromBuffer(
         bytes,
         accelerators: const {Accelerator.cpu},
+        precision: precision,
         tensorBufferMode: tensorBufferMode,
       );
     }

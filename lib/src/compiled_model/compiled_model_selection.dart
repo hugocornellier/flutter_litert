@@ -25,9 +25,8 @@ CompiledModel compiledModelFromBufferAuto(
   bool forceCpu = false,
   void Function(Object error)? onGpuFallback,
 }) {
-  // Handled here rather than delegated: CompiledModel.fromBufferWithGpuFallback
-  // does not forward [precision] to its CPU paths, so routing forceCpu through
-  // it would silently drop the caller's requested precision.
+  // Handled before the accelerator branch so forceCpu wins regardless of the
+  // requested set, including explicit sets that never reach the fallback path.
   if (forceCpu) {
     return CompiledModel.fromBuffer(
       bytes,

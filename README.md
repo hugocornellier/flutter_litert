@@ -735,7 +735,7 @@ Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex) to you
 
 ```yaml
 dependencies:
-  flutter_litert: ^3.5.0
+  flutter_litert: ^3.6.0
   flutter_litert_flex: ^1.3.0
 ```
 

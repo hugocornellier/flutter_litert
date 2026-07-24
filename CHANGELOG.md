@@ -18,6 +18,16 @@ All additive; no existing symbol changes behaviour.
   boxes, for frame-to-frame track matching. It deliberately has no epsilon,
   unlike the NMS ratio in `nms_utils.dart` which adds `1e-7`; mixing the two
   shifts matches at threshold boundaries.
+* Fix: `CompiledModel.fromBufferWithGpuFallback` now forwards `precision` to
+  its CPU paths. Previously only the GPU attempt received it, so the `forceCpu`
+  shortcut and the CPU retry after a failed GPU compile silently fell back to
+  `fromBuffer`'s `fp16` default. A single call with no arguments therefore ran
+  fp32 on GPU and fp16 on CPU, defeating the fp32 default that exists because
+  pixel-space landmark and box coordinates lose accuracy in fp16. Callers that
+  passed `fp16`, including every detector package built on this plugin, are
+  unaffected; callers that asked for `fp32` now get it on the fallback path.
+  `fromBufferWithGpuFallbackAsync` delegates and is fixed with it. The web
+  implementation documents `precision` as accepted-but-ignored and is unchanged.
 * New `collectOutputShapes(Interpreter)` (native) returns every output tensor's
   shape keyed by index, walking indices until `getOutputTensor` throws. It reads
   shapes only and never touches `Tensor.data`, so no buffer views are

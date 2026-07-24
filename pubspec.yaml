@@ -4,9 +4,9 @@ version: 3.6.0
 homepage: https://github.com/hugocornellier/flutter_litert
 repository: https://github.com/hugocornellier/flutter_litert
 topics:
+  - litert
   - tflite
   - tensorflow-lite
-  - litert
   - machine-learning
   - on-device-ml
 
