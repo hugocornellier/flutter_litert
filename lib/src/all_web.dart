@@ -1,3 +1,4 @@
+export 'web/accelerator_policy.dart';
 export 'web/web_detector_utils.dart';
 export 'web/delegate.dart';
 export 'web/interpreter.dart';

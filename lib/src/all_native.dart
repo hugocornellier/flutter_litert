@@ -13,6 +13,7 @@ export 'delegates/coreml_delegate_native.dart';
 export 'delegates/flex_delegate_native.dart';
 export 'util/byte_conversion_utils_native.dart';
 export 'util/model_checkpoint.dart';
+export 'util/tensor_shapes.dart';
 export 'util/tensor_views.dart';
 export 'custom_ops/transpose_conv_bias_native.dart';
 export 'interpreter_factory.dart';

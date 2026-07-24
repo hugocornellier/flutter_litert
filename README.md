@@ -1030,18 +1030,106 @@ final originalBox = scaleFromLetterbox(
 );
 ```
 
-### Live camera
+## Live camera
 
-flutter_litert ships camera-agnostic helpers for building a real-time detection preview on top of any camera source (for example `package:camera`). The package deliberately does not depend on a camera plugin, so you own the `CameraController`; these helpers cover the parts every live-detection app repeats: turning a frame into detector input, throttling, orientation, and mapping results back onto the preview.
+Running a model on a live camera stream is the single most repeated piece of
+work in an on-device vision app, and almost none of it is model-specific. Every
+such app has to pack each frame into something a model can consume, keep the
+work off the UI thread, drop frames it cannot keep up with, get the rotation
+right on every device orientation and camera, and map results back onto a
+preview that is almost certainly a different size and aspect ratio than the
+frame. flutter_litert ships that entire scaffold.
 
-The pieces:
+The package deliberately does **not** depend on a camera plugin. You own the
+`CameraController`; these helpers cover everything between the frame arriving
+and the result being drawn.
 
-- `prepareCameraFrame(...)` / `prepareCameraFrameFromImage(cameraImage)` pack a camera frame (BGRA or RGBA on desktop, YUV420 on mobile) into a backend-neutral `CameraFrame` for inference, with no copy on the desktop path.
-- `rotationForFrame(...)` computes the upright rotation from the sensor and device orientation; `detectionSize(...)` gives the post-rotation, post-downscale image size your overlay maps against.
-- `FrameThrottle` drops frames that arrive while the previous one is still being processed, so inference never queues up.
-- `CoverFitTransform` maps detector coordinates onto the cover-fitted preview, with optional horizontal mirroring for the front camera. `FpsCounter` and `OneEuroFilter` cover on-screen FPS and landmark smoothing.
+### The pipeline
 
-A minimal image-stream handler (detector-agnostic):
+```
+CameraController.startImageStream
+        │
+        ▼
+  FrameThrottle            drop frames while one is in flight
+        │
+        ▼
+  rotationForFrame         sensor + device orientation -> upright rotation
+        │
+        ▼
+  prepareCameraFrame       CameraImage -> backend-neutral CameraFrame
+        │
+        ▼
+  ── isolate boundary ──   cameraFrameRpcFields / cameraFrameFromRpcMessage
+        │
+        ▼
+  your model               IsolateInterpreter or CompiledModel
+        │
+        ▼
+  detectionSize            post-rotation, post-downscale size for mapping
+        │
+        ▼
+  CoverFitTransform        detector coords -> preview coords (+ mirroring)
+```
+
+### The helpers
+
+| Helper | Purpose |
+|---|---|
+| `prepareCameraFrame(...)` | Packs planes into a backend-neutral `CameraFrame`. No copy on the desktop path. |
+| `prepareCameraFrameFromImage(obj)` | Same, accepting any `CameraImage`-shaped object (`width`, `height`, `planes`), so this package needs no `camera` dependency. |
+| `CameraFrame.decodePlan()` | Backend-neutral decode instructions: colour conversion, rotation, stride padding, and operation order. |
+| `rotationForFrame(...)` | Upright rotation from sensor orientation, device orientation, and lens direction. |
+| `detectionSize(...)` | Post-rotation, post-downscale size. This is the coordinate space your results live in. |
+| `FrameThrottle` | Single-slot gate; drops frames arriving while one is still processing. |
+| `FpsCounter` | On-screen FPS without hand-rolling a timer. |
+| `CoverFitTransform` | Maps detector coordinates onto a cover-fitted preview, with front-camera mirroring. |
+| `barQuarterTurns(...)` | Quarter turns for rotating overlay chrome with the device. |
+| `cameraFrameRpcFields` / `cameraFrameFromRpcMessage` | Serialize a `CameraFrame` across an isolate boundary. |
+| `OneEuroFilter` | Landmark smoothing; removes jitter without the lag of a moving average. |
+
+### Why throttling matters
+
+A camera stream delivers frames faster than on-device inference can consume
+them. Without a gate, every frame queues work: latency grows without bound and
+the displayed result drifts further behind reality, while the frame rate looks
+fine. Processing one frame at a time and dropping the rest is almost always
+correct for a live preview.
+
+`FrameThrottle` exists because the hand-rolled version has a specific failure
+mode: a mutable `_busy` flag whose reset is not in a `finally` wedges the gate
+closed forever the first time inference throws, and the preview silently stops
+updating. The busy check and set happen synchronously before the first `await`,
+so on Dart's single-threaded event loop there is no race between overlapping
+stream callbacks.
+
+```dart
+final _throttle = FrameThrottle();
+
+void _onFrame(CameraImage image) {
+  _throttle.run(() async {
+    // Frames arriving during this body are dropped, not queued.
+  });
+}
+```
+
+### Orientation
+
+Getting an upright frame is the most device-specific part of the pipeline, and
+`rotationForFrame` encapsulates the platform differences:
+
+- **Android** uses the combined `(sensor ± deviceRotation) % 360` formula, where
+  the sign depends on whether the camera is front- or back-facing.
+- **iOS** assumes the camera plugin has already rotated the stream per
+  `AVCaptureConnection.videoOrientation`, so a rotation is returned only when
+  the device is in portrait and the frame arrived in landscape-sensor layout.
+- **Desktop and web** return `null`; `camera_desktop` and the web backend deliver
+  already-upright frames.
+
+Pass `deviceOrientation` from `CameraController.value.deviceOrientation` on
+mobile, falling back to a `MediaQuery`-derived value while the controller is
+still initializing.
+
+### Minimal integration
 
 ```dart
 import 'package:camera/camera.dart';
@@ -1049,7 +1137,6 @@ import 'package:flutter_litert/flutter_litert.dart';
 
 final _throttle = FrameThrottle();
 final _fpsCounter = FpsCounter();
-int _fps = 0;
 
 void _onCameraImage(CameraImage image) {
   _throttle.run(() async {
@@ -1060,6 +1147,8 @@ void _onCameraImage(CameraImage image) {
       isFrontCamera: camera.lensDirection == CameraLensDirection.front,
       deviceOrientation: controller.value.deviceOrientation,
     );
+
+    // The coordinate space your results will be in.
     final size = detectionSize(
       width: image.width,
       height: image.height,
@@ -1067,12 +1156,10 @@ void _onCameraImage(CameraImage image) {
       maxDim: 640,
     );
 
-    // Pack the frame into backend-neutral input (no copy on desktop), then run
-    // your model off the UI thread and decode its output. This step is yours:
-    // feed `frame` to an IsolateInterpreter or a CompiledModel and turn the
-    // result into the shapes your overlay draws.
-    final frame = prepareCameraFrameFromImage(image);
-    final results = await runYourModel(frame, rotation);
+    final frame = prepareCameraFrameFromImage(image, rotation: rotation);
+    if (frame == null) return; // unrecognised plane layout
+
+    final results = await runYourModel(frame);
 
     if (_fpsCounter.tick() && mounted) setState(() => _fps = _fpsCounter.fps);
     if (mounted) setState(() { _results = results; _imageSize = size; });
@@ -1080,13 +1167,44 @@ void _onCameraImage(CameraImage image) {
 }
 ```
 
-In the overlay `CustomPainter`, map results onto the preview with a single transform:
+`runYourModel` is the one piece left to you: feed the `CameraFrame` to an
+`IsolateInterpreter` or a `CompiledModel` (see the runtime sections above) and
+decode the output into whatever your overlay draws.
+
+### Crossing the isolate boundary
+
+Keeping inference off the UI thread means the frame has to reach an isolate.
+`CameraFrame` is designed for that: `cameraFrameRpcFields` flattens it into a
+message map plus a byte payload, and `cameraFrameFromRpcMessage` rebuilds it on
+the other side.
+
+```dart
+// Sender (UI isolate)
+final fields = cameraFrameRpcFields(frame, {'mode': mode.name, 'maxDim': 640});
+sendPort.send(fields);
+
+// Receiver (detection isolate)
+final frame = cameraFrameFromRpcMessage(message, bytes);
+final plan = frame.decodePlan();
+// Map plan.conversion / plan.rotation to your image backend's constants
+// (for example OpenCV COLOR_* and ROTATE_*) and decode here, off the UI thread.
+```
+
+This is the pattern the detector packages use: colour conversion and rotation
+happen **inside** the detection isolate, so the UI thread never touches image
+data.
+
+### Drawing the overlay
+
+The preview is cover-fitted, so it is cropped rather than letterboxed, and the
+front camera is mirrored. `CoverFitTransform` folds scale, offset, and mirroring
+into one object so a painter never does the arithmetic by hand:
 
 ```dart
 @override
 void paint(Canvas canvas, Size size) {
   final t = CoverFitTransform.cover(
-    sourceWidth: imageSize.width,
+    sourceWidth: imageSize.width,   // from detectionSize(...)
     sourceHeight: imageSize.height,
     viewWidth: size.width,
     viewHeight: size.height,
@@ -1098,7 +1216,58 @@ void paint(Canvas canvas, Size size) {
 }
 ```
 
-The `runYourModel` call is the one piece flutter_litert leaves to you: `prepareCameraFrameFromImage` hands you a `CameraFrame`, you run it through an `IsolateInterpreter` or `CompiledModel` off the UI thread (see the runtime sections above), and you decode the output into the points or boxes your overlay draws. Everything around it (frame packing, throttling, orientation, cover-fit mapping) is what these helpers cover. The face, hand, and pose detection packages built on flutter_litert are complete working examples of the whole pipeline.
+Scale lengths with `t.scaleLength(...)` rather than a raw constant, otherwise
+stroke widths and marker radii change size with the preview.
+
+> **Common mistake:** mapping against the raw `CameraImage` dimensions instead of
+> the value returned by `detectionSize(...)`. After rotation and downscale those
+> are different, and the overlay drifts, most visibly in landscape.
+
+### Desktop streaming
+
+`package:camera` has no streaming implementation for Windows, macOS, or Linux.
+Add [`camera_desktop`](https://pub.dev/packages/camera_desktop) or
+`startImageStream` throws
+`UnimplementedError: onStreamedFrameAvailable() is not implemented`.
+
+```yaml
+dependencies:
+  camera: ^0.12.0
+  camera_desktop: ^1.2.0   # Windows, macOS, Linux streaming
+```
+
+On Android, set `imageFormatGroup: ImageFormatGroup.yuv420` on the
+`CameraController` to prevent a JPEG fallback. It is ignored on desktop.
+
+### Working demos
+
+Four published packages are built on this pipeline, and each ships an example
+app with a complete live-camera screen: throttling, orientation handling, camera
+switching, cover-fit overlays, and FPS reporting. They all use the same helper
+set in the same order, so any one of them reads as a reference implementation.
+
+| Package | Live camera entry point | Extra options |
+|---|---|---|
+| [`face_detection_tflite`](https://pub.dev/packages/face_detection_tflite) | `detectFacesFromCameraImage(...)` | `mode:` |
+| [`pose_detection`](https://pub.dev/packages/pose_detection) | `detectFromCameraImage(...)` | |
+| [`hand_detection`](https://pub.dev/packages/hand_detection) | `detectFromCameraImage(...)` | |
+| [`object_detection`](https://pub.dev/packages/object_detection) | `detectFromCameraImage(...)` | `options:` |
+
+Beyond the package-specific option, the signature is identical across all four:
+
+```dart
+Future<List<T>> detectFromCameraImage(
+  Object cameraImage, {
+  CameraFrameRotation? rotation,
+  bool? isBgra,
+  int? maxDim,
+});
+```
+
+Each exposes two levels: a one-call `...FromCameraImage` that performs packing,
+colour conversion, rotation, and downscale inside its detection isolate, and a
+lower-level `...FromCameraFrame` that takes a `CameraFrame` you built yourself,
+for when you want to control rotation or share one frame across detectors.
 
 ## Platform support
 

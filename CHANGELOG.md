@@ -1,3 +1,29 @@
+## 3.6.0
+
+Adds shared utilities that detector packages were each re-deriving locally.
+All additive; no existing symbol changes behaviour.
+
+* New `aggregateActiveAccelerator(Iterable<String?>)` (web) collapses the
+  per-runner backends of a multi-stage detector into the single accelerator it
+  should report. It returns `'webgpu'` when any runner is still on WebGPU, so
+  the runtime GPU-error fallback and slow-WebGPU warmup (both gated on the
+  reported accelerator) stay armed under mixed compile outcomes where some
+  models fell back to WASM and others did not.
+* New `compiledModelFromBufferAuto(...)` and `isDefaultGpuCpuAccelerators(...)`
+  centralize the "is this the permissive `{gpu, cpu}` default?" branch that
+  decides between `CompiledModel.fromBufferWithGpuFallback` and
+  `CompiledModel.fromBuffer`. An explicit accelerator set is still honoured
+  as-is; only the two-way default degrades.
+* New `iouLTRB(...)` is the exact intersection-over-union of two axis-aligned
+  boxes, for frame-to-frame track matching. It deliberately has no epsilon,
+  unlike the NMS ratio in `nms_utils.dart` which adds `1e-7`; mixing the two
+  shifts matches at threshold boundaries.
+* New `collectOutputShapes(Interpreter)` (native) returns every output tensor's
+  shape keyed by index, walking indices until `getOutputTensor` throws. It reads
+  shapes only and never touches `Tensor.data`, so no buffer views are
+  materialized and quantized outputs are safe to enumerate. Use
+  `TensorFloat32Views` when the buffers themselves are needed.
+
 ## 3.5.1
 
 Adds explicit support for detection models whose confidence tensors are
@@ -244,8 +270,8 @@ then failed copying a non-existent slice (`rsync ... No such file or directory`)
 * Fix: the downloaded iOS frameworks now carry a universal
   `ios-arm64_x86_64-simulator` slice (arm64 device binary + x86_64 stub), so the
   simulator build resolves and links. (SwiftPM builds were unaffected.)
-* Fix: the podspec now verifies the simulator slice — not just the device
-  slice — before skipping the download, and clears stale slices on re-download,
+* Fix: the podspec now verifies the simulator slice, not just the device
+  slice, before skipping the download, and clears stale slices on re-download,
   so an existing arm64-only cache is replaced.
 
 ## 3.1.0
@@ -255,30 +281,30 @@ utilities, extracted so the packages built on flutter_litert can maintain them
 in one place instead of each carrying its own copy. No breaking changes; the
 `Interpreter` and `CompiledModel` APIs are unchanged.
 
-* New: `serveIsolateRpc` — the isolate-side counterpart to `IsolateRpcClient`.
+* New: `serveIsolateRpc`: the isolate-side counterpart to `IsolateRpcClient`.
   Drives the `{id, op}` -> `{id, result | error}` protocol from a handler map,
   replacing the hand-written `listen`/`switch`/try-catch envelope each worker
   isolate used to carry. `IsolateRpcExactError` lets a handler send a verbatim
   wire-error string when the main side relies on the exact text (e.g. a
   `startsWith` error contract).
 * New: `IsolateWorkerBase.disposeGracefully` and
-  `IsolateRpcClient.disposeGracefully` — send the dispose op and await the
+  `IsolateRpcClient.disposeGracefully`: send the dispose op and await the
   isolate's acknowledgement before killing it, so the isolate can free native
   interpreters / `CompiledModel`s. `Isolate.kill(priority: immediate)` otherwise
   races past the queued dispose message and leaks the native handles.
-* New: `CompiledModelPool` — a round-robin pool of `CompiledModel` slots, each
+* New: `CompiledModelPool`: a round-robin pool of `CompiledModel` slots, each
   with its own reusable input buffer and `AsyncLock`, so concurrent inferences
   (e.g. one per detected object) land on distinct models with leak-free init
   teardown. A pool of size 1 degrades to a safe single-model-plus-lock.
-* New: `compiled_io_utils` — `compiledFloatCount`, `squareSideFromFloats`,
+* New: `compiled_io_utils`: `compiledFloatCount`, `squareSideFromFloats`,
   `compiledSquareInputSide`, `compiledOutputFloatCounts`, and
   `indexWhereFloatCount` for deriving tensor geometry from a `CompiledModel`,
   whose tensor sizes are exposed only in bytes.
-* New: `cameraFrameRpcFields` and `cameraFrameFromRpcMessage` — pack a
+* New: `cameraFrameRpcFields` and `cameraFrameFromRpcMessage`: pack a
   `CameraFrame` into an isolate-request field map and rebuild it on the isolate
   side (any image decode stays in the consumer, keeping this dependency-free).
 * New: `decodeFailurePrefix`, `throwDecodeFailure`, and
-  `rethrowOrFormatException` — signal an undecodable-image failure from inside
+  `rethrowOrFormatException`: signal an undecodable-image failure from inside
   an isolate and surface it as a `FormatException` on the main side instead of a
   cryptic downstream error.
 
@@ -319,7 +345,7 @@ in one place instead of each carrying its own copy. No breaking changes; the
   future SDK could close. Views are now captured via the new
   `Tensor.asFloat32View()`, a mutable `Float32List` aliasing the tensor's
   native buffer (valid until the next resize/`allocateTensors`).
-* `SignatureRunner.run()` per-call overhead roughly halved (16–17µs → 7µs per
+* `SignatureRunner.run()` per-call overhead roughly halved (16-17µs → 7µs per
   call on the bundled `test/benchmark/signature_runner_benchmark_test.dart`):
   tensor handles are cached by name between allocations, and the valid-names
   error text is built only when a lookup actually fails instead of on every
