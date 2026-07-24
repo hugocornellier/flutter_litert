@@ -36,3 +36,38 @@ double median(List<double> a) {
 double normalizeRadians(double angle) {
   return angle - 2 * math.pi * ((angle + math.pi) / (2 * math.pi)).floor();
 }
+
+/// Exact intersection-over-union of two axis-aligned boxes in left/top/right/
+/// bottom coordinates. Returns 0.0 when the boxes are degenerate or disjoint.
+///
+/// This is the plain `intersection / union` ratio with no epsilon. It is
+/// deliberately NOT the ratio used by the NMS helpers in `nms_utils.dart`,
+/// which add `1e-7` to the denominator for numerical safety while suppressing
+/// candidates. Frame-to-frame track matching compares IoU against a threshold
+/// directly, so an epsilon there would shift matches at threshold boundaries.
+/// Keep the two separate.
+double iouLTRB(
+  double aLeft,
+  double aTop,
+  double aRight,
+  double aBottom,
+  double bLeft,
+  double bTop,
+  double bRight,
+  double bBottom,
+) {
+  final double l = math.max(aLeft, bLeft);
+  final double t = math.max(aTop, bTop);
+  final double r = math.min(aRight, bRight);
+  final double b = math.min(aBottom, bBottom);
+  final double iw = math.max(0.0, r - l);
+  final double ih = math.max(0.0, b - t);
+  final double inter = iw * ih;
+  final double areaA =
+      math.max(0.0, aRight - aLeft) * math.max(0.0, aBottom - aTop);
+  final double areaB =
+      math.max(0.0, bRight - bLeft) * math.max(0.0, bBottom - bTop);
+  final double union = areaA + areaB - inter;
+  if (union <= 0) return 0.0;
+  return inter / union;
+}
