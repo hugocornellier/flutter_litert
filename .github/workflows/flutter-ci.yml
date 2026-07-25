@@ -139,6 +139,19 @@ jobs:
       - name: Run CompiledModel smoke tests
         run: flutter test test/compiled_model_smoke_test.dart
 
+      # The camera-frame family is pure Dart (no native library, no dart:io),
+      # so unlike the rest of test/ it can run on Windows. These cover the
+      # seam detector packages hand frames through, which is worth checking on
+      # every desktop platform rather than just macOS and Linux.
+      - name: Run camera-frame utility tests
+        run: >
+          flutter test
+          test/util/camera_frame_prepare_test.dart
+          test/util/camera_frame_test.dart
+          test/util/camera_frame_rpc_test.dart
+          test/util/yuv_conversion_test.dart
+          test/util/cover_fit_transform_test.dart
+
       # Builds the example app and runs real CompiledModel inference inside
       # it — the only place windows/CMakeLists.txt is configured in CI —
       # proving the production load path end to end: CMake bundles
@@ -170,12 +183,22 @@ jobs:
       # every accelerator-resolution and fallback branch runs deterministically
       # here too; the loader suite poisons its page with a bogus module URL on
       # purpose, which is why it is a separate file.
+      # The camera-frame tests are appended here because web is a supported
+      # platform for the detector packages that call these entry points, and
+      # this job runs an explicit file list rather than all of test/.
+      # camera_frame_rpc_test is deliberately excluded: TransferableTypedData
+      # is native-only, so transferableBytes passes bytes through unchanged on
+      # web and the round-trip assertions do not apply.
       - name: Run web unit tests in headless Chrome
         run: >-
           flutter test --platform chrome
           test/compiled_model_web_test.dart
           test/web_detector_utils_web_test.dart
           test/litert_web_loader_test.dart
+          test/util/camera_frame_prepare_test.dart
+          test/util/camera_frame_test.dart
+          test/util/yuv_conversion_test.dart
+          test/util/cover_fit_transform_test.dart
 
       - name: Install web example dependencies
         working-directory: example_web
