@@ -57,6 +57,16 @@ void main() {
       final opts = InterpreterOptions()..addDelegate(delegate);
       final interpreter = Interpreter.fromFile(modelFile, options: opts);
 
+      // Interpreter creation retries on CPU when a delegate cannot be applied,
+      // so correct numbers alone do not prove Metal ran. Without this the whole
+      // suite stays green while the GPU silently degrades to CPU, which is the
+      // regression this file exists to catch.
+      expect(
+        interpreter.hasActiveDelegate,
+        isTrue,
+        reason: 'Metal delegate did not apply; inference fell back to CPU',
+      );
+
       // Model is y = 2*x + 1
       // f(3) = 7, f(0) = 1, f(-1) = -1
       var output = [

@@ -37,24 +37,46 @@ void main() {
   });
 
   group('CompiledModel (LiteRT Next)', () {
-    testWidgets('loads the runtime from the app bundle on Linux/Windows', (
+    testWidgets('loads the runtime from the app bundle on desktop', (
       tester,
     ) async {
-      if (!(Platform.isLinux || Platform.isWindows)) {
-        markTestSkipped('Bundle-origin check is for desktop CMake bundling.');
+      if (!(Platform.isMacOS || Platform.isLinux || Platform.isWindows)) {
+        markTestSkipped('Bundle-origin check is for desktop bundling.');
         return;
       }
       // Force the lazy loader, then assert the library it actually dlopen'd
-      // came from next to the executable (where CMake bundled_libraries puts
-      // it for end users), and not from the loader's package-checkout
-      // fallback, which exists in CI/dev environments but not in shipped
-      // apps. This is what makes a green run prove the bundling worked.
+      // came from inside the built app, and not from the loader's
+      // package-checkout fallback, which exists in CI/dev environments but not
+      // in shipped apps. This is what makes a green run prove the bundling
+      // worked.
       CompiledModel.fromBuffer(
         modelBytes,
         accelerators: {Accelerator.cpu},
       ).close();
-      final execDir = File(Platform.resolvedExecutable).parent.path;
-      final expectedDir = Platform.isLinux ? '$execDir/lib' : execDir;
+      final execDir = File(Platform.resolvedExecutable).parent;
+
+      if (Platform.isMacOS) {
+        // CocoaPods and SwiftPM both ship libLiteRt.dylib as a *resource*, so
+        // unlike the CMake desktops its directory depends on which resource
+        // layout the toolchain picked (the candidates in delegateBundlePaths).
+        // Assert containment in the .app rather than one fixed path; what must
+        // not happen is resolving to the package checkout outside it.
+        final contentsDir = execDir.parent.resolveSymbolicLinksSync();
+        expect(litertRuntimeDir, isNotNull);
+        expect(
+          litertRuntimeDir,
+          startsWith(contentsDir),
+          reason:
+              'runtime resolved outside the app bundle, so the podspec '
+              'resource bundling did not take effect',
+        );
+        return;
+      }
+
+      // CMake bundled_libraries puts the runtime next to the executable.
+      final expectedDir = Platform.isLinux
+          ? '${execDir.path}/lib'
+          : execDir.path;
       expect(
         litertRuntimeDir,
         Directory(expectedDir).resolveSymbolicLinksSync(),

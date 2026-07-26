@@ -58,6 +58,17 @@ void main() {
       final opts = InterpreterOptions()..addDelegate(delegate);
       final interpreter = Interpreter.fromFile(modelFile, options: opts);
 
+      // Interpreter creation retries on CPU when a delegate cannot be applied,
+      // so correct numbers alone do not prove CoreML ran. This holds only
+      // because the delegate above requests AllDevices: the default
+      // (DevicesWithNeuralEngine) does not apply on a Mac or a simulator, and
+      // would legitimately leave hasActiveDelegate false.
+      expect(
+        interpreter.hasActiveDelegate,
+        isTrue,
+        reason: 'CoreML delegate did not apply; inference fell back to CPU',
+      );
+
       // Model is y = 2*x + 1
       var output = [
         [0.0],
