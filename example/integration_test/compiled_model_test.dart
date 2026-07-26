@@ -23,12 +23,17 @@ void main() {
   late File modelFile;
   late Uint8List modelBytes;
 
+  late Uint8List segModelBytes;
+
   setUpAll(() async {
     final data = await rootBundle.load('assets/simple_model.tflite');
     modelBytes = data.buffer.asUint8List();
     final tmpDir = await Directory.systemTemp.createTemp('litert_cm_test_');
     modelFile = File('${tmpDir.path}/simple_model.tflite');
     await modelFile.writeAsBytes(modelBytes);
+
+    final segData = await rootBundle.load('assets/selfie_multiclass.tflite');
+    segModelBytes = segData.buffer.asUint8List();
   });
 
   group('CompiledModel (LiteRT Next)', () {
@@ -87,6 +92,42 @@ void main() {
       final asyncOut = await cm.runAsync([input]);
       expect(asyncOut, syncOut);
       expect(syncOut[0][0], closeTo(-1.0, 1e-3));
+    });
+
+    // Every other CPU test here runs simple_model, whose single-float output
+    // makes the output-buffer lock trivial. face_detection_tflite hits an
+    // intermittent 'LiteRtLockTensorBuffer output[0] failed with
+    // LiteRtStatus=3' on Windows when reading this model's much larger
+    // output, a path nothing in this package covered. Repeats the run so a
+    // single successful lock is not mistaken for a stable one.
+    testWidgets('locks and reads a large multi-class segmentation output', (
+      tester,
+    ) async {
+      final cm = CompiledModel.fromBuffer(
+        segModelBytes,
+        accelerators: {Accelerator.cpu},
+      );
+      addTearDown(cm.close);
+
+      final outBytes = cm.outputByteSizes[0];
+      expect(
+        outBytes,
+        greaterThan(1 << 20),
+        reason:
+            'the point of this test is a large output buffer; a small '
+            'one would not exercise the failing path',
+      );
+
+      final input = Float32List(cm.inputByteSizes[0] ~/ 4);
+      for (var i = 0; i < 5; i++) {
+        final output = cm.run([input]);
+        expect(output[0], hasLength(outBytes ~/ 4), reason: 'iteration $i');
+        expect(
+          output[0].every((v) => v.isFinite),
+          isTrue,
+          reason: 'iteration $i produced non-finite values',
+        );
+      }
     });
 
     testWidgets('host-memory buffers match managed buffers on CPU', (
