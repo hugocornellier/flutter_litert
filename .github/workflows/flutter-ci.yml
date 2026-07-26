@@ -71,23 +71,25 @@ jobs:
         run: flutter test integration_test/interpreter_coexistence_test.dart -d macos --timeout 600s
 
       # The classic delegates, on the only runner in this workflow with a real
-      # accelerator. Both suites assert hasActiveDelegate, so a delegate that
-      # stops applying and silently retries on CPU fails here instead of
+      # accelerator. All three suites assert hasActiveDelegate, so a delegate
+      # that stops applying and silently retries on CPU fails here instead of
       # passing on correct-but-CPU numbers.
       #
-      # Only these two are wired: CoreML does not actually engage on macOS
-      # (hasActiveDelegate is false for every bundled model, so the suite would
-      # only ever prove the CPU fallback path), and the remaining
-      # integration_test files are benchmarks with no assertions, several of
-      # them reading models from absolute paths outside this repo. Both stay
-      # manual on purpose.
+      # CoreML is included because its inference test requests AllDevices.
+      # The default CoreMlDelegate() targets the Neural Engine only and does
+      # not apply on a Mac (or a simulator), so a suite built on the default
+      # options would cover nothing but the CPU fallback.
+      #
+      # The remaining integration_test files stay manual on purpose: they are
+      # benchmarks with no assertions, several reading models from absolute
+      # paths outside this repo.
       #
       # Separate invocations: passing several integration_test files to one
       # `flutter test` only launches the app for the first.
       - name: Run classic delegate integration tests (macOS desktop)
         working-directory: example
         run: |
-          for t in metal_delegate_test xnnpack_delegate_test; do
+          for t in metal_delegate_test xnnpack_delegate_test coreml_delegate_test; do
             echo "::group::$t"
             flutter test "integration_test/$t.dart" -d macos --timeout 600s
             echo "::endgroup::"
