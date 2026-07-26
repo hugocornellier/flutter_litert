@@ -54,6 +54,45 @@ jobs:
         working-directory: example/flex_test_host
         run: flutter test -d macos integration_test
 
+      # Builds the example app and runs real CompiledModel inference inside it,
+      # proving the production load path end to end: the podspec ships
+      # libLiteRt.dylib as a resource and the loader resolves it from inside
+      # the .app rather than from the package checkout. Unlike every other job,
+      # the runner has a working GPU here — macOS runners are Apple silicon and
+      # Metal compute needs no display — so this is the one place in CI where
+      # the strict-GPU and GPU-fallback tests execute for real instead of
+      # skipping.
+      - name: Run CompiledModel integration tests (macOS desktop)
+        working-directory: example
+        run: flutter test integration_test/compiled_model_test.dart -d macos --timeout 600s
+
+      - name: Run Interpreter/CompiledModel coexistence tests (macOS desktop)
+        working-directory: example
+        run: flutter test integration_test/interpreter_coexistence_test.dart -d macos --timeout 600s
+
+      # The classic delegates, on the only runner in this workflow with a real
+      # accelerator. Both suites assert hasActiveDelegate, so a delegate that
+      # stops applying and silently retries on CPU fails here instead of
+      # passing on correct-but-CPU numbers.
+      #
+      # Only these two are wired: CoreML does not actually engage on macOS
+      # (hasActiveDelegate is false for every bundled model, so the suite would
+      # only ever prove the CPU fallback path), and the remaining
+      # integration_test files are benchmarks with no assertions, several of
+      # them reading models from absolute paths outside this repo. Both stay
+      # manual on purpose.
+      #
+      # Separate invocations: passing several integration_test files to one
+      # `flutter test` only launches the app for the first.
+      - name: Run classic delegate integration tests (macOS desktop)
+        working-directory: example
+        run: |
+          for t in metal_delegate_test xnnpack_delegate_test; do
+            echo "::group::$t"
+            flutter test "integration_test/$t.dart" -d macos --timeout 600s
+            echo "::endgroup::"
+          done
+
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -119,6 +158,14 @@ jobs:
         working-directory: example
         run: xvfb-run -a flutter test integration_test/compiled_model_test.dart -d linux --timeout 600s
 
+      # Both native runtimes bundled into one app: linux/lib ships
+      # libtensorflowlite_c-linux.so alongside libLiteRt.so, and they export
+      # overlapping TFLite symbols. Host unit tests only ever load one of them
+      # per process, so the collision risk is only visible here.
+      - name: Run Interpreter/CompiledModel coexistence tests (Linux desktop)
+        working-directory: example
+        run: xvfb-run -a flutter test integration_test/interpreter_coexistence_test.dart -d linux --timeout 600s
+
   build-windows:
     runs-on: windows-2022
     steps:
@@ -161,6 +208,14 @@ jobs:
       - name: Run CompiledModel integration tests (Windows desktop)
         working-directory: example
         run: flutter test integration_test/compiled_model_test.dart -d windows --timeout 600s
+
+      # The classic runtime is exercised on Windows only from inside a built
+      # app: windows/CMakeLists.txt bundles libtensorflowlite_c-win.dll next to
+      # libLiteRt.dll, so this is where the two runtimes first share a process
+      # on this platform.
+      - name: Run Interpreter/CompiledModel coexistence tests (Windows desktop)
+        working-directory: example
+        run: flutter test integration_test/interpreter_coexistence_test.dart -d windows --timeout 600s
 
   build-web:
     runs-on: ubuntu-latest
@@ -276,14 +331,17 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # Runs real CompiledModel inference. CPU and fallback-factory tests pass.
-      # The bundled x86_64 accelerator registers, while direct combined and
-      # strict-GPU tests skip because emulators have no working OpenCL. Up to
-      # three attempts: Gradle's SDK-component install
+      # Runs real CompiledModel inference plus the classic Interpreter, which
+      # on Android loads a different library entirely (libtensorflowlite_jni.so
+      # from litert:1.4.x, next to libLiteRt.so from the 2.x AAR) and is
+      # otherwise never executed anywhere in CI. CompiledModel CPU and
+      # fallback-factory tests pass. The bundled x86_64 accelerator registers,
+      # while direct combined and strict-GPU tests skip because emulators have
+      # no working OpenCL. Up to three attempts: Gradle's SDK-component install
       # can receive a corrupted NDK archive ("Error on ZipFile unknown
       # archive"), which fails assembleDebug; purging the partial NDK
       # between attempts makes the retry re-download it cleanly.
-      - name: Run CompiledModel integration tests (Android emulator)
+      - name: Run integration tests (Android emulator)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -292,9 +350,15 @@ jobs:
           working-directory: example
           # One line on purpose: the action runs each script line as its own
           # sh command, which tears a multi-line loop apart.
+          #
+          # The two suites are separate `flutter test` invocations, not one
+          # multi-file invocation: passing several integration_test files to a
+          # single run only launches the app for the first one and then fails
+          # the rest with "Unable to start the app on the device".
           script: >-
             bash -c 'set +e; rc=1; for attempt in 1 2 3; do
-            flutter test integration_test/compiled_model_test.dart -d emulator-5554 --timeout 600s; rc=$?;
+            flutter test integration_test/compiled_model_test.dart -d emulator-5554 --timeout 600s &&
+            flutter test integration_test/interpreter_coexistence_test.dart -d emulator-5554 --timeout 600s; rc=$?;
             [ "$rc" -eq 0 ] && break;
             echo "::warning::Android integration tests attempt $attempt failed (rc=$rc)";
             [ "$attempt" -lt 3 ] && rm -rf "$ANDROID_HOME"/ndk/* "$ANDROID_HOME"/.temp;
@@ -368,8 +432,8 @@ jobs:
   build-ios:
     runs-on: macos-15
     # Per-test, per-attempt timeouts and retries live in the test step below.
-    # This outer cap only bounds the complete two-test sequence.
-    timeout-minutes: 70
+    # This outer cap only bounds the complete three-test sequence.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -463,3 +527,4 @@ jobs:
 
           run_ios_test integration_test/compiled_model_test.dart || exit $?
           run_ios_test integration_test/interpreter_delegate_fallback_test.dart || exit $?
+          run_ios_test integration_test/interpreter_coexistence_test.dart || exit $?
