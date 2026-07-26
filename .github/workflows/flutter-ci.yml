@@ -472,7 +472,14 @@ jobs:
         working-directory: example
         run: |
           set +e
-          attempt_timeout=1500
+          # A successful suite takes 2-5 minutes here including the app build,
+          # so 900s leaves roughly 3x headroom while bounding the damage when
+          # the simulator wedges on launch (the connect-forever hang the
+          # recycle logic below exists for). At the previous 1500s a single
+          # hang burned 25 minutes, and three hung first attempts would exceed
+          # this job's 90-minute cap and be killed mid-run; at 900s the worst
+          # case is about an hour.
+          attempt_timeout=900
           max=2
 
           run_ios_test() {
