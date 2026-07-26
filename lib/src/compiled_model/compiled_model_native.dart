@@ -571,12 +571,21 @@ class CompiledModel {
     final hostAddress = _lockScratch..value = nullptr;
     var locked = false;
     try {
-      _checkAt(
-        _rt.lockTensorBuffer(buffer, hostAddress, lockMode),
-        'LiteRtLockTensorBuffer',
-        kind,
-        index,
-      );
+      final lockStatus = _rt.lockTensorBuffer(buffer, hostAddress, lockMode);
+      if (lockStatus != _kLiteRtStatusOk) {
+        // A bare status code is not diagnosable: this failure has been seen
+        // intermittently on Windows for a large output buffer, and the code
+        // alone says nothing about which buffer, how big, or under which
+        // accelerator. Build the context only on the failure path so the
+        // happy path stays allocation-free.
+        throw StateError(
+          'LiteRtLockTensorBuffer $kind[$index] failed with '
+          'LiteRtStatus=$lockStatus '
+          '(byteSize=$byteSize, lockMode=$lockMode, '
+          'tensorBufferMode=${_tensorBufferMode.name}, '
+          'accelerators={${_accelerators.map((a) => a.name).join(', ')}}).',
+        );
+      }
       locked = true;
       final bytes = hostAddress.value.cast<Uint8>().asTypedList(byteSize);
       final floats = Float32List.view(
