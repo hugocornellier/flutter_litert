@@ -1,0 +1,166 @@
+name: Build TFLite C dylib for macOS (bazel)
+
+# Builds libtensorflowlite_c-mac.dylib from TensorFlow source with BAZEL, as a
+# universal (x86_64 + arm64) dylib.
+#
+# WHY THIS EXISTS
+#
+# The dylib currently committed at
+#   macos/flutter_litert/Sources/flutter_litert/Resources/libtensorflowlite_c-mac.dylib
+# was produced by the CMake build. In that build TRANSPOSE_CONV gets no benefit
+# from multiple threads, while the bazel-built iOS framework scales ~3x on the
+# same op and the same Apple silicon.
+#
+# Measured (macOS vs iOS simulator, same Mac, threads 1 -> 4):
+#
+#   op                       macOS (CMake)        iOS (bazel)
+#   transpose_conv           9.98 -> 9.38 (1.06x) 7.65 -> 2.68 (2.85x)
+#   plain conv (control)    16.23 -> 4.66 (3.48x) 17.29 -> 4.71 (3.67x)
+#   4-layer deconv head     73.68 -> 74.91 (1.0x) 57.05 -> 18.10 (3.15x)
+#
+# Rebuilding the same TF 2.20.0 source with CMake reproduced the problem
+# exactly (transpose_conv 10.25 -> 10.07), eliminating a missing CMake flag,
+# absent deconv kernels (present in both binaries) and the TFLite version
+# (both 2.20.0).
+#
+# XNNPACK is NOT involved: measured numerically, XNNPACK declines to execute
+# TRANSPOSE_CONV on BOTH platforms (output bit-identical to the no-delegate
+# run). An earlier reading that it accepted the op came from trusting
+# ModifyGraphWithDelegate's status=0, which TFLite also returns for an empty
+# replacement set.
+#
+# So the op runs on TFLite's builtin kernel everywhere. TRANSPOSE_CONV has no
+# kMultithreadOptimized variant (unlike CONV_2D); Register_TRANSPOSE_CONV
+# resolves to TRANSPOSECONV_GENERIC_OPT, whose TransposeConvV2 parallelises
+# only through ruy's gemm. The remaining variable is therefore ruy's threading
+# in the macOS build versus the iOS one.
+#
+# Consequence for consumers: cat_detection / dog_detection landmark inference
+# costs ~83 ms on macOS instead of ~27 ms. Desktop only; iOS and Android are
+# unaffected because they already ship bazel-built binaries.
+#
+# See doc/macos_transpose_conv_gap.md for the full investigation.
+#
+# WHY CI RATHER THAN LOCALLY
+#
+# bazel 7.4.1's Apple toolchain wrapper (wrapped_clang_pp) fails to execute on
+# macOS 26 with "missing LC_UUID load command", including after
+# `bazelisk clean --expunge`. macos-14 runners have a toolchain bazel 7.4.1
+# supports.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tf_ref:
+        description: TensorFlow git ref to build
+        default: v2.20.0
+        required: true
+
+env:
+  BAZEL_VERSION: 7.4.1
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build deps
+        run: |
+          brew install bazelisk
+          pip install numpy
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk version
+
+      - name: Clone TensorFlow
+        run: |
+          git clone --depth 1 --branch ${{ inputs.tf_ref }} \
+            https://github.com/tensorflow/tensorflow.git tf-src
+
+      - name: Configure TensorFlow
+        working-directory: tf-src
+        run: |
+          PYTHON_BIN_PATH=$(which python3) \
+          TF_NEED_CUDA=0 TF_NEED_ROCM=0 TF_NEED_TENSORRT=0 \
+          TF_CONFIGURE_IOS=0 CC_OPT_FLAGS="-O3" \
+          python3 configure.py
+
+      # Two separate single-arch builds, then lipo. Building both slices in one
+      # invocation via --config=macos_arm64 fails on TF 2.20 with
+      # "no such package '@@build_bazel_apple_support//configs/platforms'".
+      - name: Build arm64 slice
+        working-directory: tf-src
+        run: |
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk build -c opt \
+            --cpu=darwin_arm64 \
+            --define=tflite_with_xnnpack=true \
+            //tensorflow/lite/c:tensorflowlite_c
+          cp bazel-bin/tensorflow/lite/c/libtensorflowlite_c.dylib \
+            ../libtensorflowlite_c-arm64.dylib
+
+      # Uploaded on its own so the arm64 slice is testable even when the x86_64
+      # cross-compile fails (it needs NEON_2_SSE.h, which TF does not wire up
+      # when targeting x86 from an arm64 runner).
+      - name: Upload arm64 slice
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtensorflowlite_c-mac-arm64
+          path: libtensorflowlite_c-arm64.dylib
+          if-no-files-found: error
+
+      - name: Build x86_64 slice
+        continue-on-error: true
+        working-directory: tf-src
+        run: |
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk clean
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk build -c opt \
+            --cpu=darwin_x86_64 \
+            --define=tflite_with_xnnpack=true \
+            //tensorflow/lite/c:tensorflowlite_c
+          cp bazel-bin/tensorflow/lite/c/libtensorflowlite_c.dylib \
+            ../libtensorflowlite_c-x86_64.dylib
+
+      - name: Create universal dylib
+        continue-on-error: true
+        run: |
+          test -f libtensorflowlite_c-x86_64.dylib || {
+            echo "x86_64 slice missing; skipping universal packaging"; exit 0; }
+          lipo -create \
+            libtensorflowlite_c-arm64.dylib \
+            libtensorflowlite_c-x86_64.dylib \
+            -output libtensorflowlite_c-mac.dylib
+          lipo -info libtensorflowlite_c-mac.dylib
+          install_name_tool -id @rpath/libtensorflowlite_c-mac.dylib \
+            libtensorflowlite_c-mac.dylib
+
+      # The shipped dylib must export the C API and the XNNPACK delegate
+      # symbols, or the plugin fails at runtime rather than at build time.
+      - name: Verify exports
+        run: |
+          set -e
+          if [ ! -f libtensorflowlite_c-mac.dylib ]; then
+            echo "no universal dylib; verifying arm64 slice instead"
+            cp libtensorflowlite_c-arm64.dylib libtensorflowlite_c-mac.dylib
+          fi
+          for sym in TfLiteModelCreate TfLiteInterpreterCreate \
+                     TfLiteInterpreterModifyGraphWithDelegate \
+                     TfLiteXNNPackDelegateCreate; do
+            if ! nm -gU libtensorflowlite_c-mac.dylib | grep -q "$sym"; then
+              echo "MISSING SYMBOL: $sym"
+              exit 1
+            fi
+            echo "ok: $sym"
+          done
+          echo "size: $(stat -f%z libtensorflowlite_c-mac.dylib) bytes"
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtensorflowlite_c-mac
+          path: libtensorflowlite_c-mac.dylib
+          if-no-files-found: warn
