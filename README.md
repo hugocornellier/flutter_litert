@@ -55,7 +55,7 @@ It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutt
 - `CompiledModel` (LiteRT Next), the recommended path. Request accelerators and the runtime picks CPU, GPU, or NPU automatically, with CPU fallback. See [CompiledModel (LiteRT Next)](#compiledmodel-litert-next).
 - The classic `Interpreter` API remains fully supported when needed.
 - Auto-bundled native libraries. No hand-built `.so`, `.dll`, or `.dylib` files: just add the dependency and it works on Android, iOS, macOS, Windows, and Linux (plus web via `initializeWeb()`). See [Platform support](#platform-support).
-- Interpreter delegates. XNNPACK (CPU) on all native platforms; GPU, Metal, and CoreML remain available but are **deprecated** in favour of `CompiledModel`. See [Delegates](#delegates).
+- Interpreter delegates. XNNPACK (CPU) on all native platforms, plus GPU, Metal, and CoreML. None are deprecated: `CompiledModel` is the newer API but currently miscomputes some models, so delegate-backed `Interpreter` inference stays a first-class path. See [Delegates](#delegates).
 - On-device training with weight persistence and [variable tensor inspection](#inspecting-variable-tensors). See [On-device training](#on-device-training).
 - Custom ops. MediaPipe's `Convolution2DTransposeBias` is included on native platforms, and you can register your own. See [Custom ops](#custom-ops).
 - Isolate support. Background-thread inference via `IsolateInterpreter` on native platforms (web provides a compatibility wrapper).
@@ -235,7 +235,7 @@ final outputs = await model.runAsync(inputs); // Future<List<Float32List>>
 
 ### Coming from the Interpreter delegate API
 
-You do not have to migrate everything at once. The `Interpreter` API stays fully supported, and the CPU `XNNPackDelegate` and `FlexDelegate` are not deprecated. Only the manual GPU, Metal, and CoreML delegates are deprecated (planned for removal in 4.0.0), so those are the ones to move over to `CompiledModel`.
+You do not have to migrate at all. Nothing in the `Interpreter` API is deprecated, including the GPU, Metal, and CoreML delegates. Migrate where `CompiledModel` measurably wins for your models, and verify it with `verifyCompiledModel` before trusting it (see [Verifying a CompiledModel](#verifying-a-compiledmodel)).
 
 Before (Interpreter plus GPU delegate):
 
@@ -303,7 +303,16 @@ print('TFLite version: ${Interpreter.version}'); // e.g. "2.20.0"
 
 ### Delegates
 
-> **Deprecation notice:** The GPU (Android), Metal, and CoreML delegates below are **deprecated** in favour of [`CompiledModel`](#compiledmodel-litert-next) and are planned for removal in 4.0.0. They remain fully functional in the meantime. The `Interpreter` API itself, the CPU `XNNPackDelegate`, and `FlexDelegate` are **not** deprecated.
+> **Nothing here is deprecated.** These delegates were briefly marked deprecated in favour of
+> [`CompiledModel`](#compiledmodel-litert-next), with a removal planned for 4.0.0. That was reversed in 3.7.0 for two reasons.
+>
+> `PerformanceConfig.gpu()` and `.coreml()` are built on these classes and were never deprecated, so removing them would have
+> broken supported API with no notice. More importantly, `CompiledModel` cannot yet replace them: it returns
+> `kLiteRtStatusOk` while leaving the output buffer unwritten for models whose output tensor ends up dynamic, which includes
+> heatmap models with a deconvolution head. Steering callers onto that would have traded correct results for wrong ones.
+>
+> Prefer [`PerformanceConfig`](#performanceconfig) over constructing delegates directly, and gate any `CompiledModel`
+> adoption behind `verifyCompiledModel`.
 
 Delegates accelerate inference by offloading computation to specialized hardware (GPU, Neural Engine, etc.). All delegates are passed to the interpreter via `InterpreterOptions.addDelegate()`:
 
@@ -318,9 +327,9 @@ final interpreter = await Interpreter.fromAsset('model.tflite', options: options
 | Delegate | Platform | Hardware | Class |
 |----------|----------|----------|-------|
 | XNNPACK | Android, iOS, macOS, Windows, Linux | CPU (optimized SIMD) | `XNNPackDelegate` |
-| GPU (Android) | Android | GPU (OpenGL / OpenCL) | `GpuDelegateV2` _(deprecated, use `CompiledModel`)_ |
-| Metal | iOS, macOS (arm64 only on macOS) | GPU (Metal) | `GpuDelegate` _(deprecated, use `CompiledModel`)_ |
-| CoreML | iOS, macOS (arm64 only on macOS) | Neural Engine / GPU / CPU | `CoreMlDelegate` _(deprecated, use `CompiledModel`)_ |
+| GPU (Android) | Android | GPU (OpenGL / OpenCL) | `GpuDelegateV2` |
+| Metal | iOS, macOS (arm64 only on macOS) | GPU (Metal) | `GpuDelegate` |
+| CoreML | iOS, macOS (arm64 only on macOS) | Neural Engine / GPU / CPU | `CoreMlDelegate` |
 | Flex | Android, iOS, macOS, Windows, Linux | CPU (TensorFlow ops) | `FlexDelegate` |
 
 #### XNNPACK (all native platforms)
@@ -357,9 +366,9 @@ options.addDelegate(XNNPackDelegate(
 ```
 
 <details>
-<summary><strong>GPU delegate (Android)</strong> (deprecated, use <code>CompiledModel</code>)</summary>
+<summary><strong>GPU delegate (Android)</strong></summary>
 
-> **Deprecated:** Use [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.gpu, Accelerator.cpu}` instead. Planned for removal in 4.0.0.
+> Prefer [`PerformanceConfig`](#performanceconfig) unless you need this level of control. [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.gpu, Accelerator.cpu}` is an alternative, but verify it with `verifyCompiledModel` first.
 
 The Android GPU delegate uses OpenGL ES or OpenCL for GPU-accelerated inference.
 
@@ -405,9 +414,9 @@ GPU delegate options:
 </details>
 
 <details>
-<summary><strong>Metal delegate (iOS and macOS)</strong> (deprecated, use <code>CompiledModel</code>)</summary>
+<summary><strong>Metal delegate (iOS and macOS)</strong></summary>
 
-> **Deprecated:** Use [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.gpu, Accelerator.cpu}` instead. Planned for removal in 4.0.0.
+> Prefer [`PerformanceConfig`](#performanceconfig) unless you need this level of control. [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.gpu, Accelerator.cpu}` is an alternative, but verify it with `verifyCompiledModel` first.
 
 The Metal delegate uses Apple's Metal API for GPU-accelerated inference on iOS and macOS. The native library is bundled automatically on both platforms.
 
@@ -430,9 +439,9 @@ Metal delegate options:
 </details>
 
 <details>
-<summary><strong>CoreML delegate (iOS and macOS)</strong> (deprecated, use <code>CompiledModel</code>)</summary>
+<summary><strong>CoreML delegate (iOS and macOS)</strong></summary>
 
-> **Deprecated:** Use [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.npu, Accelerator.gpu, Accelerator.cpu}` instead. Planned for removal in 4.0.0.
+> Prefer [`PerformanceConfig`](#performanceconfig) unless you need this level of control. [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.npu, Accelerator.gpu, Accelerator.cpu}` is an alternative, but verify it with `verifyCompiledModel` first.
 
 The CoreML delegate uses Apple's CoreML framework, which can dispatch to the Neural Engine, GPU, or CPU depending on the model and device. The native library is bundled automatically on both platforms.
 
@@ -1399,7 +1408,7 @@ Because a few WebGPU stacks compile and run without error yet are unusably slow,
 
 ### Upgrading to 3.0.0
 
-3.0.0 is a major release: it introduces the LiteRT Next `CompiledModel` API and deprecates the manual GPU/Metal/CoreML delegates. The classic `Interpreter` API stays source-compatible; no method signatures changed. Two `IsolateInterpreter` behavior changes are worth knowing about before you upgrade:
+3.0.0 is a major release: it introduces the LiteRT Next `CompiledModel` API and deprecated the manual GPU/Metal/CoreML delegates (a deprecation later reversed in 3.7.0). The classic `Interpreter` API stays source-compatible; no method signatures changed. Two `IsolateInterpreter` behavior changes are worth knowing about before you upgrade:
 
 - **In-flight calls now queue instead of being silently dropped.** Previously, calling `run()` or `runForMultipleInputs()` while a run was still in flight returned without writing the outputs. Now the call waits its turn and completes with real results. If you relied on that as frame-skipping (for example, one inference per camera frame), skip explicitly instead:
 
@@ -1411,7 +1420,7 @@ Because a few WebGPU stacks compile and run without error yet are unusably slow,
 
 - **Calling `run()` after `close()` now throws `StateError`** instead of returning silently. Closing an interpreter while a run is in flight also throws, rather than reading freed tensors.
 
-The GPU, Metal, and CoreML delegates are deprecated in 3.0.0 (see [Delegates](#delegates)) but remain functional; they are planned for removal in 4.0.0. The `Interpreter` API, the CPU `XNNPackDelegate`, and `FlexDelegate` are not deprecated.
+3.0.0 deprecated the GPU, Metal, and CoreML delegates and announced their removal in 4.0.0. **That was reversed in 3.7.0**: they are no longer deprecated and are not scheduled for removal, because `CompiledModel` miscomputes models with a dynamic output tensor and cannot replace them yet. See [Delegates](#delegates). The `Interpreter` API, `XNNPackDelegate`, and `FlexDelegate` were never deprecated.
 
 ## Credits
 

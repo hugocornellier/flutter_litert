@@ -88,6 +88,11 @@ class CompiledModel {
     'CompiledModel is not supported on this platform.',
   );
 
+  /// Whether the whole graph runs on a selected hardware accelerator.
+  bool get isFullyAccelerated => throw UnsupportedError(
+    'CompiledModel is not supported on this platform.',
+  );
+
   /// Number of model input tensors.
   int get inputCount => throw UnsupportedError(
     'CompiledModel is not supported on this platform.',

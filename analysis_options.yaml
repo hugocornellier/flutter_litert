@@ -28,5 +28,12 @@ linter:
 analyzer:
   exclude:
     - example/**
+    # Generated and scratch output. Nothing here is source: it is gitignored,
+    # recreated by every build, and holds throwaway repro scripts, so linting it
+    # only produces noise that hides real findings in lib/ and test/. Excluded by
+    # pattern rather than by deleting the files, because the next build or repro
+    # would put it straight back.
+    - build/**
+    - "**/build/**"
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

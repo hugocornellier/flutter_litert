@@ -30,15 +30,18 @@ export '../bindings/tensorflow_lite_bindings_generated.dart'
         TfLiteGpuInferencePriority;
 
 /// GPU delegate for Android
-@Deprecated(
-  'Manual hardware-acceleration delegates are superseded by LiteRT Next. Use '
-  'CompiledModel.fromFile / CompiledModel.fromBuffer with '
-  'accelerators: {Accelerator.gpu, Accelerator.cpu}, or '
-  'CompiledModel.fromBufferWithGpuFallback. The Interpreter API itself remains '
-  'supported for CPU inference. '
-  'See https://developers.google.com/edge/litert/next/get_started; planned '
-  'for removal in flutter_litert 4.0.0.',
-)
+/// Prefer [PerformanceConfig] over constructing this directly: it picks a
+/// sensible delegate per platform and handles the fallback when one declines a
+/// model. This class stays available for callers that need to configure a
+/// delegate themselves.
+///
+/// Not deprecated in favour of `CompiledModel`. LiteRT Next is the direction
+/// upstream is taking, but as of flutter_litert 3.7.0 it miscomputes models
+/// whose output tensor ends up dynamic, returning `kLiteRtStatusOk` while the
+/// output buffer is never written (see doc/delegate_verification.md and
+/// [verifyCompiledModel]). Until that is fixed upstream, delegate-backed
+/// `Interpreter` inference is the correct choice for those models, so pointing
+/// callers away from it would be wrong.
 class GpuDelegateV2 implements Delegate {
   Pointer<TfLiteDelegate> _delegate;
   bool _deleted = false;
@@ -71,11 +74,8 @@ class GpuDelegateV2 implements Delegate {
 }
 
 /// GPU delegate options for Android
-@Deprecated(
-  'Options for a deprecated delegate. Configure acceleration through '
-  'CompiledModel (accelerators / Precision) instead. '
-  'Planned for removal in flutter_litert 4.0.0.',
-)
+/// Options for a delegate that is not deprecated; see the delegate class for
+/// why, and prefer [PerformanceConfig] unless you need this level of control.
 class GpuDelegateOptionsV2 {
   Pointer<TfLiteGpuDelegateOptionsV2> _options;
   bool _deleted = false;

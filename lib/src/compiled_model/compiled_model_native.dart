@@ -25,6 +25,7 @@ import '../bindings/litert_ffi.dart';
 import '../bindings/litert_loader.dart';
 import '../util/async_lock.dart';
 import 'compiled_model_types.dart';
+import 'litert_status.dart';
 
 export 'compiled_model_types.dart';
 
@@ -113,11 +114,44 @@ class CompiledModel {
   /// Accelerators this model was compiled with.
   ///
   /// This is the set requested at creation that compilation succeeded with.
-  /// LiteRT has no public API to report per-op placement, so when the set
-  /// includes [Accelerator.cpu] as a fallback, individual ops may still run
-  /// on the CPU. Callers implementing their own GPU-to-CPU retry should use
-  /// this to surface which configuration actually compiled.
+  /// Compiling successfully is not the same as running on that hardware, so
+  /// use [isFullyAccelerated] to find out whether the accelerator actually
+  /// took the graph.
   Set<Accelerator> get accelerators => Set.unmodifiable(_accelerators);
+
+  /// Whether the **whole** graph runs on a selected hardware accelerator.
+  ///
+  /// True is a strong signal: every op was accepted, so nothing silently fell
+  /// back. Per LiteRT's contract it is true when any one selected accelerator
+  /// takes the entire model, so requesting `{gpu, npu}` and landing wholly on
+  /// the GPU still reports true.
+  ///
+  /// **False is ambiguous, and deliberately not a fallback detector.** It means
+  /// "not everything was accelerated", which covers both partial delegation and
+  /// none at all. Measured on macOS arm64, every model in the cat/dog/animal
+  /// pipelines reports false under `{gpu, cpu}`, including ones where the GPU
+  /// demonstrably did run: these graphs get partially delegated (a handful of
+  /// ops to the GPU, the rest to the CPU), which is enough to make this false
+  /// while the GPU is genuinely active.
+  ///
+  /// So do not use this to decide whether acceleration happened. To detect a
+  /// silent CPU fallback, compare output against a bare-CPU reference and look
+  /// for a *nonzero* deviation, which is what [verifyCompiledModel] does:
+  /// bit-identical output means the accelerator contributed nothing.
+  ///
+  /// Reports false rather than throwing when the runtime cannot answer, so a
+  /// diagnostic call never takes down a working model.
+  bool get isFullyAccelerated {
+    _ensureOpen();
+    final out = calloc<Uint8>();
+    try {
+      final status = _rt.isFullyAccelerated(_compiledModel, out);
+      if (status != _kLiteRtStatusOk) return false;
+      return out.value != 0;
+    } finally {
+      calloc.free(out);
+    }
+  }
 
   /// Creates a compiled model from a model file.
   static CompiledModel fromFile(
@@ -580,7 +614,7 @@ class CompiledModel {
         // happy path stays allocation-free.
         throw StateError(
           'LiteRtLockTensorBuffer $kind[$index] failed with '
-          'LiteRtStatus=$lockStatus '
+          'LiteRtStatus=${describeLiteRtStatus(lockStatus)} '
           '(byteSize=$byteSize, lockMode=$lockMode, '
           'tensorBufferMode=${_tensorBufferMode.name}, '
           'accelerators={${_accelerators.map((a) => a.name).join(', ')}}).',
@@ -773,7 +807,9 @@ final class _AsyncDispatcher {
           Pointer<Pointer<Void>>.fromAddress(args[5] as int),
         );
         if (status != _kLiteRtStatusOk) {
-          error = 'LiteRtRunCompiledModel failed with LiteRtStatus=$status.';
+          error =
+              'LiteRtRunCompiledModel failed with LiteRtStatus='
+              '${describeLiteRtStatus(status)}.';
         }
       } catch (e) {
         error = 'CompiledModel async dispatch failed: $e';
@@ -1353,7 +1389,9 @@ void _checkLiteRtEnvOptionValueOffset() {
 
 void _check(String operation, int status) {
   if (status != _kLiteRtStatusOk) {
-    throw StateError('$operation failed with LiteRtStatus=$status.');
+    throw StateError(
+      '$operation failed with LiteRtStatus=${describeLiteRtStatus(status)}.',
+    );
   }
 }
 
@@ -1363,7 +1401,8 @@ void _check(String operation, int status) {
 void _checkAt(int status, String operation, String kind, int index) {
   if (status != _kLiteRtStatusOk) {
     throw StateError(
-      '$operation $kind[$index] failed with LiteRtStatus=$status.',
+      '$operation $kind[$index] failed with '
+      'LiteRtStatus=${describeLiteRtStatus(status)}.',
     );
   }
 }

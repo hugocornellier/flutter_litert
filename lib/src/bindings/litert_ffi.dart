@@ -311,6 +311,14 @@ final class LiteRtBindings {
               Pointer<Pointer<Void>>,
             )
           >('LiteRtRunCompiledModel'),
+      // Bound unconditionally: verified present in both the shipped macOS
+      // dylib and the shipped Linux .so. Unlike LiteRtGetStatusString, which
+      // is absent on Linux, this needs no optional lookup.
+      isFullyAccelerated = dylib
+          .lookupFunction<
+            Int32 Function(Pointer<Void>, Pointer<Uint8>),
+            int Function(Pointer<Void>, Pointer<Uint8>)
+          >('LiteRtCompiledModelIsFullyAccelerated'),
       runCompiledModelAsync = dylib
           .lookupFunction<
             Int32 Function(
@@ -464,6 +472,11 @@ final class LiteRtBindings {
     Pointer<Pointer<Void>>,
   )
   runCompiledModel;
+
+  /// `LiteRtCompiledModelIsFullyAccelerated`: writes 1 to the out-param when
+  /// every op went to a selected hardware accelerator.
+  final int Function(Pointer<Void>, Pointer<Uint8>) isFullyAccelerated;
+
   final int Function(
     Pointer<Void>,
     int,

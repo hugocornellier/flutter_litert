@@ -1,8 +1,15 @@
-// This factory bridges the legacy Interpreter delegate path to the platform
-// GPU/Metal/CoreML delegates, which are deprecated in favour of CompiledModel
-// (LiteRT Next). The references below are intentional until those delegates are
-// removed in 4.0.0.
-// ignore_for_file: deprecated_member_use_from_same_package
+// This factory is the supported way to get delegate-backed Interpreter
+// inference: it selects the platform GPU/Metal/CoreML delegate and falls back
+// when one declines a model.
+//
+// Those delegates used to be deprecated in favour of CompiledModel, and this
+// file suppressed the resulting warning. That was untenable in both directions.
+// The public PerformanceConfig.gpu() / .coreml() are built on them and were
+// never deprecated, so the advertised 4.0.0 removal would have broken supported
+// API with no notice. And CompiledModel cannot yet stand in, because it
+// miscomputes models whose output tensor ends up dynamic (see
+// doc/delegate_verification.md). The deprecations were dropped in 3.7.0, so the
+// suppression went with them.
 import 'dart:io';
 import 'dart:math' as math;
 

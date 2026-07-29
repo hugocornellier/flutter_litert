@@ -390,6 +390,17 @@ class CompiledModel {
   /// WebGPU compilation failed and the WASM fallback was used.
   Set<Accelerator> get accelerators => _accelerators;
 
+  /// Whether the **whole** graph runs on the selected accelerator.
+  ///
+  /// False is ambiguous: it covers both partial delegation and no acceleration
+  /// at all, so this is not a way to tell whether acceleration happened. See
+  /// the native implementation for the reasoning and the alternative.
+  ///
+  /// Reports true when the runtime does not expose the property, matching how
+  /// [accelerators] only adds a CPU entry when partial delegation is
+  /// affirmatively reported.
+  bool get isFullyAccelerated => _isFullyAccelerated(_model);
+
   /// Number of input tensors for the default signature.
   int get inputCount => _inputs.length;
 

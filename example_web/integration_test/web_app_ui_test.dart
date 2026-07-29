@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_litert/flutter_litert.dart' show Precision;
+import 'package:flutter_litert/src/compiled_model/compiled_model_web.dart'
+    as cm_web;
 import 'package:flutter_litert_example_web/main.dart' as app;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -29,6 +31,24 @@ void main() {
   // Every engine switch recompiles a model; the first compile in the session
   // also fetches the runtime and its WASM binary from a CDN.
   const timeout = Timeout(Duration(minutes: 10));
+
+  // On a runner with no WebGPU, a `{gpu, cpu}` compile cannot succeed, so it
+  // always burns the whole compile watchdog before falling back to WASM. At its
+  // 60s default that is dead time sitting on the critical path of an engine
+  // switch, ahead of a fresh WASM compile and ~200ms-per-pass inference, all of
+  // which has to fit inside pumpUntil's 2-minute budget. It usually does, which
+  // is why this suite passes most of the time and then fails on a loaded runner
+  // with `timedOutWaitingFor: a detection result`.
+  //
+  // So shrink it, but only where it can do nothing except fire. Where a real GPU
+  // exists the compile can legitimately take a while, and cutting the watchdog
+  // there would turn a slow success into a bogus WASM fallback and break the
+  // hasWebGpu() branches below.
+  setUpAll(() async {
+    if (!await hasWebGpu()) {
+      cm_web.CompiledModel.debugGpuCompileWatchdog = const Duration(seconds: 5);
+    }
+  });
 
   // Matches the idle status line, e.g. 'WASM · 48213µs · 4 detections'.
   final statusRe = RegExp(

@@ -1,3 +1,59 @@
+## 3.7.0
+
+Fixes a 3x macOS CPU slowdown, adds a way to detect an upstream LiteRT defect
+that returns wrong answers silently, and fixes two resource bugs. Additive: no
+existing symbol changes signature.
+
+**Heads-up for bit-exact tests.** The bundled macOS arm64 `libtensorflowlite_c`
+is now a bazel build rather than a CMake one, which changes float32 output in the
+last few ULPs because ruy multithreading is finally active and reductions
+accumulate in a different order. Measured on the bundled face-detection model:
+87% of elements differ, by at most 3.8e-05 against an output range of 181.7, i.e.
+0.000021%. Tolerance-based comparisons are unaffected; a byte-level golden pinned
+on macOS arm64 will need regenerating.
+
+* **macOS CPU inference is up to 3x faster.** The previous CMake-built dylib left
+  ruy effectively single-threaded, so every ruy-backed builtin op ran on one core.
+  `TRANSPOSE_CONV` has no `kMultithreadOptimized` variant and parallelises only
+  through ruy's gemm, so deconv-heavy models paid the full cost: a 384px landmark
+  model went from 83.7ms to 26.8ms, now matching iOS exactly. `fully_connected`
+  and `batch_matmul` gain similarly. Intel Macs keep their existing CMake slice
+  and are unchanged. See `doc/macos_transpose_conv_gap.md`.
+* **New `verifyCompiledModel(bytes, compiled)`** checks a `CompiledModel` against
+  a bare-CPU `Interpreter` and reports the deviation, returning
+  `BackendVerification`. LiteRT Next can return `kLiteRtStatusOk` while producing
+  output that is wrong, or never written at all, and neither is visible from a
+  status code or from timing. Run it once at init before trusting a
+  `CompiledModel`. It reports rather than throwing or swapping backends, so the
+  policy stays with the caller; default tolerance is 1% of the output range,
+  against measured separation of 0.068% (healthy) versus 42%+ (corrupt). Cost is
+  one Interpreter build plus one inference, 4-56ms depending on the model.
+* **New `CompiledModel.isFullyAccelerated`** reports whether the whole graph ran
+  on a selected accelerator. Note that `false` is ambiguous: partially delegated
+  graphs report `false` even when the accelerator genuinely ran, so this is not a
+  way to detect a silent CPU fallback. Use `verifyCompiledModel` for that.
+* **Fixed: `InterpreterPool.initialize` is now all-or-nothing.** A failure part
+  way through left the interpreters it had already built alive, and because the
+  dispose-first branch is keyed on `isInitialized`, which a failed call never
+  sets, retrying accumulated them: a pool of 3 could end up holding 4, the extra
+  one live with an XNNPACK threadpool but never used.
+* **Fixed: `CoreMlDelegate` leaked its options struct** when constructed without
+  explicit `options`. Caller-supplied options are still left to the caller.
+* `LiteRtStatus` values in error messages now carry their name, so
+  `LiteRtStatus=3` reads `LiteRtStatus=3 (kLiteRtStatusErrorRuntimeFailure)`.
+* **Un-deprecated the GPU, Metal, and CoreML Interpreter delegates.** 3.0.0
+  deprecated them in favour of `CompiledModel` and announced removal in 4.0.0;
+  that is reversed, and no removal is scheduled. Two reasons. `PerformanceConfig.gpu()`
+  and `.coreml()` are built on these classes and were never deprecated, so the
+  removal would have broken supported API with no notice (`interpreter_factory.dart`
+  was suppressing its own deprecation warning to keep compiling). And
+  `CompiledModel` cannot replace them yet: it reports success while leaving the
+  output buffer unwritten for models whose output tensor ends up dynamic, which
+  covers heatmap models with a deconvolution head. A deprecation that cannot be
+  acted on, pointing at a backend that returns wrong numbers, is worse than none.
+  Prefer `PerformanceConfig` over constructing delegates directly, and gate any
+  `CompiledModel` adoption behind `verifyCompiledModel`.
+
 ## 3.6.0
 
 Adds shared utilities that detector packages were each re-deriving locally.

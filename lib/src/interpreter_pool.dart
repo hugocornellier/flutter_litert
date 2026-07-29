@@ -68,6 +68,13 @@ class InterpreterPool {
   /// If already initialized, disposes all resources first.
   /// [IsolateInterpreter] is created automatically when no delegate is used,
   /// except on macOS where shared-interpreter isolate execution is disabled.
+  ///
+  /// All-or-nothing: if any slot fails, every interpreter, isolate and delegate
+  /// already built by this call is released before the error propagates, so a
+  /// failed [initialize] leaves the pool as empty as it started. Without that,
+  /// retrying (the natural response to a transient failure) would accumulate
+  /// the earlier attempt's interpreters, because the dispose-first branch above
+  /// is keyed on [_isInitialized], which a failed call never sets.
   Future<void> initialize(
     InterpreterCreator factory, {
     PerformanceConfig? performanceConfig,
@@ -77,20 +84,30 @@ class InterpreterPool {
 
     final slots = <(Interpreter, IsolateInterpreter?)>[];
 
-    for (int i = 0; i < poolSize; i++) {
-      final (options, delegate) = InterpreterFactory.create(performanceConfig);
-      if (delegate != null) _delegates.add(delegate);
+    try {
+      for (int i = 0; i < poolSize; i++) {
+        final (options, delegate) = InterpreterFactory.create(
+          performanceConfig,
+        );
+        if (delegate != null) _delegates.add(delegate);
 
-      final interpreter = await factory(options, delegate);
-      final isolate = await InterpreterFactory.createIsolateIfNeeded(
-        interpreter,
-        delegate,
-        useIsolateInterpreter: useIsolateInterpreter,
-      );
+        final interpreter = await factory(options, delegate);
+        final isolate = await InterpreterFactory.createIsolateIfNeeded(
+          interpreter,
+          delegate,
+          useIsolateInterpreter: useIsolateInterpreter,
+        );
 
-      _interpreters.add(interpreter);
-      _isolates.add(isolate);
-      slots.add((interpreter, isolate));
+        _interpreters.add(interpreter);
+        _isolates.add(isolate);
+        slots.add((interpreter, isolate));
+      }
+    } catch (_) {
+      // dispose() is guard-free and clears every list, so it correctly releases
+      // a partially built pool, including the failing slot's delegate (added
+      // before its interpreter was created).
+      await dispose();
+      rethrow;
     }
 
     _pool = RoundRobinPool(slots);

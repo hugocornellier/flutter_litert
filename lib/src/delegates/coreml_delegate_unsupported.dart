@@ -15,15 +15,12 @@
  */
 
 /// CoreMl Delegate (unsupported platform)
-@Deprecated(
-  'Manual hardware-acceleration delegates are superseded by LiteRT Next. Use '
-  'CompiledModel.fromFile / CompiledModel.fromBuffer with '
-  'accelerators: {Accelerator.npu, Accelerator.gpu, Accelerator.cpu}, or '
-  'CompiledModel.fromBufferWithGpuFallback. The Interpreter API itself remains '
-  'supported for CPU inference. '
-  'See https://developers.google.com/edge/litert/next/get_started; planned '
-  'for removal in flutter_litert 4.0.0.',
-)
+/// Prefer [PerformanceConfig] over constructing this directly.
+///
+/// Not deprecated in favour of `CompiledModel`: as of flutter_litert 3.7.0
+/// LiteRT Next miscomputes models whose output tensor ends up dynamic, so
+/// delegate-backed `Interpreter` inference remains the correct choice for them.
+/// See doc/delegate_verification.md.
 class CoreMlDelegate {
   CoreMlDelegate({CoreMlDelegateOptions? options}) {
     throw UnsupportedError('CoreMlDelegate is not supported on this platform');
@@ -35,11 +32,12 @@ class CoreMlDelegate {
 }
 
 /// CoreMlDelegate Options (unsupported platform)
-@Deprecated(
-  'Options for a deprecated delegate. Configure acceleration through '
-  'CompiledModel (accelerators / Precision) instead. '
-  'Planned for removal in flutter_litert 4.0.0.',
-)
+/// Prefer [PerformanceConfig] over constructing this directly.
+///
+/// Not deprecated in favour of `CompiledModel`: as of flutter_litert 3.7.0
+/// LiteRT Next miscomputes models whose output tensor ends up dynamic, so
+/// delegate-backed `Interpreter` inference remains the correct choice for them.
+/// See doc/delegate_verification.md.
 class CoreMlDelegateOptions {
   CoreMlDelegateOptions({
     int enabledDevices = 0,

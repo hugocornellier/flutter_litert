@@ -5,6 +5,7 @@ export 'native/isolate_interpreter.dart';
 export 'native/signature_runner.dart';
 export 'native/tensor.dart';
 export 'native/version.dart';
+export 'native/backend_verification.dart';
 export 'native/init.dart';
 export 'delegates/xnnpack_delegate_native.dart';
 export 'delegates/gpu_delegate_native.dart';
