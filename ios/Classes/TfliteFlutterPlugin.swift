@@ -11,6 +11,9 @@ public class FlutterLitertPlugin: NSObject, FlutterPlugin {
     // Keep the CompiledModel Metal-accelerator registration shim linked; the
     // LiteRT runtime finds it via dlsym(RTLD_DEFAULT) at environment setup.
     FlutterLitertRetainLiteRtGpuShim()
+    // Keep the explicit CompiledModel Core ML NPU bridge and its diagnostic
+    // entry point visible to Dart FFI.
+    FlutterLitertRetainLiteRtCoreMlNpuShim()
 
     let channel = FlutterMethodChannel(name: "flutter_litert", binaryMessenger: registrar.messenger())
     let instance = FlutterLitertPlugin()

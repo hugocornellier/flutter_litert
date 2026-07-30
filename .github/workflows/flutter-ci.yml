@@ -452,6 +452,11 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Stage patched Core ML framework for SwiftPM tests
+        run: |
+          ./scripts/use_local_coreml_xcframework.sh \
+            "$GITHUB_WORKSPACE/ios/TensorFlowLiteCCoreML.xcframework"
+
       - name: Boot iOS simulator
         run: |
           UDID=$(xcrun simctl list devices available --json | python3 -c "
@@ -535,5 +540,6 @@ jobs:
           }
 
           run_ios_test integration_test/compiled_model_test.dart || exit $?
+          run_ios_test integration_test/ios_compiled_model_npu_test.dart || exit $?
           run_ios_test integration_test/interpreter_delegate_fallback_test.dart || exit $?
           run_ios_test integration_test/interpreter_coexistence_test.dart || exit $?

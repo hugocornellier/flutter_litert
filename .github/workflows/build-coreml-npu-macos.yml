@@ -1,0 +1,110 @@
+name: Build LiteRT Core ML NPU accelerator (macOS)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 300
+    env:
+      LITERT_VERSION: v2.1.5
+      BAZEL_VERSION: 7.4.1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          echo "Before cleanup:"
+          df -h /
+          sudo rm -rf /usr/local/share/powershell /usr/local/.ghcup \
+            /usr/local/lib/android /usr/local/share/chromium 2>/dev/null || true
+          echo "After cleanup:"
+          df -h /
+
+      - name: Install Bazelisk
+        run: brew install bazelisk
+
+      - name: Clone pinned LiteRT source
+        run: |
+          git clone --depth 1 --branch "$LITERT_VERSION" \
+            https://github.com/google-ai-edge/LiteRT.git "$RUNNER_TEMP/litert-src"
+          test "$(git -C "$RUNNER_TEMP/litert-src" rev-parse HEAD)" = \
+            "9d26e89d88ef8785b6a1e54ec41ac8add215a125"
+
+      - name: Apply macOS NPU delegate patch
+        run: |
+          cd "$RUNNER_TEMP/litert-src"
+          git apply --check "$GITHUB_WORKSPACE/patches/litert_coreml_npu_macos.patch"
+          git apply --verbose "$GITHUB_WORKSPACE/patches/litert_coreml_npu_macos.patch"
+          grep -n "MLComputeUnitsCPUAndNeuralEngine" \
+            tflite/delegates/coreml/coreml_executor.mm
+
+      - name: Build dedicated Core ML delegate
+        run: |
+          cd "$RUNNER_TEMP/litert-src"
+          USE_BAZEL_VERSION="$BAZEL_VERSION" bazelisk build -c opt \
+            --copt=-Os \
+            --copt=-fvisibility=default \
+            --strip=always \
+            --config=macos \
+            --cpu=darwin_arm64 \
+            --local_ram_resources=HOST_RAM*0.7 \
+            --jobs=4 \
+            //tflite/delegates/coreml:tensorflow_lite_coreml_npu_dylib
+
+      - name: Build LiteRT accelerator registration bridge
+        run: |
+          mkdir -p "$RUNNER_TEMP/coreml-npu"
+          xcrun clang \
+            -std=c11 \
+            -Wall -Wextra -Werror \
+            -fvisibility=hidden \
+            -dynamiclib \
+            -arch arm64 \
+            -mmacosx-version-min=13.0 \
+            "$GITHUB_WORKSPACE/macos/coreml_npu/litert_coreml_npu_accelerator.c" \
+            -install_name @rpath/libLiteRtCoreMlNpuAccelerator.dylib \
+            -o "$RUNNER_TEMP/coreml-npu/libLiteRtCoreMlNpuAccelerator.dylib"
+
+      - name: Package and verify dylibs
+        run: |
+          cp \
+            "$RUNNER_TEMP/litert-src/bazel-bin/tflite/delegates/coreml/tensorflow_lite_coreml_npu_dylib.dylib" \
+            "$RUNNER_TEMP/coreml-npu/libtensorflowlite_coreml_npu-mac.dylib"
+          install_name_tool \
+            -id @rpath/libtensorflowlite_coreml_npu-mac.dylib \
+            "$RUNNER_TEMP/coreml-npu/libtensorflowlite_coreml_npu-mac.dylib"
+          codesign --force --sign - \
+            "$RUNNER_TEMP/coreml-npu/libLiteRtCoreMlNpuAccelerator.dylib"
+          codesign --force --sign - \
+            "$RUNNER_TEMP/coreml-npu/libtensorflowlite_coreml_npu-mac.dylib"
+
+          for dylib in "$RUNNER_TEMP/coreml-npu/"*.dylib; do
+            file "$dylib"
+            lipo -verify_arch arm64 "$dylib"
+            codesign --verify --strict "$dylib"
+          done
+          nm -gU \
+            "$RUNNER_TEMP/coreml-npu/libLiteRtCoreMlNpuAccelerator.dylib" \
+            | grep FlutterLiteRtRegisterCoreMlNpuAccelerator
+          nm -gU \
+            "$RUNNER_TEMP/coreml-npu/libLiteRtCoreMlNpuAccelerator.dylib" \
+            | grep FlutterLiteRtCoreMlNpuGetLastDelegatedNodeCount
+          nm -gU \
+            "$RUNNER_TEMP/coreml-npu/libtensorflowlite_coreml_npu-mac.dylib" \
+            | grep TfLiteCoreMlDelegateCreate
+          nm -gU \
+            "$RUNNER_TEMP/coreml-npu/libtensorflowlite_coreml_npu-mac.dylib" \
+            | grep FlutterTfLiteCoreMlNpuGetLastDelegatedNodeCount
+
+      - name: Upload accelerator pair
+        uses: actions/upload-artifact@v4
+        with:
+          name: litert-coreml-npu-macos-arm64
+          path: ${{ runner.temp }}/coreml-npu/*.dylib
+          retention-days: 30

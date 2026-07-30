@@ -20,20 +20,35 @@ DynamicLibrary? probeLibraryPaths({
   String? envVar,
   required List<String> paths,
   required List<String> attemptedPaths,
+}) => probeLibraryPathsWithPath(
+  envVar: envVar,
+  paths: paths,
+  attemptedPaths: attemptedPaths,
+)?.library;
+
+/// Like [probeLibraryPaths], but also returns the exact candidate passed to
+/// [DynamicLibrary.open].
+///
+/// This is useful for integration tests that must prove a production app loaded
+/// its bundled resource rather than a package-checkout fallback.
+({DynamicLibrary library, String path})? probeLibraryPathsWithPath({
+  String? envVar,
+  required List<String> paths,
+  required List<String> attemptedPaths,
 }) {
   if (envVar != null) {
     final envPath = Platform.environment[envVar];
     if (envPath != null && envPath.isNotEmpty) {
       attemptedPaths.add('$envVar: $envPath');
       try {
-        return DynamicLibrary.open(envPath);
+        return (library: DynamicLibrary.open(envPath), path: envPath);
       } catch (_) {}
     }
   }
   for (final path in paths) {
     attemptedPaths.add(path);
     try {
-      return DynamicLibrary.open(path);
+      return (library: DynamicLibrary.open(path), path: path);
     } catch (_) {}
   }
   return null;

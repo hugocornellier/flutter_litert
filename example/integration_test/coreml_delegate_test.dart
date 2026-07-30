@@ -18,12 +18,22 @@ void main() {
   }
 
   late File modelFile;
+  late File meanPoolingModelFile;
 
   setUpAll(() async {
     final data = await rootBundle.load('assets/simple_model.tflite');
+    final meanPoolingData = await rootBundle.load(
+      'assets/species_classifier_float16.tflite',
+    );
     final tmpDir = await Directory.systemTemp.createTemp('litert_coreml_test_');
     modelFile = File('${tmpDir.path}/simple_model.tflite');
     await modelFile.writeAsBytes(data.buffer.asUint8List());
+    meanPoolingModelFile = File(
+      '${tmpDir.path}/species_classifier_float16.tflite',
+    );
+    await meanPoolingModelFile.writeAsBytes(
+      meanPoolingData.buffer.asUint8List(),
+    );
   });
 
   group('CoreML Delegate (macOS)', () {
@@ -93,6 +103,37 @@ void main() {
       delegate.delete();
       opts.delete();
     });
+
+    if (Platform.isMacOS) {
+      testWidgets('global MEAN model applies without falling back to CPU', (
+        tester,
+      ) async {
+        // This model reaches PoolingLayerBuilder's global-MEAN path. A
+        // stock TensorFlow 2.20 CoreML delegate leaves its required padding
+        // oneof unset, fails Core ML compilation, and silently retries on
+        // CPU. The packaged dylib carries coreml_mean_padding.patch.
+        final delegateOptions = CoreMlDelegateOptions(enabledDevices: 1);
+        final delegate = CoreMlDelegate(options: delegateOptions);
+        final options = InterpreterOptions()..addDelegate(delegate);
+        final interpreter = Interpreter.fromFile(
+          meanPoolingModelFile,
+          options: options,
+        );
+
+        expect(
+          interpreter.hasActiveDelegate,
+          isTrue,
+          reason:
+              'The global-MEAN CoreML model did not compile; the packaged '
+              'delegate may be missing coreml_mean_padding.patch',
+        );
+
+        interpreter.close();
+        delegate.delete();
+        options.delete();
+        delegateOptions.delete();
+      });
+    }
 
     testWidgets('multiple sequential inferences are consistent', (
       tester,

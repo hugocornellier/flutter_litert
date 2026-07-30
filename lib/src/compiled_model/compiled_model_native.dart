@@ -16,6 +16,7 @@
 
 import 'dart:async';
 import 'dart:ffi';
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
@@ -121,10 +122,10 @@ class CompiledModel {
 
   /// Whether the **whole** graph runs on a selected hardware accelerator.
   ///
-  /// True is a strong signal: every op was accepted, so nothing silently fell
-  /// back. Per LiteRT's contract it is true when any one selected accelerator
-  /// takes the entire model, so requesting `{gpu, npu}` and landing wholly on
-  /// the GPU still reports true.
+  /// True is a strong signal that the selected delegates together accepted the
+  /// entire model. It does not identify which delegate ran which operations.
+  /// In Apple mixed `{npu, cpu}` mode, for example, Core ML and XNNPACK can
+  /// together make this true.
   ///
   /// **False is ambiguous, and deliberately not a fallback detector.** It means
   /// "not everything was accelerated", which covers both partial delegation and
@@ -279,19 +280,58 @@ class CompiledModel {
     );
   }
 
-  /// Process-wide (per-isolate) shared LiteRT environment.
+  /// Process-wide (per-isolate) shared LiteRT environments.
   ///
   /// Creating a LiteRT environment spins up the full GPU/WebGPU stack (adapter
   /// enumeration, device + context creation, kernel cache), a cost of hundreds
   /// of milliseconds. Previously every [CompiledModel] created its own, so an
   /// app loading N models paid that cost N times. LiteRT environments are
-  /// designed to be shared across many compiled models, so we create one lazily
-  /// per isolate and reuse it. It is intentionally never destroyed: it lives for
-  /// the lifetime of the isolate (a long-lived GPU context singleton).
+  /// designed to be shared across many compiled models, so we create them
+  /// lazily per isolate and reuse them. The normal environment uses LiteRT's
+  /// default registrations; the Apple NPU environment has deterministic
+  /// Core ML-before-XNNPACK ordering. They intentionally live for the isolate's
+  /// lifetime.
   static Pointer<Void>? _sharedEnvironment;
+  static Pointer<Void>? _sharedAppleNpuEnvironment;
+  static bool _appleCoreMlNpuRegistered = false;
 
-  static Pointer<Void> _sharedEnvironmentOf(LiteRtBindings rt) =>
-      _sharedEnvironment ??= _createEnvironment(rt);
+  static Pointer<Void> _sharedEnvironmentOf(
+    LiteRtBindings rt, {
+    required Set<Accelerator> accelerators,
+  }) {
+    final isAppleNpu =
+        (Platform.isIOS || Platform.isMacOS) &&
+        accelerators.contains(Accelerator.npu);
+    if (!isAppleNpu) {
+      return _sharedEnvironment ??= _createEnvironment(rt);
+    }
+    if (accelerators.contains(Accelerator.gpu)) {
+      throw UnsupportedError(
+        'On Apple platforms, Accelerator.npu cannot be combined with '
+        'Accelerator.gpu. '
+        'Use {Accelerator.npu} for strict Neural Engine placement or '
+        '{Accelerator.npu, Accelerator.cpu} to allow CPU fallback.',
+      );
+    }
+
+    // LiteRT applies delegates in registration order. Its default environment
+    // auto-registers XNNPACK before an accelerator added after creation, so a
+    // mixed {npu, cpu} request would let XNNPACK consume the graph before
+    // Core ML sees it. This dedicated environment disables auto-registration,
+    // registers Core ML first, then registers XNNPACK as the CPU fallback.
+    final environment = _sharedAppleNpuEnvironment ??= _createEnvironment(
+      rt,
+      autoRegisterAccelerators: 0,
+    );
+    if (!_appleCoreMlNpuRegistered) {
+      _check(
+        'FlutterLiteRtRegisterCoreMlNpuAccelerator',
+        registerAppleCoreMlNpuAccelerator(environment),
+      );
+      _appleCoreMlNpuRegistered = true;
+    }
+    return environment;
+  }
 
   static CompiledModel _fromSource({
     required Set<Accelerator> accelerators,
@@ -318,7 +358,7 @@ class CompiledModel {
     final hostMemoryAllocations = <_HostMemoryAllocation>[];
 
     try {
-      environment = _sharedEnvironmentOf(rt);
+      environment = _sharedEnvironmentOf(rt, accelerators: accelerators);
       options = _createOptions(rt, acceleratorMask);
       if (accelerators.contains(Accelerator.gpu) &&
           precision == Precision.fp32) {
@@ -328,6 +368,23 @@ class CompiledModel {
       model = source.model;
       modelBuffer = source.modelBuffer;
       compiledModel = _createCompiledModel(rt, environment, model, options);
+      if ((Platform.isIOS || Platform.isMacOS) &&
+          accelerators.contains(Accelerator.npu)) {
+        final delegatedNodeCount = appleCoreMlNpuLastDelegatedNodeCount();
+        if (delegatedNodeCount < 0) {
+          throw StateError(
+            'The Apple Core ML NPU delegate did not provide delegation '
+            'diagnostics.',
+          );
+        }
+        if (delegatedNodeCount == 0) {
+          throw StateError(
+            'The Apple Core ML NPU accelerator delegated zero model nodes. '
+            'The CPU-only result was rejected instead of silently falling '
+            'back; retry without Accelerator.npu.',
+          );
+        }
+      }
 
       final signature = _getModelSignature(rt, model);
       final inputCount = _getSignatureInputCount(rt, signature);
@@ -844,27 +901,43 @@ final class _HostMemoryAllocation {
   void free() => calloc.free(raw);
 }
 
-Pointer<Void> _createEnvironment(LiteRtBindings rt) {
+Pointer<Void> _createEnvironment(
+  LiteRtBindings rt, {
+  int? autoRegisterAccelerators,
+}) {
   final runtimeDir = litertRuntimeDir;
   final out = calloc<Pointer<Void>>();
   Pointer<LiteRtEnvOption>? envOptions;
   Pointer<Utf8>? runtimeDirPtr;
   try {
-    if (runtimeDir == null) {
+    final optionCount =
+        (runtimeDir == null ? 0 : 1) +
+        (autoRegisterAccelerators == null ? 0 : 1);
+    if (optionCount == 0) {
       _check(
         'LiteRtCreateEnvironment',
         rt.createEnvironment(0, nullptr.cast<LiteRtEnvOption>(), out),
       );
     } else {
-      envOptions = calloc<LiteRtEnvOption>();
-      runtimeDirPtr = runtimeDir.toNativeUtf8();
-      envOptions.ref
-        ..tag = kLiteRtEnvOptionTagRuntimeLibraryDir
-        ..value.type = kLiteRtAnyTypeString
-        ..value.value.strValue = runtimeDirPtr;
+      envOptions = calloc<LiteRtEnvOption>(optionCount);
+      var optionIndex = 0;
+      if (runtimeDir != null) {
+        runtimeDirPtr = runtimeDir.toNativeUtf8();
+        envOptions[optionIndex]
+          ..tag = kLiteRtEnvOptionTagRuntimeLibraryDir
+          ..value.type = kLiteRtAnyTypeString
+          ..value.value.strValue = runtimeDirPtr;
+        optionIndex++;
+      }
+      if (autoRegisterAccelerators != null) {
+        envOptions[optionIndex]
+          ..tag = kLiteRtEnvOptionTagAutoRegisterAccelerators
+          ..value.type = kLiteRtAnyTypeInt
+          ..value.value.intValue = autoRegisterAccelerators;
+      }
       _check(
         'LiteRtCreateEnvironment',
-        rt.createEnvironment(1, envOptions, out),
+        rt.createEnvironment(optionCount, envOptions, out),
       );
     }
     return out.value;
@@ -1280,12 +1353,12 @@ void _releaseNative(
   if (options != null && options != nullptr) {
     rt.destroyOptions(options);
   }
-  // The environment is a per-isolate shared singleton
-  // (CompiledModel._sharedEnvironment) reused across every CompiledModel, so it
-  // is intentionally never destroyed here; it lives for the isolate's lifetime.
+  // Environments are per-isolate shared singletons reused across CompiledModels,
+  // so they intentionally live for the isolate's lifetime.
   if (environment != null &&
       environment != nullptr &&
-      environment != CompiledModel._sharedEnvironment) {
+      environment != CompiledModel._sharedEnvironment &&
+      environment != CompiledModel._sharedAppleNpuEnvironment) {
     rt.destroyEnvironment(environment);
   }
   if (gpuOptionsIdentifier != null && gpuOptionsIdentifier != nullptr) {

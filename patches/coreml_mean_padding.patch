@@ -1,0 +1,16 @@
+--- a/tensorflow/lite/delegates/coreml/builders/pooling_layer_builder.cc
++++ b/tensorflow/lite/delegates/coreml/builders/pooling_layer_builder.cc
+@@ -59,6 +59,13 @@
+     pooling_params->set_type(
+         CoreML::Specification::PoolingLayerParams::AVERAGE);
+     pooling_params->set_globalpooling(true);
++    // The PaddingType oneof must be set even for global pooling. This branch
++    // returns before the padding block below, so without this the field is left
++    // unset and Core ML's validator rejects the whole model at compile time with
++    // "Padding type for the pooling layer '...(MEAN)_N' is not set", which makes
++    // the delegate fail to initialize and silently fall back to CPU. Global
++    // pooling covers the entire spatial extent, so VALID is the correct choice.
++    pooling_params->mutable_valid();
+     return layer_.release();
+   }
+ 

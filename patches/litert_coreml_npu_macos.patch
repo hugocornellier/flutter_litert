@@ -1,0 +1,129 @@
+diff --git a/tflite/delegates/coreml/BUILD b/tflite/delegates/coreml/BUILD
+--- a/tflite/delegates/coreml/BUILD
++++ b/tflite/delegates/coreml/BUILD
+@@ -15,6 +15,7 @@
+ 
+ load("@rules_cc//cc:cc_library.bzl", "cc_library")
+ load("@rules_cc//cc:objc_library.bzl", "objc_library")
++load("@build_bazel_rules_apple//apple:macos.bzl", "macos_dylib")
+ load("//tflite:build_def.bzl", "CXX17_BAZEL_ONLY_COPTS")
+ 
+ package(
+@@ -93,3 +94,20 @@ objc_library(
+         "@FP16",
+     ],
+ )
++
++macos_dylib(
++    name = "tensorflow_lite_coreml_npu_dylib",
++    linkopts = [
++        "-all_load",
++        "-dead_strip",
++    ],
++    minimum_os_version = "13.0",
++    tags = [
++        "manual",
++        "nobuilder",
++        "notap",
++    ],
++    deps = [
++        ":coreml_delegate",
++    ],
++)
+diff --git a/tflite/delegates/coreml/builders/convolution_op_builder.cc b/tflite/delegates/coreml/builders/convolution_op_builder.cc
+--- a/tflite/delegates/coreml/builders/convolution_op_builder.cc
++++ b/tflite/delegates/coreml/builders/convolution_op_builder.cc
+@@ -181,7 +181,7 @@ void ConvolutionOpBuilder::TransposeKernelWeights() {
+   if (weights_->type == kTfLiteFloat32) {
+     auto* coreml_weights =
+         layer_->mutable_convolution()->mutable_weights()->mutable_floatvalue();
+-    coreml_weights->resize(NumElements(weights_), 0);
++    coreml_weights->Resize(NumElements(weights_), 0);
+ 
+     optimized_ops::Transpose<float>(params, tfl_shape, weights_->data.f,
+                                     coreml_shape,
+diff --git a/tflite/delegates/coreml/builders/pooling_layer_builder.cc b/tflite/delegates/coreml/builders/pooling_layer_builder.cc
+--- a/tflite/delegates/coreml/builders/pooling_layer_builder.cc
++++ b/tflite/delegates/coreml/builders/pooling_layer_builder.cc
+@@ -57,6 +57,11 @@ CoreML::Specification::NeuralNetworkLayer* PoolingLayerBuilder::Build() {
+     pooling_params->set_type(
+         CoreML::Specification::PoolingLayerParams::AVERAGE);
+     pooling_params->set_globalpooling(true);
++    // The PaddingType oneof must be set even for global pooling. This branch
++    // returns before the padding block below, so leaving it unset makes Core
++    // ML reject the entire model. Global pooling covers the full spatial
++    // extent, so VALID is the correct padding.
++    pooling_params->mutable_valid();
+     return layer_.release();
+   }
+ 
+diff --git a/tflite/delegates/coreml/coreml_delegate.mm b/tflite/delegates/coreml/coreml_delegate.mm
+--- a/tflite/delegates/coreml/coreml_delegate.mm
++++ b/tflite/delegates/coreml/coreml_delegate.mm
+@@ -29,6 +29,10 @@
+ #include "tflite/kernels/kernel_util.h"
+ #include "tflite/minimal_logging.h"
+ 
++namespace {
++thread_local int g_flutter_litert_last_delegated_node_count = 0;
++}  // namespace
++
+ namespace tflite {
+ namespace {
+ constexpr int kMinNodesPerCoreMlDelegate = 2;
+@@ -264,6 +268,7 @@ TfLiteStatus DelegatePrepare(TfLiteContext* context, TfLiteDelegate* delegate) {
+                   "with %d partitions.\n",
+                   delegated_nodes.size(), partition_helper.num_total_nodes(),
+                   partition_helper.num_partitions());
++  g_flutter_litert_last_delegated_node_count += delegated_nodes.size();
+   return context->ReplaceNodeSubsetsWithDelegateKernels(
+       context, GetCoreMlKernelRegistration(), BuildTfLiteArray(delegated_nodes).get(), delegate);
+ }
+@@ -311,6 +316,7 @@ bool IsNeuralEngineAvailable() {
+ }  // namespace
+ 
+ TfLiteDelegate* TfLiteCoreMlDelegateCreate(const TfLiteCoreMlDelegateOptions* options) {
++  g_flutter_litert_last_delegated_node_count = 0;
+   if (@available(iOS 12.0, *)) {
+     if (options->enabled_devices == TfLiteCoreMlDelegateDevicesWithNeuralEngine &&
+         !IsNeuralEngineAvailable()) {
+@@ -328,3 +334,8 @@ bool IsNeuralEngineAvailable() {
+ }
+ 
+ void TfLiteCoreMlDelegateDelete(TfLiteDelegate* delegate) { delete delegate; }
++
++extern "C" __attribute__((visibility("default"))) int
++FlutterTfLiteCoreMlNpuGetLastDelegatedNodeCount(void) {
++  return g_flutter_litert_last_delegated_node_count;
++}
+diff --git a/tflite/delegates/coreml/coreml_executor.mm b/tflite/delegates/coreml/coreml_executor.mm
+--- a/tflite/delegates/coreml/coreml_executor.mm
++++ b/tflite/delegates/coreml/coreml_executor.mm
+@@ -16,6 +16,7 @@
+ 
+ #import <CoreML/CoreML.h>
+ #import <Foundation/Foundation.h>
++#import <TargetConditionals.h>
+ 
+ #include <fstream>
+ #include <iostream>
+@@ -208,7 +209,19 @@ - (bool)build:(NSURL*)modelUrl {
+ 
+   if (@available(iOS 12.0, *)) {
+     MLModelConfiguration* config = [MLModelConfiguration alloc];
++#if TARGET_OS_OSX
++    if (@available(macOS 13.0, *)) {
++      // This dedicated flutter_litert build backs Accelerator.npu. Exclude
++      // Metal so CoreML may use only the Neural Engine and CPU for operations
++      // that the Neural Engine cannot accept.
++      config.computeUnits = MLComputeUnitsCPUAndNeuralEngine;
++    } else {
++      NSLog(@"CoreML Neural Engine acceleration requires macOS 13.0 or newer.");
++      return NO;
++    }
++#else
+     config.computeUnits = MLComputeUnitsAll;
++#endif
+     _model = [MLModel modelWithContentsOfURL:compileUrl configuration:config error:&error];
+   } else {
+     _model = [MLModel modelWithContentsOfURL:compileUrl error:&error];

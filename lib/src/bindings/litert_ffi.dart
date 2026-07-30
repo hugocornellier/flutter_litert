@@ -21,8 +21,10 @@ import 'package:ffi/ffi.dart';
 
 import 'litert_loader.dart';
 
+const int kLiteRtAnyTypeInt = 2;
 const int kLiteRtAnyTypeString = 8;
 const int kLiteRtEnvOptionTagRuntimeLibraryDir = 22;
+const int kLiteRtEnvOptionTagAutoRegisterAccelerators = 24;
 
 /// LiteRtLayout:
 /// { uint rank:7; bool has_strides:1; int32 dims[8]; uint32 strides[8]; }

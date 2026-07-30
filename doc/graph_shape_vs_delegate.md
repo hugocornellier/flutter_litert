@@ -1,11 +1,19 @@
 # Graph shape vs delegate: XNNPACK's TRANSPOSE_CONV is the slow path
 
-Status: **both questions answered, plus a 5.25x GPU win with a two-line fix.**
-Finding 4 is the actionable one: `TRANSPOSE_CONV` v4 is the only thing keeping
-deconv-headed models off the GPU delegate, and lifting that gate takes the landmark
-model from 26.83 ms to **5.11 ms** at unchanged accuracy. A third claim (a CoreML
-stall needing a partition-bounding fix) was made and then **retracted** as a harness
-artifact; it is documented below so the same trap is not re-entered.
+Status: **five findings, two shipped patches, and one conclusion that reversed on
+contact with a real phone.**
+
+Read finding 5 first if you are short of time. Findings 1 to 4 are all macOS on an
+M4 Max, and on an iPhone 15 Pro the GPU delegate turns out to be worth about 1% rather
+than the 5x the Mac suggested. What survives as actionable is smaller and duller than
+the headline: **two delegates silently no-op on the shipped models, so iOS pays ~20% for
+nothing**, and both patches here fix correctness rather than buy speed.
+
+Two patches came out of this and both are verified: `patches/gpu_transpose_conv_v4.patch`
+(finding 4, vendored into the macOS GPU dylib) and `patches/coreml_mean_padding.patch`
+(finding 3, verified on macOS and on device). A third claim, a CoreML stall needing a
+partition-bounding fix, was made and then **retracted** as a harness artifact; it is
+documented below so the trap is not re-entered.
 
 Follows on from [`macos_transpose_conv_gap.md`](macos_transpose_conv_gap.md) (ruy
 multithreading fix) and
@@ -129,11 +137,10 @@ the graph fragments into GPU and CPU regions regardless.
 - **Switching iOS to a static export would buy nothing.** It converts a hard
   failure into a partial delegation at the same latency. Good news for the
   dependent packages: the current dynamic export is not leaving an iOS win unclaimed.
-- **The `TRANSPOSE_CONV` v3-vs-v4 gap is the real lead.** If the bundled
-  `libtensorflowlite_gpu-mac.dylib` is simply older than the converter that emits
-  v4, this is a build-alignment fix rather than a kernel-writing job, and it would
-  unlock GPU for every deconv-headed model. Worth checking against the same TF
-  2.20.0 source used for the bazel CPU dylib.
+- **The `TRANSPOSE_CONV` v3-vs-v4 gap turned out to be the real lead, and is now fixed.**
+  It was not a stale-dylib problem: v4 is precisely "this op carries a fused activation",
+  which Keras always produces by folding `Conv2DTranspose -> BatchNorm -> ReLU`. See
+  finding 4 for the patch and finding 5 for why it matters less than it appears.
 - A float32 export would isolate how much the `DEQUANTIZE` fragmentation costs, at
   2x the file size. Untested.
 
@@ -169,8 +176,21 @@ execution plan, and the model runs correctly on CPU. That is exactly why
 agree. `max_delegated_partitions` makes no difference: bounded and unbounded both
 fail in well under a second.
 
-The `MEAN` padding-type omission looks upstream, in the CoreML delegate's layer
-builder, and is worth reporting there. There is nothing to fix in this repo for it.
+**Fixed and verified.** `patches/coreml_mean_padding.patch` sets `mutable_valid()` before
+that early return, applied by `build-coreml-macos.yml` and `build-coreml-ios.yml`. On
+macOS the delegate goes from "interpreter creation failed" to engaged at 27.51 ms with
+NME_IOD 8.5660 against a CPU reference's 8.5664. On an iPhone 15 Pro it goes from
+deviation exactly 0.0, meaning attached and delegating nothing, to 9.5e-04, which is fp16
+rounding rather than corruption.
+
+It buys no speed: 47.89 ms on device against XNNPACK's 47.82 ms. What it removes is a
+**silent regression**, since before the fix selecting `PerformanceMode.coreml` cost
+57.92 ms because failing to compile drops the model to bare CPU without XNNPACK.
+
+7 of the 8 models shipped across dog_detection, cat_detection and animal_detection contain
+a `MEAN` op and were therefore affected. Only `superanimal_hrnet_w32` has none, which makes
+it a misleading model to smoke-test a Core ML delegate against. The omission itself is
+upstream in TFLite's layer builder and is worth reporting there.
 
 One cosmetic observation: `CoreMlDelegateOptions` defaults `coremlVersion` to 0,
 which is not a valid value, so every creation logs
@@ -284,6 +304,57 @@ already-published 3.7.0, so it is a reasonable stopgap. It lives at
   58.00 ms under XNNPACK against the shipped model's 26.83, for the reason in finding 1.
   So the model and the delegate choice have to move together; swapping the asset alone
   would be a 2x regression wherever auto-mode picks XNNPACK, which is macOS and Android.
+
+## Finding 5: on device, all three compute units tie, and two of them silently no-op
+
+Everything above is macOS on an M4 Max: 40 GPU cores. An iPhone 15 Pro has 6. Since
+`InterpreterFactory` auto-mode picks XNNPACK on macOS and the GPU delegate only on iOS, the
+Mac is the platform that matters least and was the only one measured.
+
+Measured on a physical iPhone 15 Pro, dog landmark model, median of 30 invocations after 5
+warmups, deviation against a no-delegate reference on the same fixed input:
+
+| variant | backend | median | dev vs CPU | verdict |
+|---|---|---|---|---|
+| dynamic (ships today) | none | 54.98 ms | -- | reference |
+| **dynamic (ships today)** | **xnnpack** | **47.82 ms** | 7.0e-06 | engaged |
+| dynamic (ships today) | gpu | 57.22 ms | **0.0** | NO-OP, bare CPU |
+| dynamic (ships today) | coreml | 57.92 ms | **0.0** | NO-OP, bare CPU |
+| static, v4 fused ReLU | gpu | 53.14 ms | 7.8e-07 | engaged |
+| static, v4 fused ReLU | coreml (patched) | 47.89 ms | 9.5e-04 | engaged |
+| static, ReLU unfused | gpu | **46.65 ms** | 3.5e-05 | engaged |
+| static, ReLU unfused | coreml (patched) | 56.29 ms | 8.9e-04 | engaged |
+
+Four things follow.
+
+1. **The GPU is worth ~1% on a phone.** Best CPU 47.82 ms, best GPU 46.65 ms. The same
+   graph does 5.11 ms on an M4 Max, so GPU time scales roughly with core count while the
+   CPU path does not.
+2. **XNNPACK 47.82, GPU 46.65, ANE 47.89.** Three unrelated compute units within 2%
+   strongly suggests this model is **memory-bandwidth bound** on an A17 Pro rather than
+   compute bound.
+3. **iOS already accepts `TRANSPOSE_CONV` v4.** `static_v4 + gpu` engages here where the
+   stock macOS delegate refuses it, so finding 4's patch is macOS-only in value.
+4. **Two silent no-ops are live in the shipped configuration.** Both the GPU and CoreML
+   delegates attach and delegate zero ops on the model as shipped, so the stage runs on
+   bare CPU *without* XNNPACK. Since auto-mode sends iOS to GPU, iOS is paying 57.22 ms
+   instead of 47.82, about 20% for nothing, matching the "17-23% latency, silently" figure
+   in [`delegate_verification.md`](delegate_verification.md).
+
+### Consequences for this library
+
+- **`_createAutoMode` sending iOS to the GPU delegate is a pessimisation for any model the
+  delegate declines.** It is strictly worse than XNNPACK there, because declining falls
+  back to bare CPU rather than to the next-best delegate. Worth considering whether
+  auto-mode should verify non-zero delegation and fall back to XNNPACK when it gets none.
+  `delegate_verification.md` already notes the detection mechanism is resolved for GPU.
+- **`PerformanceConfig`'s "XNNPACK (2-5x SIMD acceleration)" doc comment measured 1.18x**
+  on this model class.
+- Per-stage overrides now exist downstream (`landmarkPerformanceConfig` in dog_detection
+  and cat_detection, `posePerformanceConfig` in animal_detection) precisely because the
+  right delegate differs per model. `hrnet_w32` is 4.8x faster on the GPU delegate with
+  correct output, while `species_classifier` and both face localizers cannot create a GPU
+  interpreter at all, so one pipeline-wide mode cannot express what these pipelines need.
 
 ## What this changes about the shipped guidance
 

@@ -3,6 +3,7 @@ import UIKit
 import flutter_litert_custom_ops
 import flutter_litert_delegate_symbols
 import flutter_litert_gpu_shim
+import flutter_litert_npu_shim
 
 public class FlutterLitertPlugin: NSObject, FlutterPlugin {
   public static func register(with registrar: FlutterPluginRegistrar) {
@@ -11,6 +12,8 @@ public class FlutterLitertPlugin: NSObject, FlutterPlugin {
     // Keep the CompiledModel Metal-accelerator registration shim linked; the
     // LiteRT runtime resolves it only via dlsym(RTLD_DEFAULT).
     FlutterLitertRetainLiteRtGpuShim()
+    // Dart FFI resolves the explicit Core ML NPU bridge the same way.
+    FlutterLitertRetainLiteRtCoreMlNpuShim()
     let channel = FlutterMethodChannel(name: "flutter_litert", binaryMessenger: registrar.messenger())
     let instance = FlutterLitertPlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)

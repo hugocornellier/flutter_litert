@@ -80,6 +80,7 @@ let package = Package(
                 .target(name: "flutter_litert_delegate_symbols"),
                 .target(name: "flutter_litert_custom_ops"),
                 .target(name: "flutter_litert_gpu_shim"),
+                .target(name: "flutter_litert_npu_shim"),
                 .product(name: "FlutterFramework", package: "FlutterFramework"),
             ],
             path: "Sources/flutter_litert",
@@ -126,6 +127,15 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("CoreFoundation", .when(platforms: [.iOS])),
             ]
+        ),
+        // Registers flutter_litert's patched Core ML delegate as an explicit
+        // LiteRT NPU accelerator. The patched CoreML binary is optional at
+        // link time so an older cached binary target still builds and reports
+        // NPU unsupported instead of failing the whole package link.
+        .target(
+            name: "flutter_litert_npu_shim",
+            path: "Sources/flutter_litert_npu_shim",
+            publicHeadersPath: "include"
         )
     ]
 )

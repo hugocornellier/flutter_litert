@@ -1,0 +1,148 @@
+diff --git a/tensorflow/lite/delegates/coreml/coreml_delegate.h b/tensorflow/lite/delegates/coreml/coreml_delegate.h
+index e964b83b..ec78d8a6 100644
+--- a/tensorflow/lite/delegates/coreml/coreml_delegate.h
++++ b/tensorflow/lite/delegates/coreml/coreml_delegate.h
+@@ -62,0 +63,10 @@ TfLiteDelegate* TfLiteCoreMlDelegateCreate(
++// flutter_litert-only entry point used by CompiledModel's NPU accelerator.
++// Unlike TfLiteCoreMlDelegateCreate, delegated Core ML models are configured
++// with MLComputeUnitsCPUAndNeuralEngine so Metal cannot execute them.
++TfLiteDelegate* FlutterTfLiteCoreMlNpuDelegateCreate(
++    const TfLiteCoreMlDelegateOptions* options);
++
++// Number of nodes claimed by the most recently created flutter_litert NPU
++// delegate on the current thread.
++int FlutterTfLiteCoreMlNpuGetLastDelegatedNodeCount(void);
++
+diff --git a/tensorflow/lite/delegates/coreml/coreml_delegate.mm b/tensorflow/lite/delegates/coreml/coreml_delegate.mm
+index dffcf168..89bae279 100644
+--- a/tensorflow/lite/delegates/coreml/coreml_delegate.mm
++++ b/tensorflow/lite/delegates/coreml/coreml_delegate.mm
+@@ -31,0 +32,4 @@
++namespace {
++thread_local int g_flutter_litert_last_delegated_node_count = 0;
++}  // namespace
++
+@@ -158,2 +162,4 @@ bool IsNodeSupportedByDelegate(const TfLiteRegistration* registration, const TfL
+-  explicit CoreMlDelegate(const TfLiteCoreMlDelegateOptions* params)
+-      : params_(params != nullptr ? *params : TfLiteCoreMlDelegateOptions()) {
++  explicit CoreMlDelegate(const TfLiteCoreMlDelegateOptions* params,
++                          bool use_cpu_and_neural_engine)
++      : params_(params != nullptr ? *params : TfLiteCoreMlDelegateOptions()),
++        use_cpu_and_neural_engine_(use_cpu_and_neural_engine) {
+@@ -189,0 +196,3 @@ explicit CoreMlDelegate(const TfLiteCoreMlDelegateOptions* params)
++  bool use_cpu_and_neural_engine() const {
++    return use_cpu_and_neural_engine_;
++  }
+@@ -194,0 +204 @@ explicit CoreMlDelegate(const TfLiteCoreMlDelegateOptions* params)
++  bool use_cpu_and_neural_engine_;
+@@ -215,2 +225,6 @@ TfLiteRegistration GetCoreMlKernelRegistration() {
+-    const auto* coreml_options = (reinterpret_cast<CoreMlDelegate*>(params->delegate))->params();
+-    CoreMlDelegateKernel* coreml_kernel = new CoreMlDelegateKernel(coreml_options->coreml_version);
++    auto* coreml_delegate =
++        reinterpret_cast<CoreMlDelegate*>(params->delegate);
++    const auto* coreml_options = coreml_delegate->params();
++    CoreMlDelegateKernel* coreml_kernel = new CoreMlDelegateKernel(
++        coreml_options->coreml_version,
++        coreml_delegate->use_cpu_and_neural_engine());
+@@ -244 +258,2 @@ TfLiteStatus DelegatePrepare(TfLiteContext* context, TfLiteDelegate* delegate) {
+-  const auto* params = reinterpret_cast<TfLiteCoreMlDelegateOptions*>(delegate->data_);
++  auto* coreml_delegate = static_cast<CoreMlDelegate*>(delegate);
++  const auto* params = coreml_delegate->params();
+@@ -267 +282 @@ TfLiteStatus DelegatePrepare(TfLiteContext* context, TfLiteDelegate* delegate) {
+-  return context->ReplaceNodeSubsetsWithDelegateKernels(
++  const TfLiteStatus status = context->ReplaceNodeSubsetsWithDelegateKernels(
+@@ -268,0 +284,5 @@ TfLiteStatus DelegatePrepare(TfLiteContext* context, TfLiteDelegate* delegate) {
++  if (status == kTfLiteOk &&
++      coreml_delegate->use_cpu_and_neural_engine()) {
++    g_flutter_litert_last_delegated_node_count += delegated_nodes.size();
++  }
++  return status;
+@@ -271,2 +291,5 @@ TfLiteStatus DelegatePrepare(TfLiteContext* context, TfLiteDelegate* delegate) {
+-TfLiteDelegate* CreateCoreMlDelegate(const TfLiteCoreMlDelegateOptions* options) {
+-  TfLiteDelegate* delegate = new CoreMlDelegate(options);
++TfLiteDelegate* CreateCoreMlDelegate(
++    const TfLiteCoreMlDelegateOptions* options,
++    bool use_cpu_and_neural_engine = false) {
++  TfLiteDelegate* delegate =
++      new CoreMlDelegate(options, use_cpu_and_neural_engine);
+@@ -329,0 +353,22 @@ bool IsNeuralEngineAvailable() {
++TfLiteDelegate* FlutterTfLiteCoreMlNpuDelegateCreate(
++    const TfLiteCoreMlDelegateOptions* options) {
++  g_flutter_litert_last_delegated_node_count = 0;
++  if (@available(iOS 13.0, *)) {
++    if (options->enabled_devices ==
++            TfLiteCoreMlDelegateDevicesWithNeuralEngine &&
++        !IsNeuralEngineAvailable()) {
++      NSLog(@"This device does not have Neural Engine, so the flutter_litert "
++             "Core ML NPU delegate will not be enabled.");
++      return nullptr;
++    }
++    return tflite::CreateCoreMlDelegate(
++        options, /*use_cpu_and_neural_engine=*/true);
++  }
++  NSLog(@"The flutter_litert Core ML NPU delegate requires iOS 13.0 or newer.");
++  return nullptr;
++}
++
++int FlutterTfLiteCoreMlNpuGetLastDelegatedNodeCount(void) {
++  return g_flutter_litert_last_delegated_node_count;
++}
++
+diff --git a/tensorflow/lite/delegates/coreml/coreml_delegate_kernel.h b/tensorflow/lite/delegates/coreml/coreml_delegate_kernel.h
+index 85f1f93c..97ed663a 100644
+--- a/tensorflow/lite/delegates/coreml/coreml_delegate_kernel.h
++++ b/tensorflow/lite/delegates/coreml/coreml_delegate_kernel.h
+@@ -31,2 +31,4 @@ class CoreMlDelegateKernel {
+-  explicit CoreMlDelegateKernel(int coreml_version)
+-      : coreml_version_(coreml_version) {}
++  explicit CoreMlDelegateKernel(int coreml_version,
++                                bool use_cpu_and_neural_engine = false)
++      : coreml_version_(coreml_version),
++        use_cpu_and_neural_engine_(use_cpu_and_neural_engine) {}
+@@ -60,0 +63 @@ class CoreMlDelegateKernel {
++  bool use_cpu_and_neural_engine_;
+diff --git a/tensorflow/lite/delegates/coreml/coreml_delegate_kernel.mm b/tensorflow/lite/delegates/coreml/coreml_delegate_kernel.mm
+index 813604ad..fd92781e 100644
+--- a/tensorflow/lite/delegates/coreml/coreml_delegate_kernel.mm
++++ b/tensorflow/lite/delegates/coreml/coreml_delegate_kernel.mm
+@@ -74 +74,2 @@ void TransposeToHWC(const float* chw, float* hwc, const TfLiteIntArray* hwc_dims
+-    if (![executor_ build:model_url]) {
++    if (![executor_ build:model_url
++        useCpuAndNeuralEngine:use_cpu_and_neural_engine_]) {
+diff --git a/tensorflow/lite/delegates/coreml/coreml_executor.h b/tensorflow/lite/delegates/coreml/coreml_executor.h
+index 9a13984a..5fa9cea6 100644
+--- a/tensorflow/lite/delegates/coreml/coreml_executor.h
++++ b/tensorflow/lite/delegates/coreml/coreml_executor.h
+@@ -40,0 +41,2 @@ struct TensorData {
++- (bool)build:(NSURL*)modelUrl
++    useCpuAndNeuralEngine:(bool)useCpuAndNeuralEngine API_AVAILABLE(ios(11));
+diff --git a/tensorflow/lite/delegates/coreml/coreml_executor.mm b/tensorflow/lite/delegates/coreml/coreml_executor.mm
+index 59aeb569..6dbfe312 100644
+--- a/tensorflow/lite/delegates/coreml/coreml_executor.mm
++++ b/tensorflow/lite/delegates/coreml/coreml_executor.mm
+@@ -199,0 +200,5 @@ - (bool)build:(NSURL*)modelUrl {
++  return [self build:modelUrl useCpuAndNeuralEngine:false];
++}
++
++- (bool)build:(NSURL*)modelUrl
++    useCpuAndNeuralEngine:(bool)useCpuAndNeuralEngine {
+@@ -211 +216,11 @@ - (bool)build:(NSURL*)modelUrl {
+-    config.computeUnits = MLComputeUnitsAll;
++    if (useCpuAndNeuralEngine) {
++      if (@available(iOS 13.0, *)) {
++        config.computeUnits = MLComputeUnitsCPUAndNeuralEngine;
++      } else {
++        NSLog(@"CPU and Neural Engine Core ML execution requires iOS 13.0 "
++               "or newer.");
++        return NO;
++      }
++    } else {
++      config.computeUnits = MLComputeUnitsAll;
++    }
+diff --git a/tensorflow/lite/ios/allowlist_TensorFlowLiteCCoreML.txt b/tensorflow/lite/ios/allowlist_TensorFlowLiteCCoreML.txt
+index 817b4a7f..a351c596 100644
+--- a/tensorflow/lite/ios/allowlist_TensorFlowLiteCCoreML.txt
++++ b/tensorflow/lite/ios/allowlist_TensorFlowLiteCCoreML.txt
+@@ -0,0 +1,2 @@
++_FlutterTfLiteCoreMlNpuDelegateCreate
++_FlutterTfLiteCoreMlNpuGetLastDelegatedNodeCount

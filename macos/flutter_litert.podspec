@@ -34,5 +34,9 @@ LiteRT (formerly TensorFlow Lite) Flutter plugin with MediaPipe custom operation
     # dlopen'd at runtime, so shipped as resources like the delegate dylibs above.
     'flutter_litert/Sources/flutter_litert/Resources/libLiteRt.dylib',
     'flutter_litert/Sources/flutter_litert/Resources/libLiteRtMetalAccelerator.dylib',
+    # macOS 13+ Apple Silicon NPU accelerator bridge and its dedicated
+    # CPU+NeuralEngine Core ML delegate. Loaded only for Accelerator.npu.
+    'flutter_litert/Sources/flutter_litert/Resources/libLiteRtCoreMlNpuAccelerator.dylib',
+    'flutter_litert/Sources/flutter_litert/Resources/libtensorflowlite_coreml_npu-mac.dylib',
   ]
 end

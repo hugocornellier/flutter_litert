@@ -2,6 +2,17 @@ name: Build TFLite CoreML dylib (macOS)
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Upload the verified dylib to a GitHub release'
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: 'Release tag used when publish_release is enabled'
+        required: false
+        default: 'coreml-v1.0.1'
+        type: string
 
 permissions:
   contents: write
@@ -40,6 +51,15 @@ jobs:
         run: |
           git clone --depth 1 --branch $TF_VERSION \
             https://github.com/tensorflow/tensorflow.git ~/tf-src
+
+      - name: Patch CoreML delegate to set MEAN pooling padding type
+        run: |
+          cd ~/tf-src
+          git apply --verbose "$GITHUB_WORKSPACE/patches/coreml_mean_padding.patch"
+          echo "=== verify the hunk landed ==="
+          grep -n -A2 "set_globalpooling(true)" \
+            tensorflow/lite/delegates/coreml/builders/pooling_layer_builder.cc \
+            | grep -E "mutable_valid|globalpooling"
 
       - name: Download and patch coremltools proto imports
         run: |
@@ -158,14 +178,15 @@ jobs:
           retention-days: 30
 
       - name: Create release and upload
+        if: ${{ inputs.publish_release }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create coreml-v1.0.0 \
-            --title "CoreML Delegate v1.0.0 (macOS arm64)" \
-            --notes "CoreML delegate dylib for macOS (arm64 only). Built from TensorFlow v2.20.0." \
+          gh release create "${{ inputs.release_tag }}" \
+            --title "CoreML Delegate ${{ inputs.release_tag }} (macOS arm64)" \
+            --notes "CoreML delegate dylib for macOS (arm64 only). Built from TensorFlow v2.20.0 with the repository CoreML patches." \
             --repo ${{ github.repository }} || true
-          gh release upload coreml-v1.0.0 \
+          gh release upload "${{ inputs.release_tag }}" \
             ~/libtensorflowlite_coreml-mac.dylib \
             --repo ${{ github.repository }} \
             --clobber

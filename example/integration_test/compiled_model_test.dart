@@ -1,3 +1,4 @@
+import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -6,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:flutter_litert/native.dart';
 import 'package:flutter_litert/src/bindings/litert_loader.dart'
-    show litertRuntimeDir;
+    show litertRuntimeDir, macOsCoreMlNpuAcceleratorPath;
 
 /// End-to-end CompiledModel (LiteRT Next) checks inside a real app process.
 ///
@@ -99,6 +100,51 @@ void main() {
       input[0] = 3.0;
       final output = cm.run([input]);
       expect(output[0][0], closeTo(7.0, 1e-3));
+    });
+
+    testWidgets('runs strict NPU from an Apple app bundle', (tester) async {
+      if (!(Platform.isIOS || Platform.isMacOS)) {
+        markTestSkipped('The Core ML NPU accelerator is Apple-platform only.');
+        return;
+      }
+      if (Platform.isMacOS && Abi.current() != Abi.macosArm64) {
+        markTestSkipped('The Core ML NPU accelerator requires Apple Silicon.');
+        return;
+      }
+
+      final cm = CompiledModel.fromBuffer(
+        modelBytes,
+        accelerators: {Accelerator.npu},
+      );
+      addTearDown(cm.close);
+
+      if (Platform.isMacOS) {
+        final bridgePath = macOsCoreMlNpuAcceleratorPath;
+        expect(bridgePath, isNotNull);
+        final loadedBridgePath = bridgePath!;
+        final contentsDir = File(
+          Platform.resolvedExecutable,
+        ).parent.parent.resolveSymbolicLinksSync();
+        expect(
+          File(loadedBridgePath).resolveSymbolicLinksSync(),
+          startsWith(contentsDir),
+          reason:
+              'NPU bridge resolved outside the built app, so this run did not '
+              'prove resource bundling',
+        );
+        expect(
+          File(
+            '${File(loadedBridgePath).parent.path}/'
+            'libtensorflowlite_coreml_npu-mac.dylib',
+          ).existsSync(),
+          isTrue,
+          reason: 'the NPU bridge and its dedicated delegate must be siblings',
+        );
+      }
+
+      final input = Float32List(cm.inputByteSizes.first ~/ 4)..first = 3;
+      expect(cm.run([input]).single.single, closeTo(7, 1e-3));
+      expect(cm.isFullyAccelerated, isTrue);
     });
 
     testWidgets('compiles from bytes and runAsync matches run', (tester) async {

@@ -21,6 +21,13 @@ import 'dart:io';
 import 'package:flutter_litert/src/delegates/delegate_library_loader.dart';
 
 String? _litertRuntimeDir;
+DynamicLibrary? _appleCoreMlNpuAcceleratorLibrary;
+String? _macOsCoreMlNpuAcceleratorPath;
+
+typedef _RegisterAppleCoreMlNpuNative = Int32 Function(Pointer<Void>);
+typedef _RegisterAppleCoreMlNpuDart = int Function(Pointer<Void>);
+typedef _AppleCoreMlNpuDelegatedNodeCountNative = Int32 Function();
+typedef _AppleCoreMlNpuDelegatedNodeCountDart = int Function();
 
 /// Directory containing the LiteRT runtime library that was opened, when known.
 ///
@@ -29,6 +36,91 @@ String? _litertRuntimeDir;
 String? get litertRuntimeDir {
   litertDynamicLibrary;
   return _litertRuntimeDir;
+}
+
+/// Exact path passed to `dlopen` for the macOS NPU bridge, once loaded.
+///
+/// Exposed from this internal loader for production-bundle integration tests.
+String? get macOsCoreMlNpuAcceleratorPath => _macOsCoreMlNpuAcceleratorPath;
+
+/// Registers flutter_litert's CoreML-backed Apple NPU accelerator.
+///
+/// On iOS the bridge is linked into the plugin and resolves the patched
+/// TensorFlowLiteCCoreML functions from the process. On macOS it is loaded
+/// lazily from the resource bundle with its dedicated delegate sibling.
+int registerAppleCoreMlNpuAccelerator(Pointer<Void> environment) {
+  if (!(Platform.isIOS || Platform.isMacOS)) {
+    throw UnsupportedError(
+      'The CoreML NPU accelerator is available on Apple platforms only.',
+    );
+  }
+  if (Platform.isMacOS && Abi.current() != Abi.macosArm64) {
+    throw UnsupportedError(
+      'The CoreML NPU accelerator requires an Apple Silicon Mac.',
+    );
+  }
+
+  var library = _appleCoreMlNpuAcceleratorLibrary;
+  if (library == null) {
+    if (Platform.isIOS) {
+      library = DynamicLibrary.process();
+    } else {
+      const libName = 'libLiteRtCoreMlNpuAccelerator.dylib';
+      final attemptedPaths = <String>[];
+      final packagePath = _resolvePackagePath('flutter_litert');
+      final runtimeDir = litertRuntimeDir;
+      final executableDir = Directory(Platform.resolvedExecutable).parent.path;
+      final loaded = probeLibraryPathsWithPath(
+        envVar: 'LITERT_NPU_LIB_PATH',
+        paths: [
+          if (runtimeDir != null) '$runtimeDir/$libName',
+          ...delegateBundlePaths(libName),
+          '$executableDir/$libName',
+          if (packagePath != null)
+            '$packagePath/macos/flutter_litert/Sources/flutter_litert/Resources/$libName',
+          libName,
+        ],
+        attemptedPaths: attemptedPaths,
+      );
+      if (loaded == null) {
+        throw UnsupportedError(
+          'LiteRT CoreML NPU accelerator library not found. Attempted paths:\n'
+          '${attemptedPaths.map((p) => '  - $p').join('\n')}\n\n'
+          'The accelerator requires macOS 13 or newer on Apple Silicon. For '
+          'local testing, set LITERT_NPU_LIB_PATH to the bridge dylib.',
+        );
+      }
+      library = loaded.library;
+      _macOsCoreMlNpuAcceleratorPath = loaded.path;
+    }
+    _appleCoreMlNpuAcceleratorLibrary = library;
+  }
+
+  final register = library
+      .lookupFunction<
+        _RegisterAppleCoreMlNpuNative,
+        _RegisterAppleCoreMlNpuDart
+      >('FlutterLiteRtRegisterCoreMlNpuAccelerator');
+  return register(environment);
+}
+
+/// Returns how many TFLite nodes the most recently compiled Core ML delegate
+/// claimed on this isolate's thread.
+///
+/// The dedicated delegate resets the counter at creation and increments it
+/// during graph preparation. A zero result lets the CompiledModel path reject
+/// a silent CPU-only fallback even when `Accelerator.cpu` was also requested.
+int appleCoreMlNpuLastDelegatedNodeCount() {
+  final library = _appleCoreMlNpuAcceleratorLibrary;
+  if (library == null) {
+    throw StateError('The Apple Core ML NPU accelerator is not registered.');
+  }
+  final getCount = library
+      .lookupFunction<
+        _AppleCoreMlNpuDelegatedNodeCountNative,
+        _AppleCoreMlNpuDelegatedNodeCountDart
+      >('FlutterLiteRtCoreMlNpuGetLastDelegatedNodeCount');
+  return getCount();
 }
 
 /// Top-level finals are initialized lazily on first access in Dart.

@@ -19,6 +19,24 @@ on macOS arm64 will need regenerating.
   model went from 83.7ms to 26.8ms, now matching iOS exactly. `fully_connected`
   and `batch_matmul` gain similarly. Intel Macs keep their existing CMake slice
   and are unchanged. See `doc/macos_transpose_conv_gap.md`.
+* **New: macOS Apple Silicon NPU support for `CompiledModel`.**
+  `Accelerator.npu` now lazily registers a dedicated Core ML
+  `CPUAndNeuralEngine` accelerator on macOS 13+. Strict `{npu}` compilation
+  rejects any non-delegated TFLite operation; `{npu, cpu}` applies Core ML
+  before XNNPACK and rejects zero-node Core ML delegation rather than silently
+  returning CPU-only inference. The build carries the required global-`MEAN`
+  padding fix and is covered by fixed-input output comparisons across
+  representative models. NPU+GPU combinations remain unsupported. See
+  `doc/macos_compiled_model_npu.md`.
+* **Checkpoint: iOS NPU support is simulator-validated.** The iOS
+  `CompiledModel` path now has its own Core ML accelerator-registration bridge,
+  uses the same strict `{npu}` and Core-ML-first `{npu, cpu}` semantics, and
+  rejects zero-node delegation. The arm64+x86_64 simulator suite passes strict
+  inference, a five-model mixed-mode correctness sweep, fallback diagnostics,
+  and NPU+GPU rejection. This does not yet constitute Neural Engine validation:
+  simulators have no ANE, physical-iPhone testing remains pending, and SwiftPM
+  still needs a release artifact containing the patched Core ML entry points.
+  See `doc/ios_compiled_model_npu.md`.
 * **New `verifyCompiledModel(bytes, compiled)`** checks a `CompiledModel` against
   a bare-CPU `Interpreter` and reports the deviation, returning
   `BackendVerification`. LiteRT Next can return `kLiteRtStatusOk` while producing

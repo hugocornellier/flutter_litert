@@ -26,6 +26,8 @@ let package = Package(
                 .copy("Resources/libtensorflowlite_coreml-mac.dylib"),
                 .copy("Resources/libLiteRt.dylib"),
                 .copy("Resources/libLiteRtMetalAccelerator.dylib"),
+                .copy("Resources/libLiteRtCoreMlNpuAccelerator.dylib"),
+                .copy("Resources/libtensorflowlite_coreml_npu-mac.dylib"),
                 .process("PrivacyInfo.xcprivacy"),
             ]
         )

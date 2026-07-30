@@ -145,7 +145,11 @@ model.close();
 
 - Include `Accelerator.cpu` in the `accelerators` set to allow CPU placement when compilation succeeds. When a bundled GPU accelerator is present but cannot initialize, combined `{gpu, cpu}` compilation can still fail instead of falling back internally. Use the convenience factory below when a working GPU-to-CPU retry is required.
 - `precision` accepts `Precision.fp16` or `Precision.fp32`.
-- On Apple platforms, `Accelerator.npu` targets the Neural Engine, the replacement for `CoreMlDelegate`.
+- On iOS 13+ and macOS 13+ Apple Silicon, `Accelerator.npu` uses a dedicated
+  Core ML `CPUAndNeuralEngine` backend. The iOS source implementation is
+  simulator-validated; physical-device validation and its replacement SwiftPM
+  binary artifact remain pending at this checkpoint. See
+  [CompiledModel NPU on Apple platforms](#compiledmodel-npu-on-apple-platforms).
 - On Android, `Accelerator.gpu` uses the bundled OpenCL/GL accelerator on `arm64-v8a` and `x86_64`. `armeabi-v7a` remains CPU-only.
 
 ### GPU with CPU fallback (convenience method)
@@ -159,6 +163,47 @@ final model = CompiledModel.fromBufferWithGpuFallback(modelBytes);
 This first requests `{gpu, cpu}`. If compilation fails because the GPU is unavailable, an operation is unsupported, or a driver fails, it reports the error through the optional `onFallback` callback and retries CPU-only. `CompiledModel.fromBufferWithGpuFallbackAsync` provides the same guaranteed-model path through the portable async API.
 
 Android emulators are a common case: the accelerator library can register, but emulators do not provide working OpenCL, so direct `{gpu, cpu}` compilation returns an error. The fallback factories catch that error and return a CPU model.
+
+### CompiledModel NPU on Apple platforms
+
+iOS 13 or newer and macOS 13 or newer on Apple Silicon can request the Apple
+Neural Engine:
+
+```dart
+// Every TFLite op must be accepted by the Core ML accelerator.
+final strict = CompiledModel.fromFile(
+  'model.tflite',
+  accelerators: {Accelerator.npu},
+);
+
+// Core ML gets first choice; XNNPACK handles the remaining operations.
+final mixed = CompiledModel.fromFile(
+  'model.tflite',
+  accelerators: {Accelerator.npu, Accelerator.cpu},
+);
+```
+
+The backend uses `MLComputeUnitsCPUAndNeuralEngine`, which excludes the GPU.
+Apple does not expose a Neural-Engine-only compute-unit mode, so Core ML may
+still place unsupported layers on the CPU internally. Strict `{npu}` means the
+whole TFLite graph was accepted by the Core ML delegate; it cannot promise that
+every Core ML layer ran on the ANE.
+
+The mixed mode registers Core ML before XNNPACK. It also rejects compilation if
+Core ML claims zero nodes, instead of silently returning a CPU-only model.
+`{npu, gpu}` is not supported on Apple platforms in this implementation because
+LiteRT delegate ordering would make the selected backend ambiguous.
+
+Always validate a production model with `verifyCompiledModel`: ANE arithmetic
+can change outputs, and some model architectures exceed the default 1%
+tolerance even though Core ML successfully delegates nodes.
+`isFullyAccelerated` is not an NPU-engagement detector in mixed mode because
+XNNPACK can delegate the remainder. The tested model matrix, known incompatible
+models, build details, and exact semantics are in
+[macOS CompiledModel NPU](doc/macos_compiled_model_npu.md) and
+[iOS CompiledModel NPU](doc/ios_compiled_model_npu.md). The iOS simulator
+validates integration but has no Neural Engine; physical-device validation is
+required before treating the iOS backend as hardware-verified.
 
 ### CompiledModel GPU on Android
 
@@ -1285,8 +1330,8 @@ flutter_litert ships two independent native runtimes, one per API. The classic `
 | Platform | Interpreter runtime | CompiledModel runtime |
 |----------|---------------------|-----------------------|
 | Android | LiteRT 1.4.2 | LiteRT Next 2.1.5 (CPU / OpenCL/GL GPU) |
-| iOS | TensorFlow Lite 2.20.0 | LiteRT Next |
-| macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
+| iOS | TensorFlow Lite 2.20.0 | LiteRT Next (CPU / Metal GPU / Core ML NPU; NPU hardware validation pending) |
+| macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 (CPU / Metal GPU / Core ML NPU) |
 | Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
 | Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
 | Web | LiteRT.js 2.4.0 / TFLite.js (WASM) | LiteRT.js 2.4.0 (WASM / WebGPU) |

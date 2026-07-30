@@ -60,6 +60,16 @@ typedef struct {
 TfLiteDelegate* TfLiteCoreMlDelegateCreate(
     const TfLiteCoreMlDelegateOptions* options);
 
+// flutter_litert-only entry point used by CompiledModel's NPU accelerator.
+// Unlike TfLiteCoreMlDelegateCreate, delegated Core ML models are configured
+// with MLComputeUnitsCPUAndNeuralEngine so Metal cannot execute them.
+TfLiteDelegate* FlutterTfLiteCoreMlNpuDelegateCreate(
+    const TfLiteCoreMlDelegateOptions* options);
+
+// Number of nodes claimed by the most recently created flutter_litert NPU
+// delegate on the current thread.
+int FlutterTfLiteCoreMlNpuGetLastDelegatedNodeCount(void);
+
 // Do any needed cleanup and delete 'delegate'.
 void TfLiteCoreMlDelegateDelete(TfLiteDelegate* delegate);
 

@@ -1,0 +1,250 @@
+name: Build patched TFLite CoreML xcframework (iOS)
+
+# Builds TensorFlowLiteCCoreML for iOS from TensorFlow v2.20.0 with two
+# flutter_litert patches:
+#
+# 1. coreml_mean_padding.patch sets the required padding oneof for global MEAN
+#    pooling. Without it, Core ML rejects MobileNetV3/EfficientNet-style graphs
+#    and TensorFlow Lite silently restores the CPU execution plan.
+# 2. litert_coreml_npu_ios.patch adds a separate entry point for CompiledModel's
+#    Accelerator.npu. It selects MLComputeUnitsCPUAndNeuralEngine, keeps the
+#    ordinary Interpreter Core ML delegate on MLComputeUnitsAll, and exports a
+#    delegated-node diagnostic used to reject zero-op fallback.
+#
+# The result contains an arm64 device slice and a universal arm64+x86_64
+# simulator slice. A simulator validates packaging and inference but has no
+# Neural Engine; actual ANE behavior must be tested on physical hardware.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 360
+    env:
+      TF_VERSION: v2.20.0
+      BAZEL_VERSION: 7.4.1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          echo "Before cleanup:"
+          df -h /
+          sudo rm -rf /usr/local/share/powershell /usr/local/.ghcup \
+            /usr/local/lib/android /usr/local/share/chromium 2>/dev/null || true
+          echo "After cleanup:"
+          df -h /
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install numpy
+          brew install bazelisk
+
+      - name: Clone TensorFlow
+        run: |
+          git clone --depth 1 --branch $TF_VERSION \
+            https://github.com/tensorflow/tensorflow.git ~/tf-src
+
+      - name: Apply flutter_litert Core ML patches
+        run: |
+          cd ~/tf-src
+          git apply --verbose "$GITHUB_WORKSPACE/patches/coreml_mean_padding.patch"
+          git apply --unidiff-zero --verbose \
+            "$GITHUB_WORKSPACE/patches/litert_coreml_npu_ios.patch"
+
+          echo "=== verify the hunk landed ==="
+          grep -n -A2 "set_globalpooling(true)" \
+            tensorflow/lite/delegates/coreml/builders/pooling_layer_builder.cc \
+            | grep -E "mutable_valid|globalpooling"
+          grep -n "MLComputeUnitsCPUAndNeuralEngine" \
+            tensorflow/lite/delegates/coreml/coreml_executor.mm
+          grep -n "FlutterTfLiteCoreMlNpuDelegateCreate" \
+            tensorflow/lite/ios/allowlist_TensorFlowLiteCCoreML.txt
+
+      # Same coremltools handling as build-coreml-macos.yml: the delegate needs the
+      # Core ML protos, and their bare imports have to be rewritten for Bazel.
+      - name: Download and patch coremltools proto imports
+        run: |
+          cd /tmp
+          curl -L -o coremltools.tar.gz https://github.com/apple/coremltools/archive/8.0.tar.gz
+          mkdir -p coremltools-local
+          tar xzf coremltools.tar.gz -C coremltools-local --strip-components=1
+
+          cd coremltools-local/mlmodel/format
+          for f in *.proto; do
+            sed -i '' 's|import "\([A-Za-z].*\.proto\)"|import "mlmodel/format/\1"|g' "$f"
+            sed -i '' 's|import public "\([A-Za-z].*\.proto\)"|import public "mlmodel/format/\1"|g' "$f"
+          done
+
+          touch /tmp/coremltools-local/WORKSPACE
+          {
+            echo 'load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")'
+            echo ''
+            echo 'package(default_visibility = ["//visibility:public"])'
+            echo ''
+            echo 'licenses(["notice"])'
+            echo ''
+            echo 'exports_files(["LICENSE.txt"])'
+            echo ''
+            echo 'proto_library('
+            echo '    name = "mlmodel_proto",'
+            echo '    srcs = glob(["mlmodel/format/*.proto"]),'
+            echo ')'
+            echo ''
+            echo 'cc_proto_library('
+            echo '    name = "mlmodel_cc_proto",'
+            echo '    deps = [":mlmodel_proto"],'
+            echo ')'
+          } > /tmp/coremltools-local/BUILD.bazel
+
+      - name: Configure TensorFlow
+        run: |
+          cd ~/tf-src
+          # TF_CONFIGURE_IOS=1 is required, not optional. configure_ios() symlinks
+          # BUILD.apple -> BUILD for every path in APPLE_BAZEL_FILES, which includes
+          # tensorflow/lite/ios/BUILD. Without it bazel reports
+          # "no such package 'tensorflow/lite/ios': BUILD file not found", because
+          # v2.20.0 ships only BUILD.apple there.
+          PYTHON_BIN_PATH=$(which python3) \
+          TF_NEED_CUDA=0 TF_NEED_ROCM=0 TF_NEED_TENSORRT=0 \
+          TF_CONFIGURE_IOS=1 CC_OPT_FLAGS="-march=native" \
+          python3 configure.py
+
+          echo "=== BUILD.apple symlinked? ==="
+          ls -la tensorflow/lite/ios/BUILD
+
+      - name: Build for iOS device (arm64)
+        run: |
+          cd ~/tf-src
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk build -c opt \
+            --config=ios \
+            --cpu=ios_arm64 \
+            --local_ram_resources=HOST_RAM*0.7 \
+            --jobs=4 \
+            --override_repository=coremltools=/tmp/coremltools-local \
+            //tensorflow/lite/ios:TensorFlowLiteCCoreML_framework
+
+          mkdir -p ~/cm-build/device
+          unzip -o bazel-bin/tensorflow/lite/ios/TensorFlowLiteCCoreML_framework.zip \
+            -d ~/cm-build/device/
+
+      - name: Clean Bazel cache before next build
+        run: |
+          cd ~/tf-src
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk clean
+          df -h /
+
+      - name: Build for iOS simulator (arm64)
+        run: |
+          cd ~/tf-src
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk build -c opt \
+            --config=ios \
+            --cpu=ios_sim_arm64 \
+            --local_ram_resources=HOST_RAM*0.7 \
+            --jobs=4 \
+            --override_repository=coremltools=/tmp/coremltools-local \
+            //tensorflow/lite/ios:TensorFlowLiteCCoreML_framework
+
+          mkdir -p ~/cm-build/sim-arm64
+          unzip -o bazel-bin/tensorflow/lite/ios/TensorFlowLiteCCoreML_framework.zip \
+            -d ~/cm-build/sim-arm64/
+
+      - name: Clean Bazel cache before x86_64 simulator build
+        run: |
+          cd ~/tf-src
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk clean
+          df -h /
+
+      - name: Build for iOS simulator (x86_64)
+        run: |
+          cd ~/tf-src
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk build -c opt \
+            --config=ios \
+            --cpu=ios_x86_64 \
+            --local_ram_resources=HOST_RAM*0.7 \
+            --jobs=4 \
+            --override_repository=coremltools=/tmp/coremltools-local \
+            //tensorflow/lite/ios:TensorFlowLiteCCoreML_framework
+
+          mkdir -p ~/cm-build/sim-x86_64
+          unzip -o bazel-bin/tensorflow/lite/ios/TensorFlowLiteCCoreML_framework.zip \
+            -d ~/cm-build/sim-x86_64/
+
+      - name: Create universal simulator framework and bundle plists
+        run: |
+          mkdir -p ~/cm-build/sim-universal
+          cp -R ~/cm-build/sim-arm64/TensorFlowLiteCCoreML.framework \
+            ~/cm-build/sim-universal/
+          lipo -create \
+            ~/cm-build/sim-arm64/TensorFlowLiteCCoreML.framework/TensorFlowLiteCCoreML \
+            ~/cm-build/sim-x86_64/TensorFlowLiteCCoreML.framework/TensorFlowLiteCCoreML \
+            -output \
+            ~/cm-build/sim-universal/TensorFlowLiteCCoreML.framework/TensorFlowLiteCCoreML
+
+          for slice in device sim-universal; do
+            framework=~/cm-build/$slice/TensorFlowLiteCCoreML.framework
+            platform=iPhoneOS
+            if [[ "$slice" == "sim-universal" ]]; then
+              platform=iPhoneSimulator
+            fi
+
+            plutil -create xml "$framework/Info.plist"
+            plutil -insert CFBundleDevelopmentRegion -string en "$framework/Info.plist"
+            plutil -insert CFBundleExecutable -string TensorFlowLiteCCoreML "$framework/Info.plist"
+            plutil -insert CFBundleIdentifier -string org.tensorflow.TensorFlowLiteCCoreML "$framework/Info.plist"
+            plutil -insert CFBundleInfoDictionaryVersion -string 6.0 "$framework/Info.plist"
+            plutil -insert CFBundleName -string TensorFlowLiteCCoreML "$framework/Info.plist"
+            plutil -insert CFBundlePackageType -string FMWK "$framework/Info.plist"
+            plutil -insert CFBundleShortVersionString -string 2.20.0 "$framework/Info.plist"
+            plutil -insert CFBundleSupportedPlatforms -json "[\"$platform\"]" "$framework/Info.plist"
+            plutil -insert CFBundleVersion -string 2.20.0 "$framework/Info.plist"
+            plutil -insert MinimumOSVersion -string 13.0 "$framework/Info.plist"
+          done
+
+      - name: Verify architectures and NPU symbols
+        run: |
+          echo "=== device architectures ==="
+          lipo -archs \
+            ~/cm-build/device/TensorFlowLiteCCoreML.framework/TensorFlowLiteCCoreML
+          echo "=== simulator architectures ==="
+          lipo -archs \
+            ~/cm-build/sim-universal/TensorFlowLiteCCoreML.framework/TensorFlowLiteCCoreML
+
+          for slice in device sim-universal; do
+            echo "=== $slice ==="
+            nm -gU ~/cm-build/$slice/TensorFlowLiteCCoreML.framework/TensorFlowLiteCCoreML \
+              | grep -E \
+                "_FlutterTfLiteCoreMlNpuDelegateCreate|_FlutterTfLiteCoreMlNpuGetLastDelegatedNodeCount|_TfLiteCoreMlDelegateCreate|_TfLiteCoreMlDelegateDelete"
+          done
+
+      - name: Create xcframework
+        run: |
+          xcodebuild -create-xcframework \
+            -framework ~/cm-build/device/TensorFlowLiteCCoreML.framework \
+            -framework ~/cm-build/sim-universal/TensorFlowLiteCCoreML.framework \
+            -output ~/cm-build/TensorFlowLiteCCoreML.xcframework
+
+          plutil -p ~/cm-build/TensorFlowLiteCCoreML.xcframework/Info.plist
+
+      - name: Package xcframework
+        run: |
+          cd ~/cm-build
+          zip -r TensorFlowLiteCCoreML-ios.xcframework.zip TensorFlowLiteCCoreML.xcframework
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TensorFlowLiteCCoreML-ios-xcframework
+          path: ~/cm-build/TensorFlowLiteCCoreML-ios.xcframework.zip
+          retention-days: 30
