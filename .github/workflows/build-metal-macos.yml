@@ -41,6 +41,17 @@ jobs:
           git clone --depth 1 --branch $TF_VERSION \
             https://github.com/tensorflow/tensorflow.git ~/tf-src
 
+      - name: Patch GPU delegate to accept TRANSPOSE_CONV v4
+        run: |
+          cd ~/tf-src
+          git apply --verbose "$GITHUB_WORKSPACE/patches/gpu_transpose_conv_v4.patch"
+          echo "=== verify both hunks landed ==="
+          grep -n "CheckMaxSupportedOpVersion(registration, 4)" \
+            tensorflow/lite/delegates/gpu/common/model_builder.cc
+          grep -n "MaybeFuseActivation(tf_options->activation, graph, node)" \
+            tensorflow/lite/delegates/gpu/common/model_builder.cc \
+            | tail -1
+
       - name: Configure TensorFlow
         run: |
           cd ~/tf-src

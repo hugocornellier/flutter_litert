@@ -1,0 +1,22 @@
+--- a/tensorflow/lite/delegates/gpu/common/model_builder.cc
++++ b/tensorflow/lite/delegates/gpu/common/model_builder.cc
+@@ -2677,7 +2677,7 @@
+   absl::Status IsSupported(const TfLiteContext* context,
+                            const TfLiteNode* tflite_node,
+                            const TfLiteRegistration* registration) final {
+-    RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 3));
++    RETURN_IF_ERROR(CheckMaxSupportedOpVersion(registration, 4));
+     return CheckGpuDelegateCompatibility(context, tflite_node, registration);
+   }
+ 
+@@ -2715,6 +2715,10 @@
+     UpdatePadding(tf_options->padding,
+                   graph->FindInputs(node->id)[0]->tensor.shape, &attr);
+     node->operation.attributes = std::move(attr);
++    // TRANSPOSE_CONV version 4 added a fused activation to
++    // TfLiteTransposeConvParams. Without applying it the delegate would silently
++    // drop the activation, so the version gate above stays at 3 unless this runs.
++    RETURN_IF_ERROR(MaybeFuseActivation(tf_options->activation, graph, node));
+     return absl::OkStatus();
+   }
+ };
