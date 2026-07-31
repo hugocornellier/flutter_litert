@@ -8,7 +8,11 @@ import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension
@@ -101,7 +105,7 @@ dependencies {
 // versions of the same module would resolve to a single version and break one
 // of the two runtimes. Selectively extracting the 2.x native libraries keeps
 // them side by side.
-val litertNextVersion = "2.1.5"
+val litertNextVersion = "2.1.6"
 
 // The GPU accelerator is bundled by default. Apps that do not use it can set
 // flutterLitert.bundleGpuAccelerator=false in android/gradle.properties.
@@ -112,6 +116,30 @@ val shouldBundleGpuAccelerator =
                 "[flutter_litert] flutterLitert.bundleGpuAccelerator must be true or false"
             )
     } ?: true
+
+// Android NPU runtime libraries are vendor- and SoC-specific, and Google
+// distributes them separately from the LiteRT Maven AAR. Normal builds stay
+// unchanged. A consuming app (or the physical-device test workflow) may point
+// this property at one prepared Qualcomm JIT runtime directory containing the
+// matching LiteRT compiler/dispatch libraries and QAIRT libraries:
+//
+// flutterLitert.qualcommNpuRuntimeDir=/absolute/path/to/arm64-v8a
+//
+// The app must also use legacy JNI packaging so LiteRT can scan the extracted
+// directory. Production apps should prefer Google's conditional Play Feature
+// Delivery modules; this direct bundle is primarily for local/Firebase APK
+// validation and deliberately supports exactly one Qualcomm HTP generation.
+val qualcommNpuRuntimeDirectory =
+    providers.gradleProperty("flutterLitert.qualcommNpuRuntimeDir").orNull?.let { value ->
+        val directory = File(value)
+        if (!directory.isAbsolute) {
+            throw GradleException(
+                "[flutter_litert] flutterLitert.qualcommNpuRuntimeDir must be " +
+                    "an absolute path"
+            )
+        }
+        directory
+    }
 
 // The LiteRT Next libraries are contributed as a GENERATED jniLibs source through
 // the AGP Variant API (androidComponents.onVariants -> jniLibs
@@ -128,6 +156,11 @@ abstract class DownloadLitertJniTask : DefaultTask() {
     @get:Input
     abstract val bundleGpuAccelerator: Property<Boolean>
 
+    @get:Optional
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val qualcommNpuRuntimeDir: DirectoryProperty
+
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
@@ -141,21 +174,26 @@ abstract class DownloadLitertJniTask : DefaultTask() {
     fun download() {
         val version = litertVersion.get()
         val shouldBundleGpu = bundleGpuAccelerator.get()
+        val qualcommNpuDir = qualcommNpuRuntimeDir.orNull?.asFile
         val outDir = outputDir.get().asFile
         val aar = File(temporaryDir, "litert-$version.aar")
         val url = "https://dl.google.com/dl/android/maven2/com/google/ai/edge/" +
             "litert/litert/$version/litert-$version.aar"
-        val libraryNames = if (shouldBundleGpu) {
-            "libLiteRt.so and libLiteRtClGlAccelerator.so"
-        } else {
-            "libLiteRt.so"
-        }
+        val libraryNames = buildList {
+            add("libLiteRt.so")
+            if (shouldBundleGpu) add("libLiteRtClGlAccelerator.so")
+            if (qualcommNpuDir != null) add("Qualcomm NPU JIT runtime")
+        }.joinToString()
         logger.lifecycle(
             "[flutter_litert] Downloading LiteRT Next native libraries " +
                 "($libraryNames) from Maven $version..."
         )
+        if (outDir.exists() && !outDir.deleteRecursively()) {
+            throw GradleException(
+                "[flutter_litert] Failed to clean generated JNI directory: $outDir"
+            )
+        }
         fileSystemOperations.delete {
-            delete(outDir)
             delete(aar)
         }
         outDir.mkdirs()
@@ -185,6 +223,69 @@ abstract class DownloadLitertJniTask : DefaultTask() {
             into(outDir)
         }
 
+        val qualcommNpuLibraries = if (qualcommNpuDir != null) {
+            val names = qualcommNpuDir.listFiles()
+                ?.filter { it.isFile }
+                ?.map { it.name }
+                ?.toSet()
+                ?: throw GradleException(
+                    "[flutter_litert] Cannot list Qualcomm NPU runtime directory: " +
+                        qualcommNpuDir
+                )
+            val htpVersionPattern = Regex("""libQnnHtpV(69|73|75|79|81)Skel[.]so""")
+            val htpVersions = names.mapNotNull { name ->
+                htpVersionPattern.matchEntire(name)?.groupValues?.get(1)
+            }
+            if (htpVersions.size != 1) {
+                throw GradleException(
+                    "[flutter_litert] Qualcomm NPU runtime must contain exactly " +
+                        "one supported HTP Skel library (v69, v73, v75, v79, or " +
+                        "v81); found ${htpVersions.size} in $qualcommNpuDir"
+                )
+            }
+            val htpVersion = htpVersions.single()
+            val required = listOf(
+                "libLiteRtCompilerPlugin_Qualcomm.so",
+                "libLiteRtDispatch_Qualcomm.so",
+                "libQnnHtp.so",
+                "libQnnSystem.so",
+                "libQnnHtpV${htpVersion}Skel.so",
+                "libQnnHtpV${htpVersion}Stub.so",
+                "libQnnHtpPrepare.so",
+                "libQnnIr.so",
+                "libQnnSaver.so"
+            )
+            val missing = required.filterNot(names::contains)
+            if (missing.isNotEmpty()) {
+                throw GradleException(
+                    "[flutter_litert] Qualcomm NPU JIT runtime is incomplete: " +
+                        missing.joinToString { "missing $it" }
+                )
+            }
+            val conflictingLiteRtLibraries = names.filter { name ->
+                (name.startsWith("libLiteRtCompilerPlugin_") ||
+                    name.startsWith("libLiteRtDispatch_")) &&
+                    name !in required
+            }
+            if (conflictingLiteRtLibraries.isNotEmpty()) {
+                throw GradleException(
+                    "[flutter_litert] Qualcomm NPU runtime contains conflicting " +
+                        "LiteRT vendor libraries: " +
+                        conflictingLiteRtLibraries.sorted().joinToString()
+                )
+            }
+
+            fileSystemOperations.copy {
+                from(qualcommNpuDir) {
+                    include(required)
+                }
+                into(File(outDir, "arm64-v8a"))
+            }
+            required
+        } else {
+            emptyList()
+        }
+
         val expectedLibraries = mutableListOf(
             "arm64-v8a/libLiteRt.so",
             "armeabi-v7a/libLiteRt.so",
@@ -196,14 +297,28 @@ abstract class DownloadLitertJniTask : DefaultTask() {
                 "x86_64/libLiteRtClGlAccelerator.so"
             )
         }
-        val unexpectedLibraries = if (shouldBundleGpu) {
-            listOf("armeabi-v7a/libLiteRtClGlAccelerator.so")
-        } else {
-            listOf(
-                "arm64-v8a/libLiteRtClGlAccelerator.so",
-                "armeabi-v7a/libLiteRtClGlAccelerator.so",
-                "x86_64/libLiteRtClGlAccelerator.so"
-            )
+        expectedLibraries += qualcommNpuLibraries.map { "arm64-v8a/$it" }
+        val unexpectedLibraries = buildList {
+            if (shouldBundleGpu) {
+                add("armeabi-v7a/libLiteRtClGlAccelerator.so")
+            } else {
+                addAll(
+                    listOf(
+                        "arm64-v8a/libLiteRtClGlAccelerator.so",
+                        "armeabi-v7a/libLiteRtClGlAccelerator.so",
+                        "x86_64/libLiteRtClGlAccelerator.so"
+                    )
+                )
+            }
+            if (qualcommNpuDir == null) {
+                File(outDir, "arm64-v8a").listFiles()
+                    ?.filter { file ->
+                        file.name.startsWith("libLiteRtCompilerPlugin_") ||
+                            file.name.startsWith("libLiteRtDispatch_") ||
+                            file.name.startsWith("libQnn")
+                    }
+                    ?.forEach { file -> add("arm64-v8a/${file.name}") }
+            }
         }
         val missing = expectedLibraries.filterNot { File(outDir, it).isFile }
         val unexpected = unexpectedLibraries.filter { File(outDir, it).exists() }
@@ -221,6 +336,9 @@ abstract class DownloadLitertJniTask : DefaultTask() {
 val downloadLitertJni = tasks.register<DownloadLitertJniTask>("downloadLitertJni") {
     litertVersion.set(litertNextVersion)
     bundleGpuAccelerator.set(shouldBundleGpuAccelerator)
+    if (qualcommNpuRuntimeDirectory != null) {
+        qualcommNpuRuntimeDir.fileValue(qualcommNpuRuntimeDirectory)
+    }
 }
 
 androidComponents {

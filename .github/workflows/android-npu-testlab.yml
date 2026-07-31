@@ -1,0 +1,291 @@
+name: Android physical NPU (Firebase Test Lab)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Qualcomm device and matching HTP runtime generation
+        required: true
+        default: galaxy-s23-sm8550-htp-v73
+        type: choice
+        options:
+          - galaxy-s23-sm8550-htp-v73
+          - galaxy-s24-ultra-sm8650-htp-v75
+          - galaxy-s25-ultra-sm8750-htp-v79
+      full_sweep:
+        description: Also compile and compare representative face, segmentation, and pose models
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-physical-npu-testlab
+  cancel-in-progress: false
+
+jobs:
+  strict-npu:
+    name: Qualcomm NPU on ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FIREBASE_PROJECT_ID: flutter-litert
+      DEVICE_MODEL: ${{ inputs.target == 'galaxy-s25-ultra-sm8750-htp-v79' && 'pa3q' || inputs.target == 'galaxy-s24-ultra-sm8650-htp-v75' && 'e3q' || 'dm1q' }}
+      ANDROID_VERSION: ${{ inputs.target == 'galaxy-s24-ultra-sm8650-htp-v75' && '34' || '35' }}
+      LITERT_NEXT_VERSION: 2.1.6
+      QAIRT_VERSION: 2.47.0.260601
+      BUNDLETOOL_VERSION: 1.18.3
+      QUALCOMM_HTP_VERSION: ${{ inputs.target == 'galaxy-s25-ultra-sm8750-htp-v79' && '79' || inputs.target == 'galaxy-s24-ultra-sm8650-htp-v75' && '75' || '73' }}
+      NPU_FEATURE_ROOT: ${{ github.workspace }}/build/codex-tmp/android-npu-features
+      FULL_SWEEP: ${{ inputs.full_sweep && 'true' || 'false' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Restore prepared Qualcomm feature modules
+        id: npu-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.NPU_FEATURE_ROOT }}
+          key: android-npu-features-litert-${{ env.LITERT_NEXT_VERSION }}-qairt-${{ env.QAIRT_VERSION }}-htp-v73-v75-v79
+
+      # Google's JIT runtime release contains the LiteRT compiler and dispatch
+      # plugins. Qualcomm's public QAIRT archive is large (~2.35 GB), but the
+      # 27 runtime files across v73/v75/v79 total ~315 MB. Cache the production
+      # feature root so subsequent Test Lab runs avoid the large fetch and
+      # build the same device-targeted AAB.
+      # This step happens before gcloud is invoked and therefore consumes no
+      # Firebase Test Lab quota if preparation or the build fails.
+      - name: Prepare Qualcomm device-targeted feature modules
+        if: steps.npu-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$NPU_FEATURE_ROOT"
+
+          LITERT_ZIP="$RUNNER_TEMP/litert_npu_runtime_libraries_jit.zip"
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://github.com/google-ai-edge/LiteRT/releases/download/v${LITERT_NEXT_VERSION}/litert_npu_runtime_libraries_jit.zip" \
+            --output "$LITERT_ZIP"
+          echo "a01535b3932e64ed965570fa3b28f74ac49841e357770329b8fe527d93d6ac25  $LITERT_ZIP" \
+            | sha256sum --check -
+          unzip -q "$LITERT_ZIP" \
+            "runtime_strings/*" \
+            "qualcomm_runtime_v73/*" \
+            "qualcomm_runtime_v75/*" \
+            "qualcomm_runtime_v79/*" \
+            -d "$NPU_FEATURE_ROOT"
+
+          QAIRT_ZIP="$RUNNER_TEMP/qairt-${QAIRT_VERSION}.zip"
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/${QAIRT_VERSION}/v${QAIRT_VERSION}.zip" \
+            --output "$QAIRT_ZIP"
+          echo "d3497e110eae82c35a9152a93c0a18bbede402aaf9faa7a97c8079eb0f522b01  $QAIRT_ZIP" \
+            | sha256sum --check -
+          for htp_version in 73 75 79; do
+            runtime_dir="$NPU_FEATURE_ROOT/qualcomm_runtime_v${htp_version}/src/main/jni/arm64-v8a"
+            mkdir -p "$runtime_dir"
+            unzip -jo "$QAIRT_ZIP" \
+              "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnHtp.so" \
+              "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnSystem.so" \
+              "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnHtpV${htp_version}Stub.so" \
+              "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnHtpPrepare.so" \
+              "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnIr.so" \
+              "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnSaver.so" \
+              "qairt/${QAIRT_VERSION}/lib/hexagon-v${htp_version}/unsigned/libQnnHtpV${htp_version}Skel.so" \
+              -d "$runtime_dir"
+          done
+
+      - name: Verify prepared Qualcomm feature modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$NPU_FEATURE_ROOT/runtime_strings/build.gradle.kts"
+          for htp_version in 73 75 79; do
+            runtime_dir="$NPU_FEATURE_ROOT/qualcomm_runtime_v${htp_version}/src/main/jni/arm64-v8a"
+            required=(
+              libLiteRtCompilerPlugin_Qualcomm.so
+              libLiteRtDispatch_Qualcomm.so
+              libQnnHtp.so
+              libQnnSystem.so
+              "libQnnHtpV${htp_version}Skel.so"
+              "libQnnHtpV${htp_version}Stub.so"
+              libQnnHtpPrepare.so
+              libQnnIr.so
+              libQnnSaver.so
+            )
+            for library in "${required[@]}"; do
+              test -s "$runtime_dir/$library"
+            done
+            find "$runtime_dir" -maxdepth 1 -type f -name '*.so' -print -exec file {} \;
+          done
+
+      - name: Cache prepared Qualcomm feature modules
+        if: steps.npu-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.NPU_FEATURE_ROOT }}
+          key: android-npu-features-litert-${{ env.LITERT_NEXT_VERSION }}-qairt-${{ env.QAIRT_VERSION }}-htp-v73-v75-v79
+
+      - name: Install example dependencies
+        working-directory: example
+        run: flutter pub get
+
+      # A debug build is required because release builds omit
+      # package:integration_test. The feature root is explicit and opt-in;
+      # ordinary Android builds remain CPU/GPU-only and unchanged.
+      - name: Build device-targeted app bundle and instrumentation APK
+        working-directory: example
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build apk --config-only --debug
+          FULL_SWEEP_DEFINE="$(printf 'ANDROID_NPU_FULL_SWEEP=%s' "$FULL_SWEEP" | base64 -w 0)"
+          TOLERANCE_DEFINE="$(printf 'ANDROID_NPU_ENFORCE_FULL_SWEEP_TOLERANCE=false' | base64 -w 0)"
+          DART_DEFINES="$FULL_SWEEP_DEFINE,$TOLERANCE_DEFINE"
+          cd android
+          ./gradlew app:assembleAndroidTest \
+            -PflutterLitert.testLabAbi=arm64-v8a \
+            -PflutterLitert.qualcommNpuFeatureRoot="$NPU_FEATURE_ROOT" \
+            --stacktrace
+          ./gradlew app:bundleDebug \
+            -Ptarget="$GITHUB_WORKSPACE/example/integration_test/android_compiled_model_npu_test.dart" \
+            -Pdart-defines="$DART_DEFINES" \
+            -PflutterLitert.testLabAbi=arm64-v8a \
+            -PflutterLitert.qualcommNpuFeatureRoot="$NPU_FEATURE_ROOT" \
+            --stacktrace
+
+      # Test Lab accepts AABs but currently installs the default device group
+      # for this beta targeting dimension. Derive the one matching fused APK
+      # with Google's bundletool after validating the production AAB.
+      - name: Derive and verify the targeted Test Lab APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLETOOL="$RUNNER_TEMP/bundletool-all-${BUNDLETOOL_VERSION}.jar"
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar" \
+            --output "$BUNDLETOOL"
+          echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  $BUNDLETOOL" \
+            | sha256sum --check -
+
+          AAB=example/build/app/outputs/bundle/debug/app-debug.aab
+          java -jar "$BUNDLETOOL" validate --bundle="$AAB"
+          mkdir -p "$RUNNER_TEMP/android-npu-testlab"
+          java -jar "$BUNDLETOOL" build-apks \
+            --bundle="$AAB" \
+            --output="$RUNNER_TEMP/android-npu-testlab/app.apks" \
+            --mode=universal \
+            --modules="base,qualcomm_runtime_v${QUALCOMM_HTP_VERSION}" \
+            --overwrite
+          unzip -jo "$RUNNER_TEMP/android-npu-testlab/app.apks" universal.apk \
+            -d "$RUNNER_TEMP/android-npu-testlab"
+
+          APK="$RUNNER_TEMP/android-npu-testlab/universal.apk"
+          ACTUAL_NPU_LIBS="$RUNNER_TEMP/android-npu-libs.txt"
+          EXPECTED_NPU_LIBS="$RUNNER_TEMP/expected-android-npu-libs.txt"
+          zipinfo -1 "$APK" \
+            | grep -E 'lib/arm64-v8a/(libLiteRt(CompilerPlugin|Dispatch)_Qualcomm|libQnn).*[.]so$' \
+            | sort > "$ACTUAL_NPU_LIBS"
+          printf '%s\n' \
+            lib/arm64-v8a/libLiteRtCompilerPlugin_Qualcomm.so \
+            lib/arm64-v8a/libLiteRtDispatch_Qualcomm.so \
+            lib/arm64-v8a/libQnnHtp.so \
+            lib/arm64-v8a/libQnnHtpPrepare.so \
+            "lib/arm64-v8a/libQnnHtpV${QUALCOMM_HTP_VERSION}Skel.so" \
+            "lib/arm64-v8a/libQnnHtpV${QUALCOMM_HTP_VERSION}Stub.so" \
+            lib/arm64-v8a/libQnnIr.so \
+            lib/arm64-v8a/libQnnSaver.so \
+            lib/arm64-v8a/libQnnSystem.so \
+            | sort > "$EXPECTED_NPU_LIBS"
+          diff -u "$EXPECTED_NPU_LIBS" "$ACTUAL_NPU_LIBS"
+          cat "$ACTUAL_NPU_LIBS"
+
+          PACKAGED_ABIS="$(zipinfo -1 "$APK" \
+            | grep '^lib/' | cut -d/ -f2 | sort -u)"
+          test "$PACKAGED_ABIS" = arm64-v8a
+
+          ANDROID_SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$ANDROID_SDK"
+          AAPT2="$(find "$ANDROID_SDK/build-tools" -type f -name aapt2 \
+            | sort -V | tail -1)"
+          test -x "$AAPT2"
+          "$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml \
+            > "$RUNNER_TEMP/android-npu-manifest.txt"
+          grep -q 'extractNativeLibs.*=true' \
+            "$RUNNER_TEMP/android-npu-manifest.txt"
+          grep -q "base,qualcomm_runtime_v${QUALCOMM_HTP_VERSION}" \
+            "$RUNNER_TEMP/android-npu-manifest.txt"
+          grep -A1 'android:name.*=\"libcdsprpc.so\"' \
+            "$RUNNER_TEMP/android-npu-manifest.txt" \
+            | grep -q 'android:required.*=false'
+
+          zipinfo -l "$APK" | grep -E 'lib/arm64-v8a/(libLiteRt(CompilerPlugin|Dispatch)_Qualcomm|libQnn).*[.]so$'
+
+      - name: Authenticate to Firebase Test Lab
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.FIREBASE_TEST_LAB_CREDENTIALS }}
+
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.FIREBASE_PROJECT_ID }}
+
+      - name: Verify the physical Qualcomm device selection
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEVICE_FORM="$(gcloud firebase test android models describe "$DEVICE_MODEL" \
+            --project "$FIREBASE_PROJECT_ID" --format='value(form)')"
+          if [[ "${DEVICE_FORM^^}" != "PHYSICAL" ]]; then
+            echo "::error::Test Lab model $DEVICE_MODEL is $DEVICE_FORM, not PHYSICAL"
+            exit 1
+          fi
+          gcloud firebase test android models describe "$DEVICE_MODEL" \
+            --project "$FIREBASE_PROJECT_ID"
+
+      - name: Run strict CompiledModel NPU test on physical hardware
+        shell: bash
+        run: |
+          set -o pipefail
+          gcloud firebase test android run \
+            --project "$FIREBASE_PROJECT_ID" \
+            --type instrumentation \
+            --app "$RUNNER_TEMP/android-npu-testlab/universal.apk" \
+            --test example/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
+            --device "model=$DEVICE_MODEL,version=$ANDROID_VERSION,locale=en,orientation=portrait" \
+            --timeout 15m \
+            --results-history-name flutter-litert-android-npu \
+            2>&1 | tee testlab.log
+
+      # On-device assertion messages and LiteRT/QAIRT diagnostics live in the
+      # results bucket, not in gcloud's summary table.
+      - name: Dump Test Lab artifacts on failure
+        if: failure()
+        shell: bash
+        run: |
+          RESULTS_PATH="$(grep -oE 'storage/browser/[^[:space:]]+' testlab.log | head -1 \
+            | sed -e 's#storage/browser/##' -e 's#/$##')"
+          if [ -z "$RESULTS_PATH" ]; then
+            echo "No results path found in gcloud output; nothing to dump."
+            exit 0
+          fi
+          echo "===== instrumentation results"
+          gsutil cat "gs://$RESULTS_PATH/*/instrumentation.results" || true
+          echo "===== logcat (LiteRT / Qualcomm NPU lines)"
+          gsutil cat "gs://$RESULTS_PATH/*/logcat" \
+            | grep -iE 'litert|qnn|qairt|htp|npu|compiler|dispatch' \
+            | tail -250 || true

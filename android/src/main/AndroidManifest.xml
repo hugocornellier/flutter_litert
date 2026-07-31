@@ -7,9 +7,12 @@
              declarations must be made here for them to reach consuming apps.
              They are also independent of the deprecated classic litert-gpu
              dependency, whose manifest currently supplies the libOpenCL
-             entries but is slated for removal in 4.0.0. All are optional:
-             absent libraries fail the runtime's GPU probe gracefully and
-             CompiledModel falls back to the CPU. -->
+             entries but is slated for removal in 4.0.0. All declarations are
+             optional: an unavailable vendor library makes the corresponding
+             accelerator probe fail without making the app uninstallable. -->
+        <!-- Qualcomm NPU -->
+        <uses-native-library android:name="libcdsprpc.so" android:required="false"/>
+        <!-- GPU -->
         <uses-native-library android:name="libOpenCL.so" android:required="false"/>
         <uses-native-library android:name="libOpenCL-car.so" android:required="false"/>
         <uses-native-library android:name="libOpenCL-pixel.so" android:required="false"/>

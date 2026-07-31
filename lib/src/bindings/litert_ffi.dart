@@ -23,6 +23,9 @@ import 'litert_loader.dart';
 
 const int kLiteRtAnyTypeInt = 2;
 const int kLiteRtAnyTypeString = 8;
+const int kLiteRtEnvOptionTagCompilerPluginLibraryDir = 0;
+const int kLiteRtEnvOptionTagDispatchLibraryDir = 1;
+const int kLiteRtEnvOptionTagCompilerCacheDir = 18;
 const int kLiteRtEnvOptionTagRuntimeLibraryDir = 22;
 const int kLiteRtEnvOptionTagAutoRegisterAccelerators = 24;
 
@@ -93,12 +96,53 @@ final class LiteRtEnvOption extends Struct {
 
 typedef LiteRtOpaquePayloadDeleterNative = Void Function(Pointer<Void>);
 
+int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Pointer<Void>>)
+_bindCreateModelFromFile(DynamicLibrary dylib) {
+  // LiteRT 2.1.6 added an environment as the first model-loading argument but
+  // kept the same exported symbol names and public API version. Android is
+  // pinned to 2.1.6; the currently bundled Apple/desktop runtimes retain the
+  // legacy ABI. Present one environment-aware Dart signature to the caller and
+  // adapt only at this binding boundary.
+  if (Platform.isAndroid) {
+    return dylib.lookupFunction<
+      Int32 Function(Pointer<Void>, Pointer<Utf8>, Pointer<Pointer<Void>>),
+      int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Pointer<Void>>)
+    >('LiteRtCreateModelFromFile');
+  }
+  final legacy = dylib
+      .lookupFunction<
+        Int32 Function(Pointer<Utf8>, Pointer<Pointer<Void>>),
+        int Function(Pointer<Utf8>, Pointer<Pointer<Void>>)
+      >('LiteRtCreateModelFromFile');
+  return (_, path, model) => legacy(path, model);
+}
+
+int Function(Pointer<Void>, Pointer<Void>, int, Pointer<Pointer<Void>>)
+_bindCreateModelFromBuffer(DynamicLibrary dylib) {
+  if (Platform.isAndroid) {
+    return dylib.lookupFunction<
+      Int32 Function(
+        Pointer<Void>,
+        Pointer<Void>,
+        IntPtr,
+        Pointer<Pointer<Void>>,
+      ),
+      int Function(Pointer<Void>, Pointer<Void>, int, Pointer<Pointer<Void>>)
+    >('LiteRtCreateModelFromBuffer');
+  }
+  final legacy = dylib
+      .lookupFunction<
+        Int32 Function(Pointer<Void>, IntPtr, Pointer<Pointer<Void>>),
+        int Function(Pointer<Void>, int, Pointer<Pointer<Void>>)
+      >('LiteRtCreateModelFromBuffer');
+  return (_, buffer, size, model) => legacy(buffer, size, model);
+}
+
 /// Hand-written bindings for the LiteRT Next C API surface used by
 /// [CompiledModel].
 final class LiteRtBindings {
   LiteRtBindings(DynamicLibrary dylib)
-    : _dylib = dylib,
-      createEnvironment = dylib
+    : createEnvironment = dylib
           .lookupFunction<
             Int32 Function(
               Int32,
@@ -152,11 +196,8 @@ final class LiteRtBindings {
             Int32 Function(Pointer<Void>, Pointer<Void>),
             int Function(Pointer<Void>, Pointer<Void>)
           >('LiteRtAddOpaqueOptions'),
-      createModelFromFile = dylib
-          .lookupFunction<
-            Int32 Function(Pointer<Utf8>, Pointer<Pointer<Void>>),
-            int Function(Pointer<Utf8>, Pointer<Pointer<Void>>)
-          >('LiteRtCreateModelFromFile'),
+      createModelFromFile = _bindCreateModelFromFile(dylib),
+      createModelFromBuffer = _bindCreateModelFromBuffer(dylib),
       destroyModel = dylib
           .lookupFunction<
             Void Function(Pointer<Void>),
@@ -407,13 +448,10 @@ final class LiteRtBindings {
   final void Function(Pointer<Void>) destroyOpaqueOptions;
   final int Function(Pointer<Void>, Pointer<Void>) addOpaqueOptions;
 
-  final int Function(Pointer<Utf8>, Pointer<Pointer<Void>>) createModelFromFile;
-  late final int Function(Pointer<Void>, int, Pointer<Pointer<Void>>)
-  createModelFromBuffer = _dylib
-      .lookupFunction<
-        Int32 Function(Pointer<Void>, IntPtr, Pointer<Pointer<Void>>),
-        int Function(Pointer<Void>, int, Pointer<Pointer<Void>>)
-      >('LiteRtCreateModelFromBuffer');
+  final int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Pointer<Void>>)
+  createModelFromFile;
+  final int Function(Pointer<Void>, Pointer<Void>, int, Pointer<Pointer<Void>>)
+  createModelFromBuffer;
   final void Function(Pointer<Void>) destroyModel;
 
   final int Function(
@@ -501,8 +539,6 @@ final class LiteRtBindings {
   final int Function(Pointer<Void>) clearTensorBufferEvent;
   final int Function(Pointer<Void>, int) waitEvent;
   final void Function(Pointer<Void>) destroyEvent;
-
-  final DynamicLibrary _dylib;
 }
 
 final litert = LiteRtBindings(litertDynamicLibrary);

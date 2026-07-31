@@ -21,6 +21,7 @@ import 'dart:io';
 import 'package:flutter_litert/src/delegates/delegate_library_loader.dart';
 
 String? _litertRuntimeDir;
+String? _androidNativeLibraryDir;
 DynamicLibrary? _appleCoreMlNpuAcceleratorLibrary;
 String? _macOsCoreMlNpuAcceleratorPath;
 
@@ -36,6 +37,17 @@ typedef _AppleCoreMlNpuDelegatedNodeCountDart = int Function();
 String? get litertRuntimeDir {
   litertDynamicLibrary;
   return _litertRuntimeDir;
+}
+
+/// Extracted Android native-library directory, when available.
+///
+/// Qualcomm NPU support requires `useLegacyPackaging = true`, so the libraries
+/// are real files in this directory rather than entries loaded directly from
+/// the APK. LiteRT's compiler-plugin and dispatch scanners both need that
+/// filesystem path.
+String? get androidNativeLibraryDir {
+  litertDynamicLibrary;
+  return _androidNativeLibraryDir;
 }
 
 /// Exact path passed to `dlopen` for the macOS NPU bridge, once loaded.
@@ -141,6 +153,8 @@ final DynamicLibrary litertDynamicLibrary = () {
 }();
 
 DynamicLibrary _loadAndroidLibrary() {
+  final library = DynamicLibrary.open('libLiteRt.so');
+
   // LiteRT Next native libraries are bundled as jniLibs by
   // android/build.gradle.kts (downloaded at build time from the API-pinned
   // release), so the Android linker resolves bare sonames from the app's
@@ -154,7 +168,49 @@ DynamicLibrary _loadAndroidLibrary() {
   // from the same native library path, so an accelerator bundled for the
   // current ABI is still discoverable.
   _litertRuntimeDir = null;
-  return DynamicLibrary.open('libLiteRt.so');
+  _androidNativeLibraryDir = _resolveAndroidNativeLibraryDir();
+  return library;
+}
+
+String? _resolveAndroidNativeLibraryDir() {
+  final override = Platform.environment['LITERT_ANDROID_NPU_LIB_PATH'];
+  if (override != null && override.isNotEmpty) {
+    final directory = Directory(override);
+    if (directory.existsSync()) {
+      return directory.absolute.path;
+    }
+  }
+
+  // Android does not expose ApplicationInfo.nativeLibraryDir to Dart FFI.
+  // Once libLiteRt.so is open, /proc/self/maps provides the same extracted
+  // path without requiring an asynchronous platform channel (which would also
+  // be unavailable in ordinary worker isolates). APK-backed mappings contain
+  // "!" and are deliberately ignored: LiteRT scans directories with the
+  // filesystem APIs, so those entries cannot support its NPU plugin loader.
+  try {
+    for (final line in File('/proc/self/maps').readAsLinesSync()) {
+      if (!line.contains('libLiteRt.so')) continue;
+      final fields = line.trim().split(RegExp(r'\s+'));
+      if (fields.isEmpty) continue;
+      var path = fields.last;
+      if (path == '(deleted)' && fields.length > 1) {
+        path = fields[fields.length - 2];
+      }
+      if (!path.endsWith('/libLiteRt.so') || path.contains('!')) continue;
+
+      final library = File(path);
+      if (!library.existsSync()) continue;
+      try {
+        return File(library.resolveSymbolicLinksSync()).parent.path;
+      } catch (_) {
+        return library.absolute.parent.path;
+      }
+    }
+  } catch (_) {
+    // Best effort. The NPU creation path reports a targeted setup error when
+    // no extracted directory can be resolved.
+  }
+  return null;
 }
 
 DynamicLibrary _loadIosLibrary() {

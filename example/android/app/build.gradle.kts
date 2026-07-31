@@ -7,6 +7,15 @@ plugins {
 }
 
 val testLabAbi = providers.gradleProperty("flutterLitert.testLabAbi").orNull
+val qualcommNpuRuntimeDir =
+    providers.gradleProperty("flutterLitert.qualcommNpuRuntimeDir").orNull
+val qualcommNpuFeatureRoot =
+    providers.gradleProperty("flutterLitert.qualcommNpuFeatureRoot").orNull
+
+require(qualcommNpuRuntimeDir == null || qualcommNpuFeatureRoot == null) {
+    "Use either flutterLitert.qualcommNpuRuntimeDir for a fused APK or " +
+        "flutterLitert.qualcommNpuFeatureRoot for device-targeted delivery, not both"
+}
 
 val agpVersion = com.android.Version.ANDROID_GRADLE_PLUGIN_VERSION
     .substringBefore('.')
@@ -31,7 +40,9 @@ android {
 
     defaultConfig {
         applicationId = "com.example.flutter_litert_example"
-        minSdk = flutter.minSdkVersion
+        // The official Qualcomm dispatch modules require Android 12. Normal
+        // example builds retain Flutter's lower minimum SDK.
+        minSdk = if (qualcommNpuFeatureRoot != null) 31 else flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -57,6 +68,34 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    if (qualcommNpuRuntimeDir != null || qualcommNpuFeatureRoot != null) {
+        // LiteRT discovers the NPU compiler and dispatch plugins by scanning
+        // ApplicationInfo.nativeLibraryDir. Qualcomm builds therefore must
+        // extract JNI libraries instead of loading them directly from the APK.
+        packaging {
+            jniLibs {
+                useLegacyPackaging = true
+            }
+        }
+    }
+
+    if (qualcommNpuFeatureRoot != null) {
+        bundle {
+            deviceTargetingConfig = file("device_targeting_configuration.xml")
+            deviceGroup {
+                enableSplit = true
+                defaultGroup = "other"
+            }
+        }
+        dynamicFeatures.addAll(
+            setOf(
+                ":qualcomm_runtime_v73",
+                ":qualcomm_runtime_v75",
+                ":qualcomm_runtime_v79",
+            )
+        )
+    }
 }
 
 flutter {
@@ -64,6 +103,9 @@ flutter {
 }
 
 dependencies {
+    if (qualcommNpuFeatureRoot != null) {
+        implementation(project(":litert_npu_runtime_strings"))
+    }
     testImplementation("junit:junit:4.13.2")
     // Match the versions resolved by Flutter's integration_test plugin on the
     // app runtime classpath; AGP enforces consistent debug/androidTest graphs.

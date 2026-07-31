@@ -124,8 +124,8 @@ class CompiledModel {
   ///
   /// True is a strong signal that the selected delegates together accepted the
   /// entire model. It does not identify which delegate ran which operations.
-  /// In Apple mixed `{npu, cpu}` mode, for example, Core ML and XNNPACK can
-  /// together make this true.
+  /// In mixed `{npu, cpu}` mode, for example, the vendor NPU delegate and the
+  /// CPU delegate can together make this true.
   ///
   /// **False is ambiguous, and deliberately not a fallback detector.** It means
   /// "not everything was accelerated", which covers both partial delegation and
@@ -165,7 +165,8 @@ class CompiledModel {
       accelerators: accelerators,
       precision: precision,
       tensorBufferMode: tensorBufferMode,
-      createModel: (rt) => _createModelFromFile(rt, path),
+      createModel: (rt, environment) =>
+          _createModelFromFile(rt, environment, path),
     );
   }
 
@@ -183,7 +184,8 @@ class CompiledModel {
       accelerators: accelerators,
       precision: precision,
       tensorBufferMode: tensorBufferMode,
-      createModel: (rt) => _createModelFromBuffer(rt, bytes),
+      createModel: (rt, environment) =>
+          _createModelFromBuffer(rt, environment, bytes),
     );
   }
 
@@ -288,10 +290,12 @@ class CompiledModel {
   /// app loading N models paid that cost N times. LiteRT environments are
   /// designed to be shared across many compiled models, so we create them
   /// lazily per isolate and reuse them. The normal environment uses LiteRT's
-  /// default registrations; the Apple NPU environment has deterministic
-  /// Core ML-before-XNNPACK ordering. They intentionally live for the isolate's
-  /// lifetime.
+  /// default registrations; the Android NPU environment supplies the vendor
+  /// compiler/dispatch paths; and the Apple NPU environment has deterministic
+  /// Core ML-before-XNNPACK ordering. They intentionally live for the
+  /// isolate's lifetime.
   static Pointer<Void>? _sharedEnvironment;
+  static Pointer<Void>? _sharedAndroidNpuEnvironment;
   static Pointer<Void>? _sharedAppleNpuEnvironment;
   static bool _appleCoreMlNpuRegistered = false;
 
@@ -299,9 +303,34 @@ class CompiledModel {
     LiteRtBindings rt, {
     required Set<Accelerator> accelerators,
   }) {
-    final isAppleNpu =
-        (Platform.isIOS || Platform.isMacOS) &&
-        accelerators.contains(Accelerator.npu);
+    final requestsNpu = accelerators.contains(Accelerator.npu);
+    if (Platform.isAndroid && requestsNpu) {
+      final nativeLibraryDir = androidNativeLibraryDir;
+      if (nativeLibraryDir == null) {
+        throw UnsupportedError(
+          'Android NPU libraries are not available as extracted files. '
+          'Package the matching LiteRT vendor runtime, restrict the app to '
+          'arm64-v8a/API 31 or newer, and set '
+          'android.packaging.jniLibs.useLegacyPackaging = true.',
+        );
+      }
+      if (!_containsAndroidNpuDispatchLibrary(nativeLibraryDir)) {
+        throw UnsupportedError(
+          'No LiteRT NPU dispatch library was found in '
+          '$nativeLibraryDir. Package exactly one device-compatible '
+          'libLiteRtDispatch_*.so runtime module before requesting '
+          'Accelerator.npu.',
+        );
+      }
+      return _sharedAndroidNpuEnvironment ??= _createEnvironment(
+        rt,
+        compilerPluginLibraryDir: nativeLibraryDir,
+        dispatchLibraryDir: nativeLibraryDir,
+        compilerCacheDir: _androidNpuCompilerCacheDir(),
+      );
+    }
+
+    final isAppleNpu = (Platform.isIOS || Platform.isMacOS) && requestsNpu;
     if (!isAppleNpu) {
       return _sharedEnvironment ??= _createEnvironment(rt);
     }
@@ -337,7 +366,8 @@ class CompiledModel {
     required Set<Accelerator> accelerators,
     required Precision precision,
     required TensorBufferMode tensorBufferMode,
-    required _ModelSource Function(LiteRtBindings rt) createModel,
+    required _ModelSource Function(LiteRtBindings rt, Pointer<Void> environment)
+    createModel,
   }) {
     _checkStructLayouts();
     final acceleratorMask = _acceleratorMask(accelerators);
@@ -364,7 +394,7 @@ class CompiledModel {
           precision == Precision.fp32) {
         gpuOptionsIdentifier = _addGpuFp32Options(rt, options);
       }
-      final source = createModel(rt);
+      final source = createModel(rt, environment);
       model = source.model;
       modelBuffer = source.modelBuffer;
       compiledModel = _createCompiledModel(rt, environment, model, options);
@@ -904,15 +934,30 @@ final class _HostMemoryAllocation {
 Pointer<Void> _createEnvironment(
   LiteRtBindings rt, {
   int? autoRegisterAccelerators,
+  String? compilerPluginLibraryDir,
+  String? dispatchLibraryDir,
+  String? compilerCacheDir,
 }) {
   final runtimeDir = litertRuntimeDir;
   final out = calloc<Pointer<Void>>();
   Pointer<LiteRtEnvOption>? envOptions;
-  Pointer<Utf8>? runtimeDirPtr;
+  final allocatedStrings = <Pointer<Utf8>>[];
   try {
+    final stringOptions = <MapEntry<int, String>>[
+      if (compilerPluginLibraryDir != null)
+        MapEntry(
+          kLiteRtEnvOptionTagCompilerPluginLibraryDir,
+          compilerPluginLibraryDir,
+        ),
+      if (dispatchLibraryDir != null)
+        MapEntry(kLiteRtEnvOptionTagDispatchLibraryDir, dispatchLibraryDir),
+      if (compilerCacheDir != null)
+        MapEntry(kLiteRtEnvOptionTagCompilerCacheDir, compilerCacheDir),
+      if (runtimeDir != null)
+        MapEntry(kLiteRtEnvOptionTagRuntimeLibraryDir, runtimeDir),
+    ];
     final optionCount =
-        (runtimeDir == null ? 0 : 1) +
-        (autoRegisterAccelerators == null ? 0 : 1);
+        stringOptions.length + (autoRegisterAccelerators == null ? 0 : 1);
     if (optionCount == 0) {
       _check(
         'LiteRtCreateEnvironment',
@@ -921,12 +966,13 @@ Pointer<Void> _createEnvironment(
     } else {
       envOptions = calloc<LiteRtEnvOption>(optionCount);
       var optionIndex = 0;
-      if (runtimeDir != null) {
-        runtimeDirPtr = runtimeDir.toNativeUtf8();
+      for (final option in stringOptions) {
+        final value = option.value.toNativeUtf8();
+        allocatedStrings.add(value);
         envOptions[optionIndex]
-          ..tag = kLiteRtEnvOptionTagRuntimeLibraryDir
+          ..tag = option.key
           ..value.type = kLiteRtAnyTypeString
-          ..value.value.strValue = runtimeDirPtr;
+          ..value.value.strValue = value;
         optionIndex++;
       }
       if (autoRegisterAccelerators != null) {
@@ -945,10 +991,37 @@ Pointer<Void> _createEnvironment(
     if (envOptions != null) {
       calloc.free(envOptions);
     }
-    if (runtimeDirPtr != null) {
-      malloc.free(runtimeDirPtr);
+    for (final value in allocatedStrings) {
+      malloc.free(value);
     }
     calloc.free(out);
+  }
+}
+
+bool _containsAndroidNpuDispatchLibrary(String nativeLibraryDir) {
+  try {
+    return Directory(nativeLibraryDir).listSync(followLinks: true).any((entry) {
+      final name = entry.uri.pathSegments.last;
+      return entry is File &&
+          name.startsWith('libLiteRtDispatch_') &&
+          name.endsWith('.so');
+    });
+  } catch (_) {
+    return false;
+  }
+}
+
+String? _androidNpuCompilerCacheDir() {
+  try {
+    final directory = Directory(
+      '${Directory.systemTemp.path}/flutter_litert_npu_cache',
+    );
+    directory.createSync(recursive: true);
+    return directory.path;
+  } catch (_) {
+    // Compilation still works without a cache. LiteRT will simply JIT the
+    // model again the next time a process starts.
+    return null;
   }
 }
 
@@ -1015,11 +1088,18 @@ final class _ModelSource {
   final Pointer<Uint8>? modelBuffer;
 }
 
-_ModelSource _createModelFromFile(LiteRtBindings rt, String path) {
+_ModelSource _createModelFromFile(
+  LiteRtBindings rt,
+  Pointer<Void> environment,
+  String path,
+) {
   final pathPtr = path.toNativeUtf8();
   final out = calloc<Pointer<Void>>();
   try {
-    _check('LiteRtCreateModelFromFile', rt.createModelFromFile(pathPtr, out));
+    _check(
+      'LiteRtCreateModelFromFile',
+      rt.createModelFromFile(environment, pathPtr, out),
+    );
     return _ModelSource(out.value);
   } finally {
     malloc.free(pathPtr);
@@ -1027,7 +1107,11 @@ _ModelSource _createModelFromFile(LiteRtBindings rt, String path) {
   }
 }
 
-_ModelSource _createModelFromBuffer(LiteRtBindings rt, Uint8List bytes) {
+_ModelSource _createModelFromBuffer(
+  LiteRtBindings rt,
+  Pointer<Void> environment,
+  Uint8List bytes,
+) {
   if (bytes.isEmpty) {
     throw ArgumentError.value(
       bytes.length,
@@ -1043,7 +1127,12 @@ _ModelSource _createModelFromBuffer(LiteRtBindings rt, Uint8List bytes) {
   try {
     _check(
       'LiteRtCreateModelFromBuffer',
-      rt.createModelFromBuffer(buffer.cast<Void>(), bytes.length, out),
+      rt.createModelFromBuffer(
+        environment,
+        buffer.cast<Void>(),
+        bytes.length,
+        out,
+      ),
     );
     return _ModelSource(out.value, buffer);
   } catch (_) {
@@ -1358,6 +1447,7 @@ void _releaseNative(
   if (environment != null &&
       environment != nullptr &&
       environment != CompiledModel._sharedEnvironment &&
+      environment != CompiledModel._sharedAndroidNpuEnvironment &&
       environment != CompiledModel._sharedAppleNpuEnvironment) {
     rt.destroyEnvironment(environment);
   }
