@@ -30,6 +30,7 @@ import 'interpreter_options.dart';
 import 'model.dart';
 import 'signature_runner.dart';
 import 'tensor.dart';
+import 'tflite_status.dart';
 
 /// LiteRT interpreter for running inference on a model.
 class Interpreter {
@@ -248,9 +249,9 @@ class Interpreter {
 
   /// Updates allocations for all tensors.
   void allocateTensors() {
-    checkState(
-      tfliteBinding.TfLiteInterpreterAllocateTensors(_interpreter) ==
-          TfLiteStatus.kTfLiteOk,
+    checkTfLiteStatus(
+      'TfLiteInterpreterAllocateTensors',
+      tfliteBinding.TfLiteInterpreterAllocateTensors(_interpreter),
     );
     _allocated = true;
   }
@@ -258,9 +259,9 @@ class Interpreter {
   /// Runs inference for the loaded graph.
   void invoke() {
     checkState(_allocated, message: 'Interpreter not allocated.');
-    checkState(
-      tfliteBinding.TfLiteInterpreterInvoke(_interpreter) ==
-          TfLiteStatus.kTfLiteOk,
+    checkTfLiteStatus(
+      'TfLiteInterpreterInvoke',
+      tfliteBinding.TfLiteInterpreterInvoke(_interpreter),
     );
   }
 
@@ -404,7 +405,7 @@ class Interpreter {
       dimensionSize,
     );
     calloc.free(dimensions);
-    checkState(status == TfLiteStatus.kTfLiteOk);
+    checkTfLiteStatus('TfLiteInterpreterResizeInputTensor', status);
     _inputTensors = null;
     _outputTensors = null;
     _inputTensorsCount = null;

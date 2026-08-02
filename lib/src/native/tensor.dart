@@ -28,6 +28,7 @@ import '../quantization_params.dart';
 import '../tensor_type.dart';
 import '../util/list_utils.dart' as list_utils;
 import '../util/tensor_shape_utils.dart' as shape_utils;
+import 'tflite_status.dart';
 
 export '../bindings/tensorflow_lite_bindings_generated.dart' show TfLiteType;
 export '../tensor_type.dart';
@@ -125,23 +126,29 @@ class Tensor {
     // copy path is kept here because the data pointer moves on realloc.
     if (type == TensorType.string) {
       final reallocStatus = tfliteBinding.TfLiteTensorRealloc(size, _tensor);
-      checkState(
-        reallocStatus == TfLiteStatus.kTfLiteOk,
-        message:
-            'TfLiteTensorRealloc failed for string tensor '
-            '(requested $size bytes, status=$reallocStatus).',
-      );
+      if (reallocStatus != TfLiteStatus.kTfLiteOk) {
+        throw StateError(
+          'TfLiteTensorRealloc failed for string tensor '
+          '(requested $size bytes) with '
+          'TfLiteStatus=${describeTfLiteStatus(reallocStatus)}.',
+        );
+      }
       final ptr = calloc<Uint8>(size);
       checkState(isNotNull(ptr), message: 'unallocated');
       ptr.asTypedList(size).setRange(0, size, bytes);
       try {
-        checkState(
-          tfliteBinding.TfLiteTensorCopyFromBuffer(_tensor, ptr.cast(), size) ==
-              TfLiteStatus.kTfLiteOk,
-          message:
-              'TfLiteTensorCopyFromBuffer failed '
-              '(buffer=$size bytes, tensor=${numBytes()} bytes).',
+        final copyStatus = tfliteBinding.TfLiteTensorCopyFromBuffer(
+          _tensor,
+          ptr.cast(),
+          size,
         );
+        if (copyStatus != TfLiteStatus.kTfLiteOk) {
+          throw StateError(
+            'TfLiteTensorCopyFromBuffer failed '
+            '(buffer=$size bytes, tensor=${numBytes()} bytes) with '
+            'TfLiteStatus=${describeTfLiteStatus(copyStatus)}.',
+          );
+        }
       } finally {
         calloc.free(ptr);
       }

@@ -23,6 +23,7 @@ import '../bindings/bindings.dart';
 import '../bindings/tensorflow_lite_bindings_generated.dart';
 import '../ffi/helper.dart';
 import 'tensor.dart';
+import 'tflite_status.dart';
 
 /// A runner for a specific model signature, enabling named tensor access.
 ///
@@ -198,7 +199,7 @@ class SignatureRunner {
           dimensions,
           dimensionSize,
         );
-        checkState(status == TfLiteStatus.kTfLiteOk);
+        checkTfLiteStatus('TfLiteSignatureRunnerResizeInputTensor', status);
         _allocated = false;
         _invalidateTensorCaches();
       } finally {
@@ -219,9 +220,9 @@ class SignatureRunner {
   /// [resizeInputTensor] calls, before the first [invoke].
   void allocateTensors() {
     checkState(!_closed, message: 'SignatureRunner is already closed.');
-    checkState(
-      tfliteBinding.TfLiteSignatureRunnerAllocateTensors(_runner) ==
-          TfLiteStatus.kTfLiteOk,
+    checkTfLiteStatus(
+      'TfLiteSignatureRunnerAllocateTensors',
+      tfliteBinding.TfLiteSignatureRunnerAllocateTensors(_runner),
     );
     _allocated = true;
     // Allocation can relocate tensor structs (e.g. first-time delegate
@@ -239,9 +240,9 @@ class SignatureRunner {
       _allocated,
       message: 'Tensors not allocated. Call allocateTensors() before invoke().',
     );
-    checkState(
-      tfliteBinding.TfLiteSignatureRunnerInvoke(_runner) ==
-          TfLiteStatus.kTfLiteOk,
+    checkTfLiteStatus(
+      'TfLiteSignatureRunnerInvoke',
+      tfliteBinding.TfLiteSignatureRunnerInvoke(_runner),
     );
   }
 

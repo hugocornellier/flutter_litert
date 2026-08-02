@@ -1,0 +1,545 @@
+name: Android full model matrix (Firebase Test Lab)
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_model:
+        description: Physical device model ID (dm1q=Galaxy S23, caiman=Pixel 9 Pro, a56x=Galaxy A56)
+        required: true
+        default: dm1q
+        type: string
+      android_version:
+        description: Android version supported by the selected device
+        required: true
+        default: '35'
+        type: string
+      single_execution:
+        description: >-
+          Run all 29 models in one Test Lab execution instead of five shards.
+          Costs one physical run rather than five, so several devices fit in a
+          day's quota. Pair it with a narrowed mode_filter to stay inside the
+          45-minute physical-device limit.
+        required: true
+        default: false
+        type: boolean
+      model_filter:
+        description: >-
+          Comma-separated model labels (repository/model), empty for all 29.
+          Narrowing this shortens the run, which is what distinguishes a
+          per-model incompatibility from a failure that only appears deep into
+          a long single process.
+        required: false
+        default: ''
+        type: string
+      mode_filter:
+        description: >-
+          Comma-separated mode labels, empty for all 13. On a non-Qualcomm SoC
+          the five NPU modes can only fail, so dropping them costs no
+          information and roughly halves the run.
+        required: false
+        default: ''
+        type: string
+      iterations:
+        description: Timed inference samples per successful cell
+        required: true
+        default: '15'
+        type: string
+      warmup:
+        description: Warm-up inferences per successful cell
+        required: true
+        default: '5'
+        type: string
+      confirm_physical_runs:
+        description: Consume the daily physical-device runs (five, or one when single_execution)
+        required: true
+        default: true
+        type: boolean
+
+  # workflow_dispatch is only guaranteed once this file reaches the default
+  # branch. This guarded one-shot path lets the feature branch collect its first
+  # dataset; later pushes run only when their commit message deliberately keeps
+  # the [run android matrix] marker.
+  push:
+    branches:
+      - feature/npu
+    paths:
+      - .github/workflows/android-model-matrix-testlab.yml
+      - example/integration_test/android_model_matrix_test.dart
+      - example/tool/android_model_matrix_manifest.dart
+      - example/tool/merge_android_model_matrix_results.dart
+      - example/tool/stage_android_model_matrix_assets.dart
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-full-model-matrix-testlab
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.confirm_physical_runs) ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[run android matrix]'))
+    name: 29 models × Interpreter/CompiledModel × CPU/GPU/NPU
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      FIREBASE_PROJECT_ID: flutter-litert
+      DEVICE_MODEL: ${{ inputs.device_model || 'dm1q' }}
+      ANDROID_VERSION: ${{ inputs.android_version || '35' }}
+      MATRIX_ITERATIONS: ${{ inputs.iterations || '15' }}
+      MATRIX_WARMUP: ${{ inputs.warmup || '5' }}
+      # "all" is one execution covering every model; the numeric list is the
+      # five-bin default. A push-triggered run has no inputs and so keeps the
+      # original five-shard behaviour.
+      MATRIX_SHARDS: ${{ inputs.single_execution && 'all' || '0 1 2 3 4' }}
+      MATRIX_MODE_FILTER: ${{ inputs.mode_filter || '' }}
+      MATRIX_MODEL_FILTER: ${{ inputs.model_filter || '' }}
+      LITERT_NEXT_VERSION: 2.1.6
+      QAIRT_VERSION: 2.47.0.260601
+      QUALCOMM_HTP_VERSION: '73'
+      NPU_RUNTIME_DIR: ${{ github.workspace }}/build/codex-tmp/android-npu-runtime/qualcomm-v73
+      MODEL_REPOSITORIES_ROOT: ${{ github.workspace }}/build/model-repositories
+      MATRIX_ASSET_ROOT: ${{ github.workspace }}/example/assets/models/model_matrix
+      APK_OUTPUT_ROOT: ${{ github.workspace }}/build/android-model-matrix/apks
+      RESULTS_OUTPUT_ROOT: ${{ github.workspace }}/build/android-model-matrix/results
+      TESTLAB_RESULTS_BUCKET: gs://test-lab-7yqvc8ruj90y2-k9u7wfunxj2sa
+      TESTLAB_RESULTS_PREFIX: android-model-matrix-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out flutter_litert
+        uses: actions/checkout@v4
+
+      - name: Check out face_detection_tflite models
+        uses: actions/checkout@v4
+        with:
+          repository: hugocornellier/face_detection_tflite
+          ref: 0a2a60ab69afbfbeefc2d31c0324f8e316935c58
+          path: build/model-repositories/face_detection_tflite
+          persist-credentials: false
+
+      - name: Check out pose_detection models
+        uses: actions/checkout@v4
+        with:
+          repository: hugocornellier/pose_detection
+          ref: fff3b69a4cd7ece1b3d08de39da9d69ff0480c72
+          path: build/model-repositories/pose_detection
+          persist-credentials: false
+
+      - name: Check out hand_detection models
+        uses: actions/checkout@v4
+        with:
+          repository: hugocornellier/hand_detection
+          ref: 20ece614dbaa65e457a132016570e2d34b6fa6d7
+          path: build/model-repositories/hand_detection
+          persist-credentials: false
+
+      - name: Check out animal_detection models
+        uses: actions/checkout@v4
+        with:
+          repository: hugocornellier/animal_detection
+          ref: 3f8c5e866c5f5cb8ce995bf77ef51059a2247cbb
+          path: build/model-repositories/animal_detection
+          persist-credentials: false
+
+      - name: Check out cat_detection models
+        uses: actions/checkout@v4
+        with:
+          repository: hugocornellier/cat_detection
+          ref: 500d6ae9b1c102cd199cff42ac3419016ebc79cc
+          path: build/model-repositories/cat_detection
+          persist-credentials: false
+
+      - name: Check out dog_detection models
+        uses: actions/checkout@v4
+        with:
+          repository: hugocornellier/dog_detection
+          ref: 98fde417792bd1345734fcfd3fb842955991174c
+          path: build/model-repositories/dog_detection
+          persist-credentials: false
+
+      - name: Check out object_detection models
+        uses: actions/checkout@v4
+        with:
+          repository: hugocornellier/object_detection
+          ref: 595bd929824b7b56a8a34bf2248cdd1f173fa2dd
+          path: build/model-repositories/object_detection
+          persist-credentials: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Restore prepared Qualcomm v73 runtime
+        id: npu-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.NPU_RUNTIME_DIR }}
+          key: android-npu-litert-${{ env.LITERT_NEXT_VERSION }}-qairt-${{ env.QAIRT_VERSION }}-htp-v${{ env.QUALCOMM_HTP_VERSION }}
+
+      # All preparation and APK validation happen before the first Test Lab
+      # command, so a dependency or packaging failure consumes no device quota.
+      - name: Prepare Qualcomm v73 JIT runtime
+        if: steps.npu-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p "$NPU_RUNTIME_DIR"
+
+          LITERT_ZIP="$RUNNER_TEMP/litert_npu_runtime_libraries_jit.zip"
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://github.com/google-ai-edge/LiteRT/releases/download/v${LITERT_NEXT_VERSION}/litert_npu_runtime_libraries_jit.zip" \
+            --output "$LITERT_ZIP"
+          echo "a01535b3932e64ed965570fa3b28f74ac49841e357770329b8fe527d93d6ac25  $LITERT_ZIP" \
+            | sha256sum --check -
+          unzip -jo "$LITERT_ZIP" \
+            "qualcomm_runtime_v${QUALCOMM_HTP_VERSION}/src/main/jni/arm64-v8a/*.so" \
+            -d "$NPU_RUNTIME_DIR"
+
+          QAIRT_ZIP="$RUNNER_TEMP/qairt-${QAIRT_VERSION}.zip"
+          curl --fail --location --retry 3 --silent --show-error \
+            "https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/${QAIRT_VERSION}/v${QAIRT_VERSION}.zip" \
+            --output "$QAIRT_ZIP"
+          echo "d3497e110eae82c35a9152a93c0a18bbede402aaf9faa7a97c8079eb0f522b01  $QAIRT_ZIP" \
+            | sha256sum --check -
+          unzip -jo "$QAIRT_ZIP" \
+            "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnHtp.so" \
+            "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnSystem.so" \
+            "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnHtpV${QUALCOMM_HTP_VERSION}Stub.so" \
+            "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnHtpPrepare.so" \
+            "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnIr.so" \
+            "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnSaver.so" \
+            "qairt/${QAIRT_VERSION}/lib/hexagon-v${QUALCOMM_HTP_VERSION}/unsigned/libQnnHtpV${QUALCOMM_HTP_VERSION}Skel.so" \
+            -d "$NPU_RUNTIME_DIR"
+
+      - name: Verify prepared Qualcomm runtime
+        shell: bash
+        run: |
+          required=(
+            libLiteRtCompilerPlugin_Qualcomm.so
+            libLiteRtDispatch_Qualcomm.so
+            libQnnHtp.so
+            libQnnSystem.so
+            "libQnnHtpV${QUALCOMM_HTP_VERSION}Skel.so"
+            "libQnnHtpV${QUALCOMM_HTP_VERSION}Stub.so"
+            libQnnHtpPrepare.so
+            libQnnIr.so
+            libQnnSaver.so
+          )
+          for library in "${required[@]}"; do
+            test -s "$NPU_RUNTIME_DIR/$library"
+          done
+          find "$NPU_RUNTIME_DIR" -maxdepth 1 -type f -name '*.so' -print -exec file {} \;
+
+      - name: Cache prepared Qualcomm v73 runtime
+        if: steps.npu-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.NPU_RUNTIME_DIR }}
+          key: android-npu-litert-${{ env.LITERT_NEXT_VERSION }}-qairt-${{ env.QAIRT_VERSION }}-htp-v${{ env.QUALCOMM_HTP_VERSION }}
+
+      # Create the generated directory before Flutter validates pubspec assets.
+      # The build step restages the exact model set for every APK.
+      - name: Stage initial matrix assets
+        run: >-
+          dart run example/tool/stage_android_model_matrix_assets.dart
+          --repositories-root "$MODEL_REPOSITORIES_ROOT"
+          --asset-root "$MATRIX_ASSET_ROOT"
+          --shard 1
+
+      - name: Install example dependencies
+        working-directory: example
+        run: flutter pub get
+
+      - name: Analyze matrix harness and result tools
+        working-directory: example
+        run: >-
+          flutter analyze
+          integration_test/android_model_matrix_test.dart
+          tool/android_model_matrix_manifest.dart
+          tool/stage_android_model_matrix_assets.dart
+          tool/merge_android_model_matrix_results.dart
+          test/android_model_matrix_manifest_test.dart
+
+      - name: Test the pinned matrix manifest
+        working-directory: example
+        run: flutter test test/android_model_matrix_manifest_test.dart
+
+      - name: Build instrumentation, virtual smoke, and five physical shards
+        working-directory: example
+        shell: bash
+        run: |
+          flutter build apk --config-only --debug
+          mkdir -p "$APK_OUTPUT_ROOT"
+
+          cd android
+          ./gradlew app:assembleAndroidTest \
+            -PflutterLitert.testLabAbi=arm64-v8a \
+            -PflutterLitert.qualcommNpuRuntimeDir="$NPU_RUNTIME_DIR" \
+            --stacktrace
+          cd ..
+          cp build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
+            "$APK_OUTPUT_ROOT/app-debug-androidTest.apk"
+
+          dart run tool/stage_android_model_matrix_assets.dart \
+            --repositories-root "$MODEL_REPOSITORIES_ROOT" \
+            --asset-root "$MATRIX_ASSET_ROOT" \
+            --shard 1
+          SMOKE_DEFINES="$(printf %s 'MATRIX_SHARD_INDEX=1' | base64 -w 0),$(printf %s 'MATRIX_MODEL_FILTER=gesture_embedder' | base64 -w 0),$(printf %s 'MATRIX_MODE_FILTER=interpreter_cpu_4t,compiled_cpu_fp32' | base64 -w 0),$(printf %s 'MATRIX_ITERS=1' | base64 -w 0),$(printf %s 'MATRIX_WARMUP=0' | base64 -w 0),$(printf %s 'MATRIX_REQUIRE_PHYSICAL=false' | base64 -w 0),$(printf %s "LITERT_COMMIT=$GITHUB_SHA" | base64 -w 0)"
+          cd android
+          ./gradlew app:assembleDebug \
+            -Ptarget="$GITHUB_WORKSPACE/example/integration_test/android_model_matrix_test.dart" \
+            -Pdart-defines="$SMOKE_DEFINES" \
+            -PflutterLitert.testLabAbi=arm64-v8a \
+            -PflutterLitert.qualcommNpuRuntimeDir="$NPU_RUNTIME_DIR" \
+            --rerun-tasks \
+            --stacktrace
+          cd ..
+          cp build/app/outputs/apk/debug/app-debug.apk \
+            "$APK_OUTPUT_ROOT/virtual-smoke.apk"
+
+          for shard in $MATRIX_SHARDS; do
+            dart run tool/stage_android_model_matrix_assets.dart \
+              --repositories-root "$MODEL_REPOSITORIES_ROOT" \
+              --asset-root "$MATRIX_ASSET_ROOT" \
+              --shard "$shard"
+            # The manifest's all-models sentinel is -1; "all" is only the
+            # human-readable token used for file and results-directory names.
+            if [ "$shard" = all ]; then SHARD_INDEX=-1; else SHARD_INDEX="$shard"; fi
+            DART_DEFINES="$(printf %s "MATRIX_SHARD_INDEX=$SHARD_INDEX" | base64 -w 0),$(printf %s "MATRIX_ITERS=$MATRIX_ITERATIONS" | base64 -w 0),$(printf %s "MATRIX_WARMUP=$MATRIX_WARMUP" | base64 -w 0),$(printf %s "MATRIX_MODE_FILTER=$MATRIX_MODE_FILTER" | base64 -w 0),$(printf %s "MATRIX_MODEL_FILTER=$MATRIX_MODEL_FILTER" | base64 -w 0),$(printf %s "MATRIX_MODEL_FILTER=$MATRIX_MODEL_FILTER" | base64 -w 0),$(printf %s 'MATRIX_ENFORCE_ACCURACY=false' | base64 -w 0),$(printf %s 'MATRIX_REQUIRE_PHYSICAL=true' | base64 -w 0),$(printf %s "LITERT_COMMIT=$GITHUB_SHA" | base64 -w 0)"
+            cd android
+            ./gradlew app:assembleDebug \
+              -Ptarget="$GITHUB_WORKSPACE/example/integration_test/android_model_matrix_test.dart" \
+              -Pdart-defines="$DART_DEFINES" \
+              -PflutterLitert.testLabAbi=arm64-v8a \
+              -PflutterLitert.qualcommNpuRuntimeDir="$NPU_RUNTIME_DIR" \
+              --rerun-tasks \
+              --stacktrace
+            cd ..
+            cp build/app/outputs/apk/debug/app-debug.apk \
+              "$APK_OUTPUT_ROOT/shard-$shard.apk"
+          done
+
+      - name: Verify APK architecture, delegates, runtime, and model packs
+        shell: bash
+        run: |
+          for shard in $MATRIX_SHARDS; do
+            APK="$APK_OUTPUT_ROOT/shard-$shard.apk"
+            test -s "$APK"
+            APK_LISTING="$RUNNER_TEMP/android-model-matrix-shard-$shard.txt"
+            zipinfo -1 "$APK" > "$APK_LISTING"
+            PACKAGED_ABIS="$(grep '^lib/' "$APK_LISTING" | cut -d/ -f2 | sort -u)"
+            test "$PACKAGED_ABIS" = arm64-v8a
+            grep -q '^lib/arm64-v8a/libLiteRt[.]so$' "$APK_LISTING"
+            grep -q '^lib/arm64-v8a/libtensorflowlite_gpu_jni[.]so$' "$APK_LISTING"
+            grep -q '^lib/arm64-v8a/libtensorflowlite_flex_jni[.]so$' "$APK_LISTING"
+            grep -q '^lib/arm64-v8a/libLiteRtCompilerPlugin_Qualcomm[.]so$' "$APK_LISTING"
+            grep -q '^lib/arm64-v8a/libLiteRtDispatch_Qualcomm[.]so$' "$APK_LISTING"
+            grep -q "^lib/arm64-v8a/libQnnHtpV${QUALCOMM_HTP_VERSION}Skel[.]so$" "$APK_LISTING"
+            MODEL_COUNT="$(grep -Ec 'flutter_assets/assets/models/model_matrix/.+[.]tflite$' "$APK_LISTING")"
+            case "$shard" in
+              0|2) EXPECTED_MODEL_COUNT=5 ;;
+              1|4) EXPECTED_MODEL_COUNT=6 ;;
+              3) EXPECTED_MODEL_COUNT=7 ;;
+              all) EXPECTED_MODEL_COUNT=29 ;;
+              # An unrecognised shard would otherwise compare against an empty
+              # expectation, which fails with no indication of why.
+              *) echo "Unknown shard '$shard'" >&2; exit 1 ;;
+            esac
+            test "$MODEL_COUNT" = "$EXPECTED_MODEL_COUNT"
+            echo "shard=$shard models=$MODEL_COUNT bytes=$(stat -c %s "$APK")"
+          done
+
+      - name: Authenticate to Firebase Test Lab
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.FIREBASE_TEST_LAB_CREDENTIALS }}
+
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.FIREBASE_PROJECT_ID }}
+
+      - name: Verify Test Lab device selections
+        shell: bash
+        run: |
+          PHYSICAL_FORM="$(gcloud firebase test android models describe "$DEVICE_MODEL" --project "$FIREBASE_PROJECT_ID" --format='value(form)')"
+          test "${PHYSICAL_FORM^^}" = PHYSICAL
+          gcloud firebase test android models describe "$DEVICE_MODEL" \
+            --project "$FIREBASE_PROJECT_ID"
+          VIRTUAL_FORM="$(gcloud firebase test android models describe MediumPhone.arm --project "$FIREBASE_PROJECT_ID" --format='value(form)')"
+          test "${VIRTUAL_FORM^^}" = VIRTUAL
+
+      # One free virtual execution proves installation, the Flutter integration
+      # runner, asset loading, framing, and both CPU APIs before any of today's
+      # five physical executions are submitted.
+      - name: Run virtual CPU packaging smoke
+        run: >-
+          gcloud firebase test android run
+          --project "$FIREBASE_PROJECT_ID"
+          --type instrumentation
+          --app "$APK_OUTPUT_ROOT/virtual-smoke.apk"
+          --test "$APK_OUTPUT_ROOT/app-debug-androidTest.apk"
+          --device "model=MediumPhone.arm,version=35,locale=en,orientation=portrait"
+          --timeout 10m
+          --num-flaky-test-attempts 0
+          --no-record-video
+          --results-dir "$TESTLAB_RESULTS_PREFIX-smoke"
+          --results-history-name flutter-litert-android-model-matrix-smoke
+
+      # One execution covering all 29 models. Costs a single physical run
+      # instead of five, which is what makes multi-device comparison fit in a
+      # day's quota. Narrow mode_filter to stay inside the 45-minute limit.
+      - name: Run physical single execution (all models)
+        id: physical_all
+        if: ${{ inputs.single_execution }}
+        continue-on-error: true
+        run: >-
+          gcloud firebase test android run
+          --project "$FIREBASE_PROJECT_ID"
+          --type instrumentation
+          --app "$APK_OUTPUT_ROOT/shard-all.apk"
+          --test "$APK_OUTPUT_ROOT/app-debug-androidTest.apk"
+          --device "model=$DEVICE_MODEL,version=$ANDROID_VERSION,locale=en,orientation=portrait"
+          --timeout 45m
+          --num-flaky-test-attempts 0
+          --no-record-video
+          --results-dir "$TESTLAB_RESULTS_PREFIX-shard-all"
+          --results-history-name flutter-litert-android-model-matrix
+
+      - name: Run physical shard 0 of 5
+        id: physical_0
+        if: ${{ !inputs.single_execution }}
+        continue-on-error: true
+        run: >-
+          gcloud firebase test android run
+          --project "$FIREBASE_PROJECT_ID"
+          --type instrumentation
+          --app "$APK_OUTPUT_ROOT/shard-0.apk"
+          --test "$APK_OUTPUT_ROOT/app-debug-androidTest.apk"
+          --device "model=$DEVICE_MODEL,version=$ANDROID_VERSION,locale=en,orientation=portrait"
+          --timeout 45m
+          --num-flaky-test-attempts 0
+          --no-record-video
+          --results-dir "$TESTLAB_RESULTS_PREFIX-shard-0"
+          --results-history-name flutter-litert-android-model-matrix
+
+      - name: Run physical shard 1 of 5
+        id: physical_1
+        if: ${{ !inputs.single_execution }}
+        continue-on-error: true
+        run: >-
+          gcloud firebase test android run
+          --project "$FIREBASE_PROJECT_ID"
+          --type instrumentation
+          --app "$APK_OUTPUT_ROOT/shard-1.apk"
+          --test "$APK_OUTPUT_ROOT/app-debug-androidTest.apk"
+          --device "model=$DEVICE_MODEL,version=$ANDROID_VERSION,locale=en,orientation=portrait"
+          --timeout 45m
+          --num-flaky-test-attempts 0
+          --no-record-video
+          --results-dir "$TESTLAB_RESULTS_PREFIX-shard-1"
+          --results-history-name flutter-litert-android-model-matrix
+
+      - name: Run physical shard 2 of 5
+        id: physical_2
+        if: ${{ !inputs.single_execution }}
+        continue-on-error: true
+        run: >-
+          gcloud firebase test android run
+          --project "$FIREBASE_PROJECT_ID"
+          --type instrumentation
+          --app "$APK_OUTPUT_ROOT/shard-2.apk"
+          --test "$APK_OUTPUT_ROOT/app-debug-androidTest.apk"
+          --device "model=$DEVICE_MODEL,version=$ANDROID_VERSION,locale=en,orientation=portrait"
+          --timeout 45m
+          --num-flaky-test-attempts 0
+          --no-record-video
+          --results-dir "$TESTLAB_RESULTS_PREFIX-shard-2"
+          --results-history-name flutter-litert-android-model-matrix
+
+      - name: Run physical shard 3 of 5
+        id: physical_3
+        if: ${{ !inputs.single_execution }}
+        continue-on-error: true
+        run: >-
+          gcloud firebase test android run
+          --project "$FIREBASE_PROJECT_ID"
+          --type instrumentation
+          --app "$APK_OUTPUT_ROOT/shard-3.apk"
+          --test "$APK_OUTPUT_ROOT/app-debug-androidTest.apk"
+          --device "model=$DEVICE_MODEL,version=$ANDROID_VERSION,locale=en,orientation=portrait"
+          --timeout 45m
+          --num-flaky-test-attempts 0
+          --no-record-video
+          --results-dir "$TESTLAB_RESULTS_PREFIX-shard-3"
+          --results-history-name flutter-litert-android-model-matrix
+
+      - name: Run physical shard 4 of 5
+        id: physical_4
+        if: ${{ !inputs.single_execution }}
+        continue-on-error: true
+        run: >-
+          gcloud firebase test android run
+          --project "$FIREBASE_PROJECT_ID"
+          --type instrumentation
+          --app "$APK_OUTPUT_ROOT/shard-4.apk"
+          --test "$APK_OUTPUT_ROOT/app-debug-androidTest.apk"
+          --device "model=$DEVICE_MODEL,version=$ANDROID_VERSION,locale=en,orientation=portrait"
+          --timeout 45m
+          --num-flaky-test-attempts 0
+          --no-record-video
+          --results-dir "$TESTLAB_RESULTS_PREFIX-shard-4"
+          --results-history-name flutter-litert-android-model-matrix
+
+      - name: Download raw Test Lab text artifacts
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          RAW_ROOT="$RESULTS_OUTPUT_ROOT/raw"
+          for shard in $MATRIX_SHARDS; do
+            mkdir -p "$RAW_ROOT/shard-$shard"
+            EXECUTION_ROOT="$TESTLAB_RESULTS_BUCKET/$TESTLAB_RESULTS_PREFIX-shard-$shard/$DEVICE_MODEL-$ANDROID_VERSION-en-portrait"
+            gcloud storage cp "$EXECUTION_ROOT/logcat" \
+              "$RAW_ROOT/shard-$shard/logcat" || true
+            gcloud storage cp "$EXECUTION_ROOT/instrumentation.results" \
+              "$RAW_ROOT/shard-$shard/instrumentation.results" || true
+            gcloud storage cp "$EXECUTION_ROOT/test_result_1.xml" \
+              "$RAW_ROOT/shard-$shard/test_result_1.xml" || true
+          done
+
+      - name: Merge all shards into JSON, CSV, and giant table
+        if: always()
+        working-directory: example
+        run: >-
+          dart run tool/merge_android_model_matrix_results.dart
+          --input-root "$RESULTS_OUTPUT_ROOT/raw"
+          --output-dir "$RESULTS_OUTPUT_ROOT/merged"
+          --source-run "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+      - name: Publish giant table in the job summary
+        if: always()
+        run: cat "$RESULTS_OUTPUT_ROOT/merged/ANDROID_MODEL_MATRIX_REPORT.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload merged dataset and raw diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-model-matrix-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.RESULTS_OUTPUT_ROOT }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Require a directly observed row for every matrix cell
+        if: always()
+        run: >-
+          jq --exit-status
+          '.summary.rectangular and (.summary.synthesized_rows == 0)'
+          "$RESULTS_OUTPUT_ROOT/merged/ANDROID_MODEL_MATRIX_RESULTS.json"
