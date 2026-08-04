@@ -318,8 +318,16 @@ class CompiledModel {
   static Pointer<Void>? _sharedAndroidNpuEnvironment;
   static Pointer<Void>? _sharedAppleNpuEnvironment;
   static bool _appleCoreMlNpuRegistered = false;
+  static bool _appleCoreMlNpuUnsupported = false;
 
-  static Pointer<Void> _sharedEnvironmentOf(
+  /// Resolves the environment plus the accelerator set it can honour.
+  ///
+  /// The returned set can be narrower than the request. Core ML NPU
+  /// registration is only detectable by attempting it, so unlike Android's
+  /// missing-runtime check this cannot be decided in [_effectiveAccelerators]
+  /// before an environment exists.
+  static ({Pointer<Void> environment, Set<Accelerator> accelerators})
+  _sharedEnvironmentOf(
     LiteRtBindings rt, {
     required Set<Accelerator> accelerators,
   }) {
@@ -342,17 +350,23 @@ class CompiledModel {
           'Accelerator.npu.',
         );
       }
-      return _sharedAndroidNpuEnvironment ??= _createEnvironment(
-        rt,
-        compilerPluginLibraryDir: nativeLibraryDir,
-        dispatchLibraryDir: nativeLibraryDir,
-        compilerCacheDir: _androidNpuCompilerCacheDir(),
+      return (
+        environment: _sharedAndroidNpuEnvironment ??= _createEnvironment(
+          rt,
+          compilerPluginLibraryDir: nativeLibraryDir,
+          dispatchLibraryDir: nativeLibraryDir,
+          compilerCacheDir: _androidNpuCompilerCacheDir(),
+        ),
+        accelerators: accelerators,
       );
     }
 
     final isAppleNpu = (Platform.isIOS || Platform.isMacOS) && requestsNpu;
     if (!isAppleNpu) {
-      return _sharedEnvironment ??= _createEnvironment(rt);
+      return (
+        environment: _sharedEnvironment ??= _createEnvironment(rt),
+        accelerators: accelerators,
+      );
     }
     if (accelerators.contains(Accelerator.gpu)) {
       throw UnsupportedError(
@@ -368,18 +382,43 @@ class CompiledModel {
     // mixed {npu, cpu} request would let XNNPACK consume the graph before
     // Core ML sees it. This dedicated environment disables auto-registration,
     // registers Core ML first, then registers XNNPACK as the CPU fallback.
+    // A build whose Core ML framework lacks the NPU entry points cannot
+    // register the accelerator at all. Strict {npu} must still fail loudly,
+    // but {npu, cpu} already asked for a fallback, so honour it rather than
+    // failing compilation outright. This mirrors the Android missing-runtime
+    // behaviour, which was previously Android-only.
+    if (_appleCoreMlNpuUnsupported && accelerators.length > 1) {
+      return (
+        environment: _sharedEnvironment ??= _createEnvironment(rt),
+        accelerators: Set<Accelerator>.of(accelerators)
+          ..remove(Accelerator.npu),
+      );
+    }
+
     final environment = _sharedAppleNpuEnvironment ??= _createEnvironment(
       rt,
       autoRegisterAccelerators: 0,
     );
     if (!_appleCoreMlNpuRegistered) {
-      _check(
-        'FlutterLiteRtRegisterCoreMlNpuAccelerator',
-        registerAppleCoreMlNpuAccelerator(environment),
-      );
+      final status = registerAppleCoreMlNpuAccelerator(environment);
+      if (status != _kLiteRtStatusOk) {
+        _appleCoreMlNpuUnsupported = true;
+        // Strict placement has no fallback to fall back to.
+        if (accelerators.length == 1) {
+          _check('FlutterLiteRtRegisterCoreMlNpuAccelerator', status);
+        }
+        // This environment disabled auto-registration so Core ML could go
+        // first, so it carries no CPU delegate and cannot serve the degraded
+        // request. The default environment can.
+        return (
+          environment: _sharedEnvironment ??= _createEnvironment(rt),
+          accelerators: Set<Accelerator>.of(accelerators)
+            ..remove(Accelerator.npu),
+        );
+      }
       _appleCoreMlNpuRegistered = true;
     }
-    return environment;
+    return (environment: environment, accelerators: accelerators);
   }
 
   static CompiledModel _fromSource({
@@ -390,8 +429,10 @@ class CompiledModel {
     createModel,
   }) {
     _checkStructLayouts();
-    final effectiveAccelerators = _effectiveAccelerators(accelerators);
-    final acceleratorMask = _acceleratorMask(effectiveAccelerators);
+    // Android can decide this up front from the packaged runtime. Apple cannot,
+    // so the environment may narrow it further and the mask has to follow.
+    var effectiveAccelerators = _effectiveAccelerators(accelerators);
+    var acceleratorMask = _acceleratorMask(effectiveAccelerators);
 
     final rt = litert;
     Pointer<Void> environment = nullptr;
@@ -409,10 +450,15 @@ class CompiledModel {
     final hostMemoryAllocations = <_HostMemoryAllocation>[];
 
     try {
-      environment = _sharedEnvironmentOf(
+      final resolved = _sharedEnvironmentOf(
         rt,
         accelerators: effectiveAccelerators,
       );
+      environment = resolved.environment;
+      if (resolved.accelerators.length != effectiveAccelerators.length) {
+        effectiveAccelerators = resolved.accelerators;
+        acceleratorMask = _acceleratorMask(effectiveAccelerators);
+      }
       options = _createOptions(rt, acceleratorMask);
       if (effectiveAccelerators.contains(Accelerator.gpu) &&
           precision == Precision.fp32) {

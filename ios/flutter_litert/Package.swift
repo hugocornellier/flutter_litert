@@ -44,8 +44,8 @@ let package = Package(
         ),
         .binaryTarget(
             name: "TensorFlowLiteCCoreML",
-            url: "https://github.com/hugocornellier/flutter_litert/releases/download/flex-v1.1.1/TensorFlowLiteCCoreML-spm.xcframework.zip",
-            checksum: "69e9c00536e15fca060bf8542e3e8f5ee6f8b7017226ed2407db4939db0bf6ae"
+            url: "https://github.com/hugocornellier/flutter_litert/releases/download/coreml-ios-v1.1.0/TensorFlowLiteCCoreML-spm.xcframework.zip",
+            checksum: "4d6932bbdf5791cd9d53b689dd796b47d7bd4595204aa04f88d29921701192eb"
         ),
         // LiteRT Next runtime + Metal accelerator (CompiledModel API). These
         // are the same conventional framework-wrapped xcframeworks the

@@ -199,7 +199,7 @@ jobs:
               platform=iPhoneSimulator
             fi
 
-            plutil -create xml "$framework/Info.plist"
+            plutil -create xml1 "$framework/Info.plist"
             plutil -insert CFBundleDevelopmentRegion -string en "$framework/Info.plist"
             plutil -insert CFBundleExecutable -string TensorFlowLiteCCoreML "$framework/Info.plist"
             plutil -insert CFBundleIdentifier -string org.tensorflow.TensorFlowLiteCCoreML "$framework/Info.plist"

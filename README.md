@@ -240,7 +240,7 @@ NPU maturity differs sharply by platform. Treat this table as the contract:
 | Platform | Status | Backend | Notes |
 |---|---|---|---|
 | **macOS** | **Stable** | Core ML, Apple Neural Engine | Apple Silicon, macOS 13+. Validated against CPU references across the published model set. |
-| **iOS** | **Stable** | Core ML, Apple Neural Engine | iOS 13+. Same Core ML path as macOS. |
+| **iOS** | **Registers; Neural Engine unvalidated** | Core ML, Apple Neural Engine | iOS 13+. The Core ML framework SwiftPM resolved previously predated the NPU entry points, so registration failed on device with `kLiteRtStatusErrorUnsupported`; `coreml-ios-v1.1.0` fixes that and registration is confirmed working. Confirmed on a simulator, which has no Neural Engine, so accuracy and performance on real ANE hardware are still unmeasured. Validate per model before relying on it. Interpreter, Metal GPU, and CompiledModel CPU/GPU are unaffected and match macOS. |
 | **Android** | **Work in progress** | Qualcomm HTP only | One vendor. Requires an app-provided JIT runtime; nothing is bundled. Validated on SM8550/v73, SM8650/v75, and SM8750/v79. MediaTek, Google Tensor, and Exynos NPUs are not supported. |
 | **Windows** | **Not yet** | — | LiteRT documents an Intel OpenVINO NPU backend; no bindings here yet. |
 | **Linux** | **Not yet** | — | Same as Windows. |
@@ -1279,6 +1279,53 @@ frame. flutter_litert ships that entire scaffold.
 The package deliberately does **not** depend on a camera plugin. You own the
 `CameraController`; these helpers cover everything between the frame arriving
 and the result being drawn.
+
+### Choosing an image library: use OpenCV for live video
+
+flutter_litert depends on no image library at all. Decoding, resizing, and
+packing pixels into a tensor belong to the application, and the choice is
+usually between native OpenCV bindings such as
+[`opencv_dart`](https://pub.dev/packages/opencv_dart) and the pure-Dart
+[`image`](https://pub.dev/packages/image) package.
+
+For live video, use OpenCV. Both libraries running the identical pipeline the
+example app uses per frame, decode JPEG then letterbox resize then pad then
+normalise to `Float32List`, on a 1920x1080 frame into a 320x320 model input,
+median of 20 iterations on an M4 Mac:
+
+| Library | Per frame | Headroom left at 30 fps |
+|---|---:|---:|
+| `opencv_dart` (native) | **5.4 ms** | 27.9 ms for inference |
+| `image` (pure Dart) | **82.5 ms** | none, already 2.5x over budget |
+
+The 15x ratio matters less than the absolute number. A 30 fps stream gives you
+33.3 ms per frame in total, so pure-Dart preprocessing exceeds the entire
+budget before the model runs at all, capping a live pipeline near 12 fps with a
+hypothetically free model. Native preprocessing leaves most of the budget for
+inference.
+
+Both figures scale with source pixels rather than model input size, because
+decode and resize dominate. The same comparison on a smaller 640x427 frame
+measured 1.9 ms against 24.4 ms.
+
+`image` is the better choice when frame rate is not involved: a photo the user
+picked, a single still, a batch job, or a server. 82 ms is invisible once, and
+it avoids a large native dependency.
+
+That dependency has a real cost worth knowing before you take it. OpenCV
+bindings pull a substantial native build, and `opencv_dart` currently fails to
+link for the iOS simulator (`ld: framework 'UIKit' not found` from its dartcv
+backend), so any app depending on it cannot run simulator builds or
+simulator-based CI. If you need both live camera performance and simulator
+tests, keep the OpenCV dependency out of the target that hosts those tests.
+
+Reproduce with
+[`preprocessing_benchmark_test.dart`](example/integration_test/preprocessing_benchmark_test.dart):
+
+```sh
+cd example
+flutter test integration_test/preprocessing_benchmark_test.dart -d macos
+```
 
 ### The pipeline
 
