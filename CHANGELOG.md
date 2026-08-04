@@ -1,3 +1,54 @@
+## 3.8.0
+
+* **`CompiledModel` now defaults to `Precision.fp32` instead of `fp16`.** This
+  changes numeric output and costs roughly 15% median GPU latency, so it is a
+  deliberate correctness-over-speed default. Across the 29 published detection
+  models, strict-GPU fp32 matched a plain-CPU reference for every model that
+  compiled on all four GPU architectures measured, while fp16 matched only 4 of
+  18 on Adreno 740, 5 of 18 on Xclipse, 4 of 18 on Apple Metal, and 1 of 12 on
+  Mali-G715. Google's own LiteRT Python API reproduces the Apple figures
+  through the same underlying switch, so this is upstream numerical behaviour
+  rather than a binding artefact: fp16 carries about three decimal digits of
+  mantissa and these graphs emit pixel-space coordinates and landmark
+  positions. `fromBufferWithGpuFallback` already defaulted to fp32; the plain
+  constructors now agree with it. Pass `Precision.fp16` explicitly to keep the
+  old behaviour, ideally per model and validated on the target GPU. Full
+  results: [GPU vendor matrix](test/benchmark/GPU_VENDOR_MATRIX.md).
+* Backend evidence for the above is now reproducible. `test/benchmark` gains an
+  Apple (macOS + iOS) matrix harness, physical Android matrices for Adreno,
+  Mali, and Xclipse, and a cross-check against the official LiteRT Python API
+  that agrees with the Dart implementation to 6.3e-14 on CPU reference outputs.
+* A vendor-specific defect is documented rather than worked around: on
+  Mali-G715, six models compile and then fail `LiteRtLockTensorBuffer` with
+  `LiteRtStatus=3` on managed buffers, though they run and pass on Adreno and
+  Xclipse. It shares a signature with the open Windows `CompiledModel` lock
+  flake.
+* **Android Qualcomm NPU foundation for `CompiledModel`.** Android API 31+
+  arm64 apps can now use an app-provided LiteRT JIT NPU runtime. NPU requests
+  get a dedicated environment with the official compiler-plugin and dispatch
+  directories plus a reusable JIT cache; initializing CPU/GPU first no
+  longer prevents later NPU setup.
+* Android's CompiledModel runtime is updated from LiteRT Next 2.1.5 to 2.1.6.
+  Normal builds still bundle only CPU and OpenCL/GL GPU libraries. A new
+  `flutterLitert.qualcommNpuRuntimeDir` Gradle property can fuse exactly one
+  prepared Qualcomm runtime into an arm64 local/Test Lab APK and fails the
+  build when its nine-library JIT set is incomplete or ambiguous. The plugin
+  manifest also exposes the device-provided Qualcomm `libcdsprpc.so` library
+  through Android's optional native-library allowlist.
+* The example app can now build a device-targeted AAB with mutually exclusive
+  Qualcomm SM8550/v73, SM8650/v75, and SM8750/v79 dynamic features. Devices in
+  the default group receive no vendor runtime; strict NPU remains an error
+  there, while mixed NPU+GPU/CPU requests retain their explicit fallback.
+* New manual `Android physical NPU (Firebase Test Lab)` workflow targets the
+  Galaxy S23/SM8550 (HTP v73), S24 Ultra/SM8650 (v75), or S25 Ultra/SM8750
+  (v79). Its default strict smoke gate consumes one Test Lab run only after
+  runtime preparation, AAB build, and package validation pass; an opt-in full
+  sweep adds face, segmentation, and pose correctness comparisons. Physical
+  validation passed strict NPU inference and the full representative sweep on
+  all three generations. MobileFaceNet passed the default CPU-reference
+  tolerance, while selfie segmentation and heavy pose were consistently
+  identified as model-specific accuracy risks.
+
 ## 3.7.0
 
 Fixes a 3x macOS CPU slowdown, adds a way to detect an upstream LiteRT defect

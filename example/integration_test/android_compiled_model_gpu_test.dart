@@ -14,8 +14,9 @@ import 'package:integration_test/integration_test.dart';
 ///
 /// This suite intentionally has no skip. It must only be sent to a physical
 /// arm64 Android device. The known-output model must compile and run with
-/// strict {gpu} at both fp32 and fp16 (fp16 is the example app's default
-/// precision): any accelerator registration, compilation, driver, or
+/// strict {gpu} at both fp32 and fp16 (fp32 is the library default; fp16 is
+/// exercised here as an explicit opt-in): any accelerator registration,
+/// compilation, driver, or
 /// inference failure there fails the Test Lab matrix. The
 /// fromBufferWithGpuFallback factory must complete without falling back,
 /// pinning that real hardware gets real GPU. The same strict-{gpu} pattern

@@ -95,6 +95,63 @@ interpreter.run(input, output);
 
 See [Interpreter (classic API)](#interpreter-classic-api) for isolates, delegates, training, and custom ops.
 
+## Migrating from tflite_flutter
+
+[`tflite_flutter`](https://pub.dev/packages/tflite_flutter) is no longer
+maintained. This package began as a fork of it and keeps the `Interpreter` API
+source-compatible on native platforms, so most projects migrate by changing two
+lines.
+
+**1. Swap the dependency.**
+
+```yaml
+dependencies:
+  # tflite_flutter: ^0.11.0
+  flutter_litert: ^3.8.0
+```
+
+**2. Change the import.**
+
+```dart
+// import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:flutter_litert/flutter_litert.dart';
+```
+
+Existing `Interpreter` code keeps working unchanged: `Interpreter.fromAsset`,
+`fromFile`, `fromBuffer`, `run`, `runForMultipleInputs`, `InterpreterOptions`,
+`getInputTensors`, `getOutputTensors`, signature runners, and the delegate
+classes all keep their names and signatures.
+
+**3. Delete your native library setup.** This is the step most projects forget.
+`tflite_flutter` required you to download `libtensorflowlite_c` yourself and
+wire it into each platform build, usually through `install.sh`, a Podfile
+tweak, or a CMake edit. flutter_litert bundles the native runtimes for every
+supported platform, so all of that can go.
+
+### What you gain
+
+- **Bundled native runtimes.** No `install.sh`, no manually vendored `.so`,
+  `.dylib`, or `.dll`.
+- **Flutter Web**, which `tflite_flutter` never supported. See
+  [Web support](#web-support).
+- **The `CompiledModel` API** (LiteRT Next) for GPU and NPU acceleration, which
+  is where current upstream development happens. See
+  [CompiledModel (LiteRT Next)](#compiledmodel-litert-next).
+- **Working delegates**, including Metal on macOS and Core ML, plus diagnostics
+  such as `verifyCompiledModel` for catching a backend that silently returns
+  wrong output.
+- Maintenance: LiteRT runtimes are updated here as upstream ships them.
+
+### Worth knowing
+
+- `CompiledModel` is float32-only. Quantized and integer I/O, on-device
+  training, custom ops, and named signatures stay on the classic `Interpreter`,
+  which is fully supported and not deprecated.
+- Delegate construction is unchanged, but GPU behaviour differs by platform.
+  Read [Accelerator selection and precision](#accelerator-selection-and-precision)
+  before assuming a delegate engaged; a delegate that fails to apply can fall
+  back to CPU without an error.
+
 ## Demos and examples
 
 ### Examples
@@ -137,20 +194,32 @@ Packages built on flutter_litert:
 final model = CompiledModel.fromFile(
   'model.tflite',
   accelerators: {Accelerator.gpu, Accelerator.cpu}, // GPU with CPU fallback
-  precision: Precision.fp16,
+  precision: Precision.fp32, // the default
 );
 final outputs = model.run(inputs); // List<Float32List> in, List<Float32List> out
 model.close();
 ```
 
 - Include `Accelerator.cpu` in the `accelerators` set to allow CPU placement when compilation succeeds. When a bundled GPU accelerator is present but cannot initialize, combined `{gpu, cpu}` compilation can still fail instead of falling back internally. Use the convenience factory below when a working GPU-to-CPU retry is required.
-- `precision` accepts `Precision.fp16` or `Precision.fp32`.
+- `precision` accepts `Precision.fp16` or `Precision.fp32`, and defaults to
+  `Precision.fp32`. Across the 29 published detection models, strict-GPU fp32
+  matched a plain-CPU reference for every model that compiled on all four GPU
+  architectures measured, while fp16 matched only 4 of 18 on Adreno, 5 of 18 on
+  Xclipse, 4 of 18 on Apple Metal, and 1 of 12 on Mali. Google's LiteRT Python
+  API reproduces those Apple figures, so this is upstream numerical behaviour
+  rather than a binding artefact: fp16 has roughly three decimal digits of
+  mantissa and these graphs emit pixel-space coordinates. Treat `fp16` as a
+  per-model opt-in you have validated on the target GPU. See
+  [GPU vendor matrix](test/benchmark/GPU_VENDOR_MATRIX.md).
 - On iOS 13+ and macOS 13+ Apple Silicon, `Accelerator.npu` uses a dedicated
   Core ML `CPUAndNeuralEngine` backend. The iOS source implementation is
   simulator-validated; physical-device validation and its replacement SwiftPM
   binary artifact remain pending at this checkpoint. See
   [CompiledModel NPU on Apple platforms](#compiledmodel-npu-on-apple-platforms).
 - On Android, `Accelerator.gpu` uses the bundled OpenCL/GL accelerator on `arm64-v8a` and `x86_64`. `armeabi-v7a` remains CPU-only.
+- On Android API 31+ arm64, `Accelerator.npu` can use an app-provided LiteRT
+  vendor runtime. NPU binaries are SoC-specific and are not bundled by default.
+  See [CompiledModel NPU on Android](#compiledmodel-npu-on-android).
 
 ### GPU with CPU fallback (convenience method)
 
@@ -163,6 +232,32 @@ final model = CompiledModel.fromBufferWithGpuFallback(modelBytes);
 This first requests `{gpu, cpu}`. If compilation fails because the GPU is unavailable, an operation is unsupported, or a driver fails, it reports the error through the optional `onFallback` callback and retries CPU-only. `CompiledModel.fromBufferWithGpuFallbackAsync` provides the same guaranteed-model path through the portable async API.
 
 Android emulators are a common case: the accelerator library can register, but emulators do not provide working OpenCL, so direct `{gpu, cpu}` compilation returns an error. The fallback factories catch that error and return a CPU model.
+
+### NPU support status
+
+NPU maturity differs sharply by platform. Treat this table as the contract:
+
+| Platform | Status | Backend | Notes |
+|---|---|---|---|
+| **macOS** | **Stable** | Core ML, Apple Neural Engine | Apple Silicon, macOS 13+. Validated against CPU references across the published model set. |
+| **iOS** | **Stable** | Core ML, Apple Neural Engine | iOS 13+. Same Core ML path as macOS. |
+| **Android** | **Work in progress** | Qualcomm HTP only | One vendor. Requires an app-provided JIT runtime; nothing is bundled. Validated on SM8550/v73, SM8650/v75, and SM8750/v79. MediaTek, Google Tensor, and Exynos NPUs are not supported. |
+| **Windows** | **Not yet** | — | LiteRT documents an Intel OpenVINO NPU backend; no bindings here yet. |
+| **Linux** | **Not yet** | — | Same as Windows. |
+| **Web** | **Not applicable** | — | `Accelerator.npu` throws. Use WebGPU through `Accelerator.gpu`. |
+
+On Android specifically: the NPU runtime is never bundled, because each SoC
+vendor needs its own. A device with no matching runtime is expected, not an
+error case. Strict `{Accelerator.npu}` throws an actionable `UnsupportedError`
+there, while a mixed request such as `{Accelerator.npu, Accelerator.cpu}` drops
+the unavailable NPU and continues on the fallback you asked for. The model's
+`accelerators` getter reports the effective set, so compare it against what you
+requested if you need to know which path you got.
+
+Accuracy is also model-specific on NPU hardware. In physical-device testing,
+some models matched their CPU reference within tolerance while others did not,
+on otherwise fully dispatched graphs. Validate each model on each target SoC
+before enabling NPU in production.
 
 ### CompiledModel NPU on Apple platforms
 
@@ -205,11 +300,98 @@ models, build details, and exact semantics are in
 validates integration but has no Neural Engine; physical-device validation is
 required before treating the iOS backend as hardware-verified.
 
+### CompiledModel NPU on Android
+
+Android NPU support uses LiteRT's official compiler-plugin and dispatch
+architecture. The app supplies the runtime module matching its device; when
+`Accelerator.npu` is requested, `flutter_litert` creates a dedicated environment
+with both `CompilerPluginLibraryDir` and `DispatchLibraryDir` pointed at
+Android's extracted native-library directory. CPU/GPU-only builds do not scan
+or load these libraries.
+
+Requirements:
+
+- Android API 31 or newer and `arm64-v8a`;
+- a vendor/SoC supported by the selected LiteRT runtime;
+- the JIT runtime libraries matching the bundled LiteRT Next version;
+- `packaging { jniLibs { useLegacyPackaging = true } }` in the app module,
+  because LiteRT must scan real files rather than compressed APK entries.
+
+The plugin manifest exposes the device-provided Qualcomm
+`libcdsprpc.so` library to apps targeting Android 12+ as an optional
+`uses-native-library`; consuming apps need no manifest change of their own.
+
+For production, use Google's conditional Play Feature Delivery modules from
+`litert_npu_runtime_libraries_jit.zip`. They deliver only the runtime matching
+the device. The example app contains reference wiring for SM8550/v73,
+SM8650/v75, and SM8750/v79: point
+`flutterLitert.qualcommNpuFeatureRoot` at the prepared archive root to build an
+Android App Bundle with mutually targeted feature modules. Unsupported devices
+receive the base module without Qualcomm binaries. The plugin intentionally
+does not bundle every vendor runtime into ordinary APKs.
+
+```properties
+# example/android/gradle.properties (absolute path required)
+flutterLitert.qualcommNpuFeatureRoot=/path/to/prepared/litert_npu_runtime_libraries
+```
+
+For a local or Firebase Test Lab APK, a single prepared Qualcomm runtime can be
+fused directly. Download and unpack the official LiteRT 2.1.6 JIT runtime,
+run its `fetch_qualcomm_library.sh`, then point the Gradle property at one
+matching `arm64-v8a` directory:
+
+```properties
+# android/gradle.properties (absolute path required)
+flutterLitert.qualcommNpuRuntimeDir=/path/to/litert_npu_runtime_libraries/qualcomm_runtime_v73/src/main/jni/arm64-v8a
+```
+
+HTP v73 targets the Galaxy S23's SM8550, v75 the Galaxy S24 Ultra's SM8650,
+and v79 the Galaxy S25 Ultra's SM8750. Each directory must contain one
+Qualcomm compiler plugin, one dispatch library, and all seven QAIRT JIT/runtime
+libraries; the Gradle task rejects incomplete or multi-vendor sets before an
+APK is built.
+
+Use strict `{Accelerator.npu}` to prove that the complete graph can run on the
+NPU. `{Accelerator.npu, Accelerator.cpu}` intentionally permits partial
+placement and CPU fallback:
+
+```dart
+final strict = CompiledModel.fromBuffer(
+  modelBytes,
+  accelerators: {Accelerator.npu},
+  precision: Precision.fp32,
+);
+
+final mixed = CompiledModel.fromBuffer(
+  modelBytes,
+  accelerators: {Accelerator.npu, Accelerator.cpu},
+  precision: Precision.fp32,
+);
+```
+
+On an Android device that received no NPU runtime, strict `{npu}` still throws
+an actionable `UnsupportedError`. A mixed request drops only the unavailable
+NPU and continues with its explicitly requested GPU/CPU fallback; the model's
+`accelerators` reports that effective set.
+
+JIT artifacts are cached in the app's temporary/cache directory. Always run
+strict known-output and CPU-reference checks on each supported SoC/model
+combination before enabling mixed placement in production. Setup details and
+the physical-device validation matrix are tracked in
+[Android CompiledModel NPU](doc/android_compiled_model_npu.md).
+
+Physical Galaxy S23/v73, Galaxy S24 Ultra/v75, and Galaxy S25 Ultra/v79
+validation fully dispatched the strict smoke model to HTP. Sweeps on all three
+generations dispatched MobileFaceNet within the default correctness tolerance.
+Selfie multiclass segmentation and heavy pose also dispatched completely, but
+missed the conservative 1% CPU-reference tolerance and must not be enabled
+without application-level accuracy validation.
+
 ### CompiledModel GPU on Android
 
 Android builds bundle `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64`. GPU compilation requires a compatible physical device and driver. `armeabi-v7a` continues to use `libLiteRt.so` on the CPU.
 
-The plugin manifest declares the vendor GPU libraries the accelerator may load (`libOpenCL.so` and variants, `libvndksupport.so`) as optional `uses-native-library` entries, which Android 12+ requires for apps targeting SDK 31+. Apps need no manifest changes of their own.
+The plugin manifest declares the vendor libraries the accelerators may load (`libcdsprpc.so`, `libOpenCL.so` and variants, and `libvndksupport.so`) as optional `uses-native-library` entries, which Android 12+ requires for apps targeting SDK 31+. Apps need no manifest changes of their own.
 
 Apps that do not use CompiledModel GPU acceleration can remove the accelerator from their Android builds:
 
@@ -1329,7 +1511,7 @@ flutter_litert ships two independent native runtimes, one per API. The classic `
 
 | Platform | Interpreter runtime | CompiledModel runtime |
 |----------|---------------------|-----------------------|
-| Android | LiteRT 1.4.2 | LiteRT Next 2.1.5 (CPU / OpenCL/GL GPU) |
+| Android | LiteRT 1.4.2 | LiteRT Next 2.1.6 (CPU / OpenCL/GL GPU / app-provided NPU) |
 | iOS | TensorFlow Lite 2.20.0 | LiteRT Next (CPU / Metal GPU / Core ML NPU; NPU hardware validation pending) |
 | macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 (CPU / Metal GPU / Core ML NPU) |
 | Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
@@ -1337,7 +1519,7 @@ flutter_litert ships two independent native runtimes, one per API. The classic `
 | Web | LiteRT.js 2.4.0 / TFLite.js (WASM) | LiteRT.js 2.4.0 (WASM / WebGPU) |
 
 Bundling:
-- Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, plus `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64`, from the `2.1.5` AAR.
+- Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, plus `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64`, from the `2.1.6` AAR. SoC-specific NPU runtimes remain app-provided.
 - iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` xcframework (release `litert-ios-v1.0.1` for SPM, `litert-ios-v1.0.0` for CocoaPods; both the same commit-pinned LiteRT Next build, commit `1adc2475`).
 - macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.1.5 wheel, bundled via CMake on Windows and Linux and via CocoaPods on macOS.
 - Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.4.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).

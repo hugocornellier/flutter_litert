@@ -75,7 +75,7 @@ class CompiledModel {
   static CompiledModel fromFile(
     String path, {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
-    Precision precision = Precision.fp16,
+    Precision precision = Precision.fp32,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
   }) {
     throw UnsupportedError(
@@ -89,7 +89,7 @@ class CompiledModel {
   static CompiledModel fromBuffer(
     Uint8List bytes, {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
-    Precision precision = Precision.fp16,
+    Precision precision = Precision.fp32,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
   }) {
     throw UnsupportedError(
@@ -137,7 +137,7 @@ class CompiledModel {
   static Future<CompiledModel> fromBufferAsync(
     Uint8List bytes, {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
-    Precision precision = Precision.fp16,
+    Precision precision = Precision.fp32,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
   }) => _fromBufferAsyncImpl(
     bytes,

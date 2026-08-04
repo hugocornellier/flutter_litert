@@ -17,10 +17,14 @@ import 'compiled_model.dart';
 ///
 /// [onGpuFallback] is invoked with the compile error when the GPU attempt fails
 /// and the model falls back to CPU. [forceCpu] skips the GPU attempt entirely.
+///
+/// [precision] defaults to [Precision.fp32]. fp16 failed CPU-reference parity
+/// for most models on every GPU architecture measured, so it is an explicit
+/// per-model opt-in rather than a default; see [CompiledModel.fromFile].
 CompiledModel compiledModelFromBufferAuto(
   Uint8List bytes, {
   Set<Accelerator> accelerators = const {Accelerator.gpu, Accelerator.cpu},
-  Precision precision = Precision.fp16,
+  Precision precision = Precision.fp32,
   TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
   bool forceCpu = false,
   void Function(Object error)? onGpuFallback,

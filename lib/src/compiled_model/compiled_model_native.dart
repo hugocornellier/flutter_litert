@@ -114,7 +114,13 @@ class CompiledModel {
 
   /// Accelerators this model was compiled with.
   ///
-  /// This is the set requested at creation that compilation succeeded with.
+  /// This is the *effective* set, which can be narrower than what was
+  /// requested. On Android, a mixed request such as `{npu, cpu}` drops
+  /// [Accelerator.npu] when no vendor NPU runtime is installed, because
+  /// device-targeted Play delivery intentionally ships none to unsupported
+  /// SoCs and the caller already asked for a fallback. Strict `{npu}` throws
+  /// instead. Compare this against what you passed to detect that narrowing.
+  ///
   /// Compiling successfully is not the same as running on that hardware, so
   /// use [isFullyAccelerated] to find out whether the accelerator actually
   /// took the graph.
@@ -155,10 +161,21 @@ class CompiledModel {
   }
 
   /// Creates a compiled model from a model file.
+  ///
+  /// [precision] defaults to [Precision.fp32]. Measured across the 29 published
+  /// detection models on four GPU architectures, strict-GPU fp32 matched a
+  /// plain-CPU reference for every model that compiled, while fp16 matched only
+  /// 4 of 18 on Adreno, 5 of 18 on Xclipse, 4 of 18 on Apple Metal, and 1 of 12
+  /// on Mali. Google's own LiteRT Python API reproduces those Apple figures
+  /// through the same underlying switch, so this is an upstream numerical
+  /// property rather than a binding artefact: fp16 carries roughly three
+  /// decimal digits of mantissa, and these graphs emit pixel-space coordinates
+  /// and landmark positions. Pass [Precision.fp16] explicitly when a specific
+  /// model has been validated on the target GPU.
   static CompiledModel fromFile(
     String path, {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
-    Precision precision = Precision.fp16,
+    Precision precision = Precision.fp32,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
   }) {
     return _fromSource(
@@ -174,10 +191,13 @@ class CompiledModel {
   ///
   /// The bytes are copied into a native buffer owned by this [CompiledModel] so
   /// the model source remains alive until [close] releases the LiteRT model.
+  ///
+  /// [precision] defaults to [Precision.fp32]; see [fromFile] for the
+  /// measurements behind that choice.
   static CompiledModel fromBuffer(
     Uint8List bytes, {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
-    Precision precision = Precision.fp16,
+    Precision precision = Precision.fp32,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
   }) {
     return _fromSource(
@@ -199,7 +219,7 @@ class CompiledModel {
   static Future<CompiledModel> fromBufferAsync(
     Uint8List bytes, {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
-    Precision precision = Precision.fp16,
+    Precision precision = Precision.fp32,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
   }) async {
     return fromBuffer(
@@ -370,7 +390,8 @@ class CompiledModel {
     createModel,
   }) {
     _checkStructLayouts();
-    final acceleratorMask = _acceleratorMask(accelerators);
+    final effectiveAccelerators = _effectiveAccelerators(accelerators);
+    final acceleratorMask = _acceleratorMask(effectiveAccelerators);
 
     final rt = litert;
     Pointer<Void> environment = nullptr;
@@ -388,9 +409,12 @@ class CompiledModel {
     final hostMemoryAllocations = <_HostMemoryAllocation>[];
 
     try {
-      environment = _sharedEnvironmentOf(rt, accelerators: accelerators);
+      environment = _sharedEnvironmentOf(
+        rt,
+        accelerators: effectiveAccelerators,
+      );
       options = _createOptions(rt, acceleratorMask);
-      if (accelerators.contains(Accelerator.gpu) &&
+      if (effectiveAccelerators.contains(Accelerator.gpu) &&
           precision == Precision.fp32) {
         gpuOptionsIdentifier = _addGpuFp32Options(rt, options);
       }
@@ -399,7 +423,7 @@ class CompiledModel {
       modelBuffer = source.modelBuffer;
       compiledModel = _createCompiledModel(rt, environment, model, options);
       if ((Platform.isIOS || Platform.isMacOS) &&
-          accelerators.contains(Accelerator.npu)) {
+          effectiveAccelerators.contains(Accelerator.npu)) {
         final delegatedNodeCount = appleCoreMlNpuLastDelegatedNodeCount();
         if (delegatedNodeCount < 0) {
           throw StateError(
@@ -490,7 +514,7 @@ class CompiledModel {
         inputByteSizes,
         outputByteSizes,
         tensorBufferMode,
-        Set.of(accelerators),
+        Set.of(effectiveAccelerators),
         gpuOptionsIdentifier,
       );
     } catch (_) {
@@ -1454,6 +1478,29 @@ void _releaseNative(
   if (gpuOptionsIdentifier != null && gpuOptionsIdentifier != nullptr) {
     malloc.free(gpuOptionsIdentifier);
   }
+}
+
+Set<Accelerator> _effectiveAccelerators(Set<Accelerator> requested) {
+  if (!Platform.isAndroid ||
+      !requested.contains(Accelerator.npu) ||
+      requested.length == 1) {
+    return requested;
+  }
+
+  final nativeLibraryDir = androidNativeLibraryDir;
+  final hasNpuRuntime =
+      nativeLibraryDir != null &&
+      _containsAndroidNpuDispatchLibrary(nativeLibraryDir);
+  if (hasNpuRuntime) {
+    return requested;
+  }
+
+  // Device-targeted Play delivery intentionally installs no vendor module on
+  // unsupported Android SoCs. A mixed request must therefore continue with
+  // its explicitly requested GPU/CPU fallback instead of failing before
+  // LiteRT can compile the model. Strict {npu} remains unchanged and produces
+  // the actionable missing-runtime error in _sharedEnvironmentOf.
+  return Set<Accelerator>.of(requested)..remove(Accelerator.npu);
 }
 
 int _acceleratorMask(Set<Accelerator> accelerators) {
