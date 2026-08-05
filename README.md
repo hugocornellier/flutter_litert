@@ -212,9 +212,10 @@ model.close();
   per-model opt-in you have validated on the target GPU. See
   [GPU vendor matrix](test/benchmark/GPU_VENDOR_MATRIX.md).
 - On iOS 13+ and macOS 13+ Apple Silicon, `Accelerator.npu` uses a dedicated
-  Core ML `CPUAndNeuralEngine` backend. The iOS source implementation is
-  simulator-validated; physical-device validation and its replacement SwiftPM
-  binary artifact remain pending at this checkpoint. See
+  Core ML `CPUAndNeuralEngine` backend, validated on physical hardware for both.
+  Strict `{npu}` places a full graph for only 1 of 29 published models, so
+  `{npu, cpu}` is the practical request; about half its models match a CPU
+  reference. See
   [CompiledModel NPU on Apple platforms](#compiledmodel-npu-on-apple-platforms).
 - On Android, `Accelerator.gpu` uses the bundled OpenCL/GL accelerator on `arm64-v8a` and `x86_64`. `armeabi-v7a` remains CPU-only.
 - On Android API 31+ arm64, `Accelerator.npu` can use an app-provided LiteRT
@@ -241,10 +242,67 @@ NPU maturity differs sharply by platform. Treat this table as the contract:
 |---|---|---|---|
 | **macOS** | **Works; accuracy is model-specific** | Core ML, Apple Neural Engine | Apple Silicon, macOS 13+. Strict `{npu}` places a full graph for 1 of 29 published models; `{npu, cpu}` runs 24 of 29 with 12 matching a CPU reference. Working does not mean safe to enable blindly: validate each model. |
 | **iOS** | **Works; accuracy is model-specific** | Core ML, Apple Neural Engine | iOS 13+, from `coreml-ios-v1.1.0`. Earlier releases shipped a Core ML framework predating the NPU entry points, so registration failed on device with `kLiteRtStatusErrorUnsupported`. Measured on a physical iPhone 15 Pro: strict `{npu}` places a full graph for 1 of 29 published models, and `{npu, cpu}` runs 24 of 29 with 12 matching a CPU reference. Identical to macOS on both counts. |
-| **Android** | **Work in progress** | Qualcomm HTP only | One vendor. Requires an app-provided JIT runtime; nothing is bundled. Validated on SM8550/v73, SM8650/v75, and SM8750/v79. MediaTek, Google Tensor, and Exynos NPUs are not supported. |
-| **Windows** | **Not yet** | — | LiteRT documents an Intel OpenVINO NPU backend; no bindings here yet. |
-| **Linux** | **Not yet** | — | Same as Windows. |
+| **Android** | **Qualcomm only** | Qualcomm HTP | Qualcomm Hexagon is the one vendor implemented so far. LiteRT also documents MediaTek, Google Tensor, and Samsung Exynos NPUs; those are not wired up here yet. The vendor runtime is app-provided and never bundled, so a default build packages no NPU libraries and a request without one fails with an actionable error. Validated on SM8550/v73, SM8650/v75, and SM8750/v79: strict `{npu}` places 21 of 29 published models entirely on the NPU, 11 of which match a CPU reference. |
+| **Windows** | **Not implemented** | — | LiteRT supports Intel NPUs through an [OpenVINO backend](https://developers.google.com/edge/litert/next/intel), which covers Intel Core Ultra. flutter_litert has no bindings for it yet. Qualcomm Snapdragon X and AMD XDNA have no LiteRT path at all. |
+| **Linux** | **Not implemented** | — | Same Intel OpenVINO path as Windows, same absence of bindings. |
 | **Web** | **Not applicable** | — | `Accelerator.npu` throws. Use WebGPU through `Accelerator.gpu`. |
+
+### Deciding at runtime whether to offer NPU
+
+There is no `isNpuAvailable` probe, and a device-capability check would not be
+the right one anyway. Three things must hold before NPU is worth offering a
+user, and only the third is about their experience:
+
+1. a vendor runtime is present in the app;
+2. it matches this device's SoC;
+3. it produces correct output **for the model you are running**.
+
+You could satisfy the first two by inspecting the device and still ship a
+toggle that returns wrong results, because roughly half the models on the mixed
+NPU path miss a CPU reference on every platform measured. So attempt it and
+check:
+
+```dart
+CompiledModel? tryNpu(Uint8List bytes) {
+  if (!Platform.isAndroid && !Platform.isIOS && !Platform.isMacOS) return null;
+
+  final CompiledModel model;
+  try {
+    model = CompiledModel.fromBuffer(
+      bytes,
+      accelerators: {Accelerator.npu, Accelerator.cpu},
+    );
+  } catch (_) {
+    return null; // no usable runtime for this SoC, or compilation refused
+  }
+
+  if (!model.accelerators.contains(Accelerator.npu)) {
+    model.close();
+    return null; // no runtime present; the request degraded to CPU
+  }
+
+  final check = verifyCompiledModel(bytes, model);
+  if (!check.agrees) {
+    model.close();
+    return null; // dispatched to the NPU, but the numbers are wrong
+  }
+
+  return model; // safe to offer
+}
+```
+
+Offer the NPU option only when this returns non-null, and cache the answer:
+the cost is one compilation plus one inference, which belongs at startup rather
+than on a settings toggle.
+
+The `try`/`catch` is not optional. The degrade path checks whether a dispatch
+library is *present*, not whether it matches the SoC. An app bundling the
+Qualcomm runtime and running on a MediaTek device has the library, attempts the
+NPU, and throws during compilation.
+
+The same shape works for GPU. Substitute `Accelerator.gpu`, or use
+[`CompiledModel.fromBufferWithGpuFallback`](#gpu-with-cpu-fallback-convenience-method),
+which handles the retry but does not verify accuracy.
 
 ### NPU accuracy is bounded by fp16, and that cannot be configured away
 
@@ -352,6 +410,20 @@ validates integration but has no Neural Engine; physical-device validation is
 required before treating the iOS backend as hardware-verified.
 
 ### CompiledModel NPU on Android
+
+> **This is not a drop-in feature.** Unlike Apple, where the Neural Engine
+> works with no setup, Android NPU requires *you* to supply the vendor runtime.
+> Qualcomm's public QAIRT archive is a ~2.35 GB one-time download on your build
+> machine, from which nine libraries are staged and wired into Gradle by
+> absolute path. What ships is far smaller: **about 104 MB per SoC generation**,
+> or ~315 MB if you bundle v73, v75, and v79 together. A fused APK covers **one
+> generation only**, so broad distribution wants Play Feature Delivery, which
+> sends a device just the module matching its chip. Budget real integration
+> time, and expect this to suit apps shipping to known hardware more than
+> general consumer releases.
+>
+> The capability is worth it where it fits: Qualcomm HTP placed 21 of 29
+> published models entirely on the NPU, against 1 of 29 for Apple's Core ML.
 
 Android NPU support uses LiteRT's official compiler-plugin and dispatch
 architecture. The app supplies the runtime module matching its device; when
@@ -1610,7 +1682,7 @@ flutter_litert ships two independent native runtimes, one per API. The classic `
 | Platform | Interpreter runtime | CompiledModel runtime |
 |----------|---------------------|-----------------------|
 | Android | LiteRT 1.4.2 | LiteRT Next 2.1.6 (CPU / OpenCL/GL GPU / app-provided NPU) |
-| iOS | TensorFlow Lite 2.20.0 | LiteRT Next (CPU / Metal GPU / Core ML NPU; NPU hardware validation pending) |
+| iOS | TensorFlow Lite 2.20.0 | LiteRT Next (CPU / Metal GPU / Core ML NPU) |
 | macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 (CPU / Metal GPU / Core ML NPU) |
 | Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
 | Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |

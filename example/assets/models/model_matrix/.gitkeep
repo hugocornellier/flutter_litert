@@ -1,0 +1,5 @@
+# Placeholder so this directory exists on a fresh checkout.
+# example/pubspec.yaml declares it as an asset directory; the Flutter build
+# fails without it. The Android/iOS matrix harness stages .tflite models here
+# via example/tool/stage_android_model_matrix_assets.dart, and those stay
+# gitignored.

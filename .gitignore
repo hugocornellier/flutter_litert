@@ -83,8 +83,14 @@ example/object_detection_ssd_mobilenet/assets/models/labelmap.txt
 example/object_detection_ssd_mobilenet/assets/models/ssd_mobilenet.tflite
 
 **/assets/models/**
-**/assets/models/!README
-**/assets/models/.gitkeep
+# The example declares assets/models/model_matrix/ in its pubspec, so the
+# directory has to exist on a fresh checkout or the Flutter build fails with
+# "unable to find directory entry in pubspec.yaml". Git cannot re-include a
+# file whose parent directory is excluded, so the directory is un-excluded
+# first and only its .gitkeep is tracked; the staged models stay ignored.
+!**/assets/models/model_matrix/
+**/assets/models/model_matrix/*
+!**/assets/models/model_matrix/.gitkeep
 
 # FlexDelegate library (auto-bundled from user cache, ~123 MB)
 **/libtensorflowlite_flex*

@@ -1,8 +1,16 @@
 ## 3.8.0
 
 * **`CompiledModel` now defaults to `Precision.fp32` instead of `fp16`.** This
-  changes numeric output and costs roughly 15% median GPU latency, so it is a
-  deliberate correctness-over-speed default. Across the 29 published detection
+  changes numeric output and costs about 30% median GPU latency across the five
+  GPUs measured (four architectures; Apple Metal appears as both M4 and
+  A17 Pro), so it is a deliberate correctness-over-speed default. The cost
+  is real and worth stating plainly: in 84 paired same-model comparisons fp32
+  was slower in 67 of them, with a median of +29.9% and a worst case of
+  +21.6 ms. Apple M4 is the lone exception, where fp32 is marginally faster
+  (median -6.5%); every other architecture pays +37% to +43%. Restricting the
+  comparison to the models where fp16 actually passed parity, which are the only
+  ones anyone could legitimately keep on fp16, the median cost is +24.3%.
+  Accuracy is what justifies the default anyway. Across the 29 published detection
   models, strict-GPU fp32 matched a plain-CPU reference for every model that
   compiled on all four GPU architectures measured, while fp16 matched only 4 of
   18 on Adreno 740, 5 of 18 on Xclipse, 4 of 18 on Apple Metal, and 1 of 12 on
