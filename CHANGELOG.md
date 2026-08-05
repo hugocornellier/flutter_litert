@@ -18,11 +18,38 @@
   Apple (macOS + iOS) matrix harness, physical Android matrices for Adreno,
   Mali, and Xclipse, and a cross-check against the official LiteRT Python API
   that agrees with the Dart implementation to 6.3e-14 on CPU reference outputs.
-* A vendor-specific defect is documented rather than worked around: on
-  Mali-G715, six models compile and then fail `LiteRtLockTensorBuffer` with
-  `LiteRtStatus=3` on managed buffers, though they run and pass on Adreno and
-  Xclipse. It shares a signature with the open Windows `CompiledModel` lock
-  flake.
+* **Fixed: Core ML NPU never worked on a physical iPhone.** `Package.swift`
+  pinned `TensorFlowLiteCCoreML` to a May release predating both the NPU entry
+  points and the global-`MEAN` padding patch, so accelerator registration
+  returned `kLiteRtStatusErrorUnsupported` for every model and the Interpreter
+  Core ML delegate rejected four models macOS accepted. The patched framework
+  had been built but only ever uploaded as a CI artifact, never published, so
+  the pin was never moved. `coreml-ios-v1.1.0` publishes it, and the tracked
+  xcframework that CocoaPods consumers use is replaced with the same artifact
+  so the two packaging paths stop diverging. Measured on a physical iPhone 15
+  Pro afterwards, iOS matches macOS exactly: Core ML 24 of 29 models with 13
+  accurate, strict `{npu}` 1 of 29, `{npu, cpu}` 24 of 29 with 12 accurate.
+* **Fixed: a mixed `{npu, cpu}` request no longer fails when Core ML NPU cannot
+  register.** The graceful-degrade path added for Android was gated on
+  `Platform.isAndroid`, and macOS never exposed the gap because registration
+  succeeds there. A caller asking for CPU fallback got a hard failure instead,
+  which is the one outcome an explicit fallback exists to prevent. Strict
+  `{npu}` still throws; a mixed request drops the NPU and reports the effective
+  set through the `accelerators` getter.
+* Documents that NPU accuracy is bounded by fp16 and cannot be configured away.
+  The Apple Neural Engine is fp16 hardware and `CoreMlDelegateOptions` exposes
+  no precision control. Every model Core ML computed incorrectly across the 29
+  published models was correct on an fp32 path, and most are the same models
+  that fail on GPU fp16. Unlike GPU, where `Precision.fp32` fixes it, NPU has
+  no equivalent: validate per model or do not use it.
+* A defect is documented rather than worked around: on a Pixel 9 Pro, GPU model
+  compilation degrades after roughly 19 compilations in one process, after
+  which `LiteRtLockTensorBuffer` fails on managed buffers. Controlled runs place
+  it on compilation rather than inference, so an application that compiles its
+  models once and runs them for hours is unaffected, while one that repeatedly
+  constructs and disposes `CompiledModel` instances is not. A Galaxy A35 with
+  Mali-G68 and a Galaxy A56 with Xclipse showed no such failures, so it is not a
+  Mali-family property.
 * **Android Qualcomm NPU foundation for `CompiledModel`.** Android API 31+
   arm64 apps can now use an app-provided LiteRT JIT NPU runtime. NPU requests
   get a dedicated environment with the official compiler-plugin and dispatch

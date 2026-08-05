@@ -239,12 +239,63 @@ NPU maturity differs sharply by platform. Treat this table as the contract:
 
 | Platform | Status | Backend | Notes |
 |---|---|---|---|
-| **macOS** | **Stable** | Core ML, Apple Neural Engine | Apple Silicon, macOS 13+. Validated against CPU references across the published model set. |
-| **iOS** | **Registers; Neural Engine unvalidated** | Core ML, Apple Neural Engine | iOS 13+. The Core ML framework SwiftPM resolved previously predated the NPU entry points, so registration failed on device with `kLiteRtStatusErrorUnsupported`; `coreml-ios-v1.1.0` fixes that and registration is confirmed working. Confirmed on a simulator, which has no Neural Engine, so accuracy and performance on real ANE hardware are still unmeasured. Validate per model before relying on it. Interpreter, Metal GPU, and CompiledModel CPU/GPU are unaffected and match macOS. |
+| **macOS** | **Works; accuracy is model-specific** | Core ML, Apple Neural Engine | Apple Silicon, macOS 13+. Strict `{npu}` places a full graph for 1 of 29 published models; `{npu, cpu}` runs 24 of 29 with 12 matching a CPU reference. Working does not mean safe to enable blindly: validate each model. |
+| **iOS** | **Works; accuracy is model-specific** | Core ML, Apple Neural Engine | iOS 13+, from `coreml-ios-v1.1.0`. Earlier releases shipped a Core ML framework predating the NPU entry points, so registration failed on device with `kLiteRtStatusErrorUnsupported`. Measured on a physical iPhone 15 Pro: strict `{npu}` places a full graph for 1 of 29 published models, and `{npu, cpu}` runs 24 of 29 with 12 matching a CPU reference. Identical to macOS on both counts. |
 | **Android** | **Work in progress** | Qualcomm HTP only | One vendor. Requires an app-provided JIT runtime; nothing is bundled. Validated on SM8550/v73, SM8650/v75, and SM8750/v79. MediaTek, Google Tensor, and Exynos NPUs are not supported. |
 | **Windows** | **Not yet** | — | LiteRT documents an Intel OpenVINO NPU backend; no bindings here yet. |
 | **Linux** | **Not yet** | — | Same as Windows. |
 | **Web** | **Not applicable** | — | `Accelerator.npu` throws. Use WebGPU through `Accelerator.gpu`. |
+
+### NPU accuracy is bounded by fp16, and that cannot be configured away
+
+The Apple Neural Engine is fp16 hardware. Core ML converts a float32 model to
+fp16 to run on it, and `CoreMlDelegateOptions` exposes no precision control,
+because there is nothing to control: fp32 is not on offer. The same is true of
+`Accelerator.npu` on Apple, which routes through Core ML.
+
+That matters because fp16 carries roughly three decimal digits of mantissa,
+and detection and landmark models emit pixel-space coordinates. Measured across
+the 29 published models on macOS, every model the Core ML delegate computed
+incorrectly was computed correctly on an fp32 path, and most of them are the
+same models that fail on GPU fp16:
+
+| | Models |
+|---|---:|
+| Inaccurate under Core ML | 11 |
+| ...also inaccurate on GPU fp16 | 8 |
+| ...also inaccurate on Metal fp16 | 9 |
+| ...that any fp32 path gets right | all of them |
+
+So Core ML, Metal fp16, and CompiledModel GPU fp16 are one failure wearing
+three hats.
+
+A physical iPhone 15 Pro reproduces this exactly: 24 of 29 models on Core ML
+with 13 accurate, and `{npu, cpu}` running 24 with 12 accurate, matching an M4
+Mac model for model. Two Neural Engine generations, the same failures on the
+same graphs, which is what a precision limit looks like rather than a driver
+quirk on one chip.
+
+The practical consequence is a real asymmetry between GPU and NPU:
+
+- **GPU**: choosing `Precision.fp32` fixes it. That is why fp32 is now the
+  default.
+- **NPU**: there is no equivalent. The hardware is fp16 and the API has no
+  knob, so a model that loses too much precision on the Neural Engine cannot be
+  rescued by configuration.
+
+For NPU the only options are to validate that specific model against a CPU
+reference and accept the result, or not to use the NPU for it. Run
+`verifyCompiledModel` at initialisation rather than assuming; a graph can
+dispatch fully to the accelerator and still return wrong numbers, which is
+exactly what the physical-device runs found on both Apple and Qualcomm
+hardware.
+
+Note also that Core ML *accepting* a model implies nothing about correctness.
+The bundled Core ML build carries a patch that fixes a spurious rejection of
+global-spatial `MEAN`, which moved four models from rejected to executing on
+both macOS and iOS. Three of those four now produce inaccurate output where
+previously they were rejected and fell back to CPU. The patch did not cause
+that; it exposed precision behaviour the rejection had been masking.
 
 On Android specifically: the NPU runtime is never bundled, because each SoC
 vendor needs its own. A device with no matching runtime is expected, not an

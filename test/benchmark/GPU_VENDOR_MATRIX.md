@@ -94,9 +94,29 @@ a catch-all, so sharing it proves little on its own. It becomes interesting
 again only if the Windows case also turns out to be exhaustion rather than
 model-specific.
 
-The open question is therefore the leak, not a coverage limit. If confirmed, it
-matters more than a missing-model list would: a long-running application would
-degrade over time rather than simply declining to accelerate certain graphs.
+### The leak tracks compiles, not inferences
+
+A controlled run settled the severity. Two models on the same Pixel 9 Pro, one
+GPU mode, 20,000 iterations plus 100 warmup each: two compilations against
+40,200 inferences, inverting the ratio of the run that failed. Zero failures,
+both models accurate.
+
+That is roughly eight times the inference count of the 261-cell run that broke,
+with essentially no compilation, so the accumulating resource is tied to model
+compilation rather than to inference.
+
+The practical consequence is narrower than it first appeared:
+
+- An application that compiles its models once and runs them for hours, which
+  is what a camera pipeline does, is **unaffected**. The 40,200-inference run
+  is that workload.
+- An application that repeatedly constructs and disposes `CompiledModel`
+  instances degrades after roughly 19 GPU compilations on a Pixel 9 Pro.
+
+The second pattern is unusual. An earlier revision of this file said a
+long-running application "would degrade over time", which assumed the worse
+case before it had been measured. It is a real defect worth reporting upstream,
+but a footnote rather than a warning.
 
 ## How this conclusion was reached, and three wrong turns
 
@@ -142,9 +162,9 @@ that settles it for Metal has no equivalent there.
 - Treat fp16 as an explicit, per-model opt-in validated on the target GPU.
 - Build any GPU allowlist from reachability, not precision. Do not treat Mali's
   12 as its ceiling until the exhaustion question is settled.
-- Investigate the Mali lock failures as a per-model resource leak. The
-  distinguishing test is a short run over only the affected models: if they
-  pass there, the coverage gap is a measurement artefact.
+- Report the Mali lock failures upstream as a per-compile resource leak.
+  Confirmed by a short run over only the affected models, which passed, and by
+  a 40,200-inference run that also passed.
 - Collect future device datasets with a comparable process shape. Mixing
   five-shard and single-execution runs makes per-process effects look like
   vendor differences.
