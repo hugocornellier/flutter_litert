@@ -32,9 +32,16 @@
   returned `kLiteRtStatusErrorUnsupported` for every model and the Interpreter
   Core ML delegate rejected four models macOS accepted. The patched framework
   had been built but only ever uploaded as a CI artifact, never published, so
-  the pin was never moved. `coreml-ios-v1.1.0` publishes it, and the tracked
-  xcframework that CocoaPods consumers use is replaced with the same artifact
-  so the two packaging paths stop diverging. Measured on a physical iPhone 15
+  the pin was never moved. `coreml-ios-v1.1.0` publishes it for SwiftPM.
+  CocoaPods needed a separate fix: its frameworks are downloaded by the podspec
+  rather than shipped in the package, and that bundle (`libs-v0.1.8`) predated
+  the NPU work entirely, so fixing SwiftPM alone left every CocoaPods consumer,
+  which is Flutter's default iOS path, with the identical runtime failure.
+  `libs-v0.1.9` carries the patched framework, and the podspec now gates the
+  download on the NPU symbol actually being present rather than on the file
+  merely existing, so a stale cache re-downloads instead of silently degrading.
+  Both channels are now checked in CI against the artifacts consumers really
+  fetch. Measured on a physical iPhone 15
   Pro afterwards, iOS matches macOS exactly: Core ML 24 of 29 models with 13
   accurate, strict `{npu}` 1 of 29, `{npu, cpu}` 24 of 29 with 12 accurate.
 * **Fixed: a mixed `{npu, cpu}` request no longer fails when Core ML NPU cannot

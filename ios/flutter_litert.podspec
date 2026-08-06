@@ -45,10 +45,26 @@ LiteRT (formerly TensorFlow Lite) plugin for Flutter apps.
   framework_dir = __dir__
   marker = File.join(framework_dir, 'TensorFlowLiteC.xcframework',
                      'ios-arm64', 'TensorFlowLiteC.framework', 'TensorFlowLiteC')
-  unless File.exist?(marker)
+
+  # The Core ML NPU entry points are added by patches/litert_coreml_npu_ios.patch
+  # and exist in no upstream build at any version, so their absence is a reliable
+  # signal that a stale bundle is present. This checks the symbol rather than mere
+  # file existence because libs-v0.1.8 shipped a complete-looking Core ML
+  # framework that silently lacked NPU support: `pod install` succeeded, the app
+  # built, and accelerator registration then failed at runtime with
+  # kLiteRtStatusErrorUnsupported for every model. A file-existence check cannot
+  # tell those two cases apart; a symbol check re-downloads and self-heals.
+  coreml_binary = File.join(framework_dir, 'TensorFlowLiteCCoreML.xcframework',
+                            'ios-arm64', 'TensorFlowLiteCCoreML.framework',
+                            'TensorFlowLiteCCoreML')
+  coreml_has_npu = File.exist?(coreml_binary) &&
+                   `xcrun nm -gU '#{coreml_binary}' 2>/dev/null`
+                     .include?('_FlutterTfLiteCoreMlNpuDelegateCreate')
+
+  unless File.exist?(marker) && coreml_has_npu
     puts '[flutter_litert] Downloading TensorFlow Lite iOS frameworks...'
     zip = File.join(framework_dir, '_tflite_ios.zip')
-    system("curl -sL 'https://github.com/hugocornellier/flutter_litert/releases/download/libs-v0.1.8/ios-frameworks.zip' -o '#{zip}'")
+    system("curl -sL 'https://github.com/hugocornellier/flutter_litert/releases/download/libs-v0.1.9/ios-frameworks.zip' -o '#{zip}'")
     abort '[flutter_litert] ERROR: Failed to download TFLite iOS frameworks. Check your internet connection.' unless $?.success?
     system("unzip -qo '#{zip}' -d '#{framework_dir}'")
     File.delete(zip) if File.exist?(zip)

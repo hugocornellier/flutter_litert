@@ -219,6 +219,22 @@ jobs:
         working-directory: example
         run: flutter test integration_test/interpreter_coexistence_test.dart -d windows --timeout 600s
 
+  # Checks the iOS frameworks consumers actually download, for both packaging
+  # channels. build-ios cannot cover this: it redirects the SwiftPM binary
+  # target at the working-copy xcframework, so it validates the framework on
+  # disk rather than the published artifact. Two shipping bugs reached users
+  # through that gap (a stale SwiftPM pin, then a CocoaPods bundle whose Core ML
+  # framework never carried the NPU entry points), both silent at build time.
+  # Runs on Linux: the check reads Mach-O string tables and verifies checksums,
+  # neither of which needs Xcode, so it stays off the contended macOS runners.
+  verify-published-ios-frameworks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify published iOS frameworks carry the Core ML NPU entry points
+        run: ./scripts/verify_published_ios_frameworks.sh
+
   build-web:
     runs-on: ubuntu-latest
     timeout-minutes: 50

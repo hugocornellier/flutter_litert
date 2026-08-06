@@ -95,6 +95,36 @@ interpreter.run(input, output);
 
 See [Interpreter (classic API)](#interpreter-classic-api) for isolates, delegates, training, and custom ops.
 
+## Demos and examples
+
+### Examples
+
+A full native example app is available on pub.dev: [flutter_litert example](https://pub.dev/packages/flutter_litert/example). It depends on bundled assets from this repo's `example/` directory (`.tflite` model, label map, and sample images), so if you copy code from pub.dev, clone the repo and run it from `example/`:
+
+```sh
+git clone https://github.com/hugocornellier/flutter_litert
+cd flutter_litert/example
+flutter run
+```
+
+For web, see [Web support](#web-support).
+
+The optional `flutter_litert_flex` addon is tested separately in `example/flex_test_host` so the main example stays dependency-light.
+
+### Demos
+
+Packages built on flutter_litert:
+
+| Package | Description | Includes Web |
+|---------|-------------|--------------|
+| [face_detection_tflite](https://pub.dev/packages/face_detection_tflite) | Face detection, 468-point mesh, iris tracking, segmentation | ✓ |
+| [hand_detection](https://pub.dev/packages/hand_detection) | Hand detection, landmarks, gesture recognition | ✓ |
+| [pose_detection](https://pub.dev/packages/pose_detection) | Body pose estimation with 33 keypoints | ✓ |
+| [object_detection](https://pub.dev/packages/object_detection) | Object detection with bounding boxes and labels | |
+| [animal_detection](https://pub.dev/packages/animal_detection) | Animal detection with species classification and pose | |
+| [cat_detection](https://pub.dev/packages/cat_detection) | Cat face detection, landmarks, breed identification | |
+| [dog_detection](https://pub.dev/packages/dog_detection) | Dog face detection, landmarks, breed identification | |
+
 ## Migrating from tflite_flutter
 
 [`tflite_flutter`](https://pub.dev/packages/tflite_flutter) is no longer
@@ -151,36 +181,6 @@ supported platform, so all of that can go.
   Read [Accelerator selection and precision](#accelerator-selection-and-precision)
   before assuming a delegate engaged; a delegate that fails to apply can fall
   back to CPU without an error.
-
-## Demos and examples
-
-### Examples
-
-A full native example app is available on pub.dev: [flutter_litert example](https://pub.dev/packages/flutter_litert/example). It depends on bundled assets from this repo's `example/` directory (`.tflite` model, label map, and sample images), so if you copy code from pub.dev, clone the repo and run it from `example/`:
-
-```sh
-git clone https://github.com/hugocornellier/flutter_litert
-cd flutter_litert/example
-flutter run
-```
-
-For web, see [Web support](#web-support).
-
-The optional `flutter_litert_flex` addon is tested separately in `example/flex_test_host` so the main example stays dependency-light.
-
-### Demos
-
-Packages built on flutter_litert:
-
-| Package | Description | Includes Web |
-|---------|-------------|--------------|
-| [face_detection_tflite](https://pub.dev/packages/face_detection_tflite) | Face detection, 468-point mesh, iris tracking, segmentation | ✓ |
-| [hand_detection](https://pub.dev/packages/hand_detection) | Hand detection, landmarks, gesture recognition | ✓ |
-| [pose_detection](https://pub.dev/packages/pose_detection) | Body pose estimation with 33 keypoints | ✓ |
-| [object_detection](https://pub.dev/packages/object_detection) | Object detection with bounding boxes and labels | |
-| [animal_detection](https://pub.dev/packages/animal_detection) | Animal detection with species classification and pose | |
-| [cat_detection](https://pub.dev/packages/cat_detection) | Cat face detection, landmarks, breed identification | |
-| [dog_detection](https://pub.dev/packages/dog_detection) | Dog face detection, landmarks, breed identification | |
 
 ## CompiledModel (LiteRT Next)
 
@@ -1800,24 +1800,6 @@ Because a few WebGPU stacks compile and run without error yet are unusably slow,
 - Run your app with `flutter run -d chrome` and build with `flutter build web`.
 - If you are writing a plugin on top of `flutter_litert`, add a web code path that works with bytes instead of file paths / native handles.
 - For the LiteRT.js path, rely on the auto-loader by default. Provide your own loader or self-hosted URLs only when your app needs stricter CSP, offline operation, or pinned assets.
-
-## Version notes
-
-### Upgrading to 3.0.0
-
-3.0.0 is a major release: it introduces the LiteRT Next `CompiledModel` API and deprecated the manual GPU/Metal/CoreML delegates (a deprecation later reversed in 3.7.0). The classic `Interpreter` API stays source-compatible; no method signatures changed. Two `IsolateInterpreter` behavior changes are worth knowing about before you upgrade:
-
-- **In-flight calls now queue instead of being silently dropped.** Previously, calling `run()` or `runForMultipleInputs()` while a run was still in flight returned without writing the outputs. Now the call waits its turn and completes with real results. If you relied on that as frame-skipping (for example, one inference per camera frame), skip explicitly instead:
-
-  ```dart
-  if (isolate.state != IsolateInterpreterState.loading) {
-    isolate.runForMultipleInputs(inputs, outputs);
-  }
-  ```
-
-- **Calling `run()` after `close()` now throws `StateError`** instead of returning silently. Closing an interpreter while a run is in flight also throws, rather than reading freed tensors.
-
-3.0.0 deprecated the GPU, Metal, and CoreML delegates and announced their removal in 4.0.0. **That was reversed in 3.7.0**: they are no longer deprecated and are not scheduled for removal, because `CompiledModel` miscomputes models with a dynamic output tensor and cannot replace them yet. See [Delegates](#delegates). The `Interpreter` API, `XNNPackDelegate`, and `FlexDelegate` were never deprecated.
 
 ## Credits
 
