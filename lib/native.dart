@@ -9,7 +9,7 @@
 ///
 /// Import this from code that only runs on native platforms (Android, iOS,
 /// macOS, Windows, Linux) and needs that API, e.g. `IsolateWorkerBase`,
-/// `IsolateRpcClient`, `InterpreterPool`, `ModelCheckpoint`, or
+/// `IsolateRpcClient`, `InterpreterFactory`, `InterpreterPool`, `ModelCheckpoint`, or
 /// `TensorFloat32Views`. Do not import it together with `flutter_litert.dart`
 /// in the same library: both define `Interpreter` and friends, which would be
 /// an ambiguous import.

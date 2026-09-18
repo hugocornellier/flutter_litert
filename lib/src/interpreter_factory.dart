@@ -25,6 +25,11 @@ import 'performance_config.dart';
 
 /// Factory for creating interpreter options with the package's platform
 /// delegate mapping.
+///
+/// Supports Android, iOS, macOS, Windows, and Linux only. Import
+/// `package:flutter_litert/native.dart` from native-only code to use this API.
+/// For native/web acceleration selection, use
+/// `CompiledModel.fromBufferWithConfigAsync` with `CompiledModelConfig.auto()`.
 class InterpreterFactory {
   static void _warnDelegateFallback(String delegateName, Object error) {
     stderr.writeln(

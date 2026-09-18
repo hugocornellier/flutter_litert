@@ -21,12 +21,17 @@ typedef InterpreterCreator =
 
 /// A round-robin pool of [Interpreter] instances with per-slot serialization locks.
 ///
+/// Supports Android, iOS, macOS, Windows, and Linux only. Import
+/// `package:flutter_litert/native.dart` from native-only code to use this API.
+///
 /// Each slot has its own [Future]-chain lock so concurrent callers are
 /// serialized per-interpreter rather than globally, enabling parallel inference
 /// across multiple pool slots while preventing XNNPACK thread contention.
 ///
 /// Usage:
 /// ```dart
+/// import 'package:flutter_litert/native.dart';
+///
 /// final pool = InterpreterPool(poolSize: 3);
 /// await pool.initialize(
 ///   (options, _) async {

@@ -1,5 +1,10 @@
 ## 3.9.0
 
+* **Correct the native-only inference utility documentation** ([issue #17](https://github.com/hugocornellier/flutter_litert/issues/17)).
+  `InterpreterFactory` and `InterpreterPool` examples now import
+  `package:flutter_litert/native.dart` so their native types resolve consistently
+  in IDEs and static analysis. Document their supported platforms and the
+  portable `CompiledModelConfig.auto()` alternative.
 * **New policy-based `CompiledModel` construction.** `CompiledModelConfig` and
   `CompiledModelPolicy` add `auto`, `cpu`, strict `gpu`, mixed
   `gpuWithCpuFallback`, strict `npu`, and mixed `npuWithCpuFallback` choices.

@@ -1361,10 +1361,13 @@ final config = PerformanceConfig.disabled; // no delegate
 
 ### InterpreterFactory
 
-Creates an interpreter with the right delegate for the current platform, no more per-platform `if (Platform.isIOS)` chains:
+`InterpreterFactory` supports native platforms only (Android, iOS, macOS,
+Windows, and Linux). Import `package:flutter_litert/native.dart` in native-only
+code so the factory and its native interpreter types resolve consistently in
+the analyzer and IDE. Use this import for the examples below:
 
 ```dart
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:flutter_litert/native.dart';
 
 final config = PerformanceConfig.auto(numThreads: 4);
 final (options, delegate) = InterpreterFactory.create(config);
@@ -1386,12 +1389,23 @@ mediaPipeInterpreter.allocateTensors();
 final isolate = await InterpreterFactory.createIsolateIfNeeded(interpreter, delegate);
 ```
 
+For acceleration selection in code shared by native and web apps, use
+`CompiledModel.fromBufferWithConfigAsync` with
+`const CompiledModelConfig.auto()` through
+`package:flutter_litert/flutter_litert.dart`; see
+[CompiledModel configuration](#compiledmodel-litert-next).
+Its auto policy tries GPU first and retries on CPU if construction fails;
+it differs from `PerformanceConfig.auto()`'s native delegate mapping.
+
 ### InterpreterPool
+
+`InterpreterPool` also supports native platforms only and requires
+`package:flutter_litert/native.dart`.
 
 Round-robin pool of interpreters that serializes overlapping async calls per slot with a per-slot lock. Useful when you need to interleave inference work (e.g. processing video frames) without XNNPACK thread contention:
 
 ```dart
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:flutter_litert/native.dart';
 
 final pool = InterpreterPool(poolSize: 3);
 await pool.initialize(
