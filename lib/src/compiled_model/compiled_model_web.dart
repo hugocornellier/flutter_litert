@@ -32,9 +32,9 @@ export 'compiled_model_types.dart';
 ///
 /// Compilation and inference are Promise-based in LiteRT.js, so only the
 /// asynchronous half of the CompiledModel API is available here:
-/// [fromBufferAsync] / [fromBufferWithGpuFallbackAsync] to build a model and
-/// [runAsync] to run it. The synchronous [fromFile], [fromBuffer],
-/// [fromBufferWithGpuFallback], and [run] throw [UnsupportedError] on the web;
+/// [fromBufferAsync], [fromBufferWithConfigAsync], or
+/// [fromBufferWithGpuFallbackAsync] to build a model and [runAsync] to run it.
+/// The synchronous factories and [run] throw [UnsupportedError] on the web;
 /// portable code should use the async variants, which work on every platform.
 ///
 /// [Accelerator.cpu] maps to the LiteRT.js WASM backend and [Accelerator.gpu]
@@ -52,6 +52,9 @@ class CompiledModel {
     this._outputs,
     this._accelerator,
     this._accelerators,
+    this._requestedAccelerators,
+    this._requestedConfig,
+    this._didFallback,
   );
 
   final lrt.CompiledModelJS _model;
@@ -59,6 +62,9 @@ class CompiledModel {
   final List<_TensorDetails> _outputs;
   final Accelerator _accelerator;
   final Set<Accelerator> _accelerators;
+  final Set<Accelerator> _requestedAccelerators;
+  final CompiledModelConfig? _requestedConfig;
+  final bool _didFallback;
 
   // Whole runAsync cycles are serialized in FIFO order to match the native
   // implementation's semantics (there they share native I/O buffers; here we
@@ -84,6 +90,20 @@ class CompiledModel {
     );
   }
 
+  /// Not supported on the web: there is no file system. Load the model bytes
+  /// and use [fromBufferWithConfigAsync].
+  static CompiledModel fromFileWithConfig(
+    String path, {
+    CompiledModelConfig config = const CompiledModelConfig.auto(),
+    void Function(Object error)? onFallback,
+  }) {
+    throw UnsupportedError(
+      'CompiledModel.fromFileWithConfig is not supported on the web (no file '
+      'system). Load the model bytes and use '
+      'CompiledModel.fromBufferWithConfigAsync instead.',
+    );
+  }
+
   /// Not supported on the web: LiteRT.js compilation is Promise-based and
   /// cannot complete synchronously. Use [fromBufferAsync].
   static CompiledModel fromBuffer(
@@ -96,6 +116,19 @@ class CompiledModel {
       'CompiledModel.fromBuffer is synchronous and cannot be implemented on '
       'the web, where LiteRT.js compilation is Promise-based. Use '
       'CompiledModel.fromBufferAsync instead.',
+    );
+  }
+
+  /// Not supported on the web. Use [fromBufferWithConfigAsync].
+  static CompiledModel fromBufferWithConfig(
+    Uint8List bytes, {
+    CompiledModelConfig config = const CompiledModelConfig.auto(),
+    void Function(Object error)? onFallback,
+  }) {
+    throw UnsupportedError(
+      'CompiledModel.fromBufferWithConfig is synchronous and cannot be '
+      'implemented on the web, where LiteRT.js compilation is Promise-based. '
+      'Use CompiledModel.fromBufferWithConfigAsync instead.',
     );
   }
 
@@ -139,17 +172,75 @@ class CompiledModel {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
     Precision precision = Precision.fp32,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
-  }) => _fromBufferAsyncImpl(
-    bytes,
-    accelerators: accelerators,
-    tensorBufferMode: tensorBufferMode,
-  );
+  }) {
+    // Capture the async request before the first await so caller mutation of a
+    // non-const Set cannot change the backend choice or reported metadata.
+    final requested = Set<Accelerator>.unmodifiable(accelerators);
+    return _fromBufferAsyncImpl(
+      bytes,
+      accelerators: requested,
+      tensorBufferMode: tensorBufferMode,
+      requestedAccelerators: requested,
+    );
+  }
+
+  /// Creates a policy-configured model from bytes via LiteRT.js.
+  ///
+  /// Auto tries WebGPU first and retries the complete model on WASM when the
+  /// WebGPU construction fails or does not settle before the watchdog. NPU is
+  /// never selected by Auto. A strict NPU policy is unsupported on the web;
+  /// `npuWithCpuFallback` reports that failure through [onFallback] and builds
+  /// on WASM.
+  static Future<CompiledModel> fromBufferWithConfigAsync(
+    Uint8List bytes, {
+    CompiledModelConfig config = const CompiledModelConfig.auto(),
+    void Function(Object error)? onFallback,
+  }) async {
+    _validateCommonBufferArguments(
+      bytes,
+      tensorBufferMode: config.tensorBufferMode,
+    );
+
+    final primary = config.primaryAccelerators;
+    // LiteRT.js accepts one backend name rather than a native accelerator
+    // mask. A mixed policy therefore maps to a preferred backend attempt plus
+    // the same complete WASM retry used by Auto. Keep [primary] as the public
+    // request so metadata still reflects the policy the caller selected.
+    final firstAttempt = config.allowsCpuFallback && primary.length > 1
+        ? (Set<Accelerator>.of(primary)..remove(Accelerator.cpu))
+        : primary;
+    try {
+      return await _fromBufferAsyncImpl(
+        bytes,
+        accelerators: firstAttempt,
+        tensorBufferMode: config.tensorBufferMode,
+        requestedAccelerators: primary,
+        requestedConfig: config,
+        useGpuCompileWatchdog: config.allowsCpuFallback,
+      );
+    } catch (error) {
+      final fallback = config.fallbackAccelerators;
+      if (fallback == null) rethrow;
+      onFallback?.call(error);
+      return _fromBufferAsyncImpl(
+        bytes,
+        accelerators: fallback,
+        tensorBufferMode: config.tensorBufferMode,
+        requestedAccelerators: primary,
+        requestedConfig: config,
+        didFallback: true,
+      );
+    }
+  }
 
   static Future<CompiledModel> _fromBufferAsyncImpl(
     Uint8List bytes, {
     required Set<Accelerator> accelerators,
     required TensorBufferMode tensorBufferMode,
-    void Function(Object error)? onGpuFallback,
+    required Set<Accelerator> requestedAccelerators,
+    CompiledModelConfig? requestedConfig,
+    bool didFallback = false,
+    bool useGpuCompileWatchdog = false,
   }) async {
     if (accelerators.isEmpty) {
       throw ArgumentError.value(
@@ -165,6 +256,45 @@ class CompiledModel {
         'Accelerator.npu is not supported on the web.',
       );
     }
+    _validateCommonBufferArguments(bytes, tensorBufferMode: tensorBufferMode);
+
+    await lrt.waitForLiteRt();
+
+    lrt.CompiledModelJS compiled;
+    Accelerator requested;
+    if (accelerators.contains(Accelerator.gpu)) {
+      final bool canFallBack = accelerators.contains(Accelerator.cpu);
+      try {
+        // Bound the WebGPU attempt only when this method or its policy caller
+        // owns a WASM fallback. A strict request surfaces the runtime's own
+        // behavior without a synthetic timeout.
+        compiled = canFallBack || useGpuCompileWatchdog
+            ? await _compileGpuWithWatchdog(bytes)
+            : await _compile(bytes, 'webgpu');
+        requested = Accelerator.gpu;
+      } catch (e) {
+        if (!canFallBack) rethrow;
+        didFallback = true;
+        compiled = await _compile(bytes, 'wasm');
+        requested = Accelerator.cpu;
+      }
+    } else {
+      compiled = await _compile(bytes, 'wasm');
+      requested = Accelerator.cpu;
+    }
+    return _fromCompiled(
+      compiled,
+      requested,
+      requestedAccelerators: requestedAccelerators,
+      requestedConfig: requestedConfig,
+      didFallback: didFallback,
+    );
+  }
+
+  static void _validateCommonBufferArguments(
+    Uint8List bytes, {
+    required TensorBufferMode tensorBufferMode,
+  }) {
     if (tensorBufferMode != TensorBufferMode.managed) {
       throw UnsupportedError(
         'TensorBufferMode.${tensorBufferMode.name} is not supported on the '
@@ -178,31 +308,6 @@ class CompiledModel {
         'Must be non-zero.',
       );
     }
-
-    await lrt.waitForLiteRt();
-
-    lrt.CompiledModelJS compiled;
-    Accelerator requested;
-    if (accelerators.contains(Accelerator.gpu)) {
-      final bool canFallBack = accelerators.contains(Accelerator.cpu);
-      try {
-        // Bound the WebGPU attempt only when a WASM fallback exists: the
-        // watchdog turns a wedged compile into a fallback, never an error.
-        compiled = canFallBack
-            ? await _compileGpuWithWatchdog(bytes)
-            : await _compile(bytes, 'webgpu');
-        requested = Accelerator.gpu;
-      } catch (e) {
-        if (!canFallBack) rethrow;
-        onGpuFallback?.call(e);
-        compiled = await _compile(bytes, 'wasm');
-        requested = Accelerator.cpu;
-      }
-    } else {
-      compiled = await _compile(bytes, 'wasm');
-      requested = Accelerator.cpu;
-    }
-    return _fromCompiled(compiled, requested);
   }
 
   /// How long a WebGPU compile attempt may stay unsettled before a pending
@@ -268,25 +373,29 @@ class CompiledModel {
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
     void Function(Object error)? onFallback,
   }) {
-    if (forceCpu) {
-      return fromBufferAsync(
-        bytes,
-        accelerators: const {Accelerator.cpu},
-        tensorBufferMode: tensorBufferMode,
-      );
-    }
-    return _fromBufferAsyncImpl(
+    final config = forceCpu
+        ? CompiledModelConfig.cpu(
+            precision: precision,
+            tensorBufferMode: tensorBufferMode,
+          )
+        : CompiledModelConfig.gpuWithCpuFallback(
+            precision: precision,
+            tensorBufferMode: tensorBufferMode,
+          );
+    return fromBufferWithConfigAsync(
       bytes,
-      accelerators: const {Accelerator.gpu, Accelerator.cpu},
-      tensorBufferMode: tensorBufferMode,
-      onGpuFallback: onFallback,
+      config: config,
+      onFallback: onFallback,
     );
   }
 
   static CompiledModel _fromCompiled(
     lrt.CompiledModelJS compiled,
-    Accelerator requested,
-  ) {
+    Accelerator requested, {
+    required Set<Accelerator> requestedAccelerators,
+    CompiledModelConfig? requestedConfig,
+    required bool didFallback,
+  }) {
     try {
       final inputs = _parseDetails(compiled.getInputDetails(), 'input');
       final outputs = _parseDetails(compiled.getOutputDetails(), 'output');
@@ -303,6 +412,10 @@ class CompiledModel {
         outputs,
         resolved,
         Set.unmodifiable(acceleratorSet),
+        Set.unmodifiable(Set<Accelerator>.of(requestedAccelerators)),
+        requestedConfig,
+        didFallback ||
+            (requested == Accelerator.gpu && resolved == Accelerator.cpu),
       );
     } catch (_) {
       compiled.delete();
@@ -379,6 +492,22 @@ class CompiledModel {
   /// Tensor buffer allocation mode used by this model (always
   /// [TensorBufferMode.managed] on the web).
   TensorBufferMode get tensorBufferMode => TensorBufferMode.managed;
+
+  /// Policy configuration used to construct this model.
+  ///
+  /// This is also populated by the legacy GPU-fallback convenience factory.
+  /// Null means [fromBufferAsync] was called with an exact accelerator set.
+  CompiledModelConfig? get requestedConfig => _requestedConfig;
+
+  /// Accelerators requested before any complete fallback.
+  Set<Accelerator> get requestedAccelerators => _requestedAccelerators;
+
+  /// Whether construction retried the complete model on WASM, or LiteRT.js
+  /// silently resolved a WebGPU request to WASM.
+  ///
+  /// This does not report partial WebGPU operation placement; use
+  /// [isFullyAccelerated] for that.
+  bool get didFallback => _didFallback;
 
   /// Accelerators this model was compiled with.
   ///

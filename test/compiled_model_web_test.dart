@@ -42,6 +42,14 @@ void main() {
         throwsUnsupportedError,
       );
       expect(
+        () => CompiledModel.fromFileWithConfig('m.tflite'),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => CompiledModel.fromBufferWithConfig(modelBytes),
+        throwsUnsupportedError,
+      );
+      expect(
         () => CompiledModel.fromBufferWithGpuFallback(modelBytes),
         throwsUnsupportedError,
       );
@@ -71,6 +79,31 @@ void main() {
         throwsArgumentError,
       );
     });
+
+    test(
+      'policy validation happens before fallback or runtime loading',
+      () async {
+        var callbackCount = 0;
+        await expectLater(
+          CompiledModel.fromBufferWithConfigAsync(
+            Uint8List(0),
+            onFallback: (_) => callbackCount++,
+          ),
+          throwsArgumentError,
+        );
+        expect(callbackCount, 0);
+
+        await expectLater(
+          CompiledModel.fromBufferWithConfigAsync(
+            modelBytes,
+            config: const CompiledModelConfig.npu(),
+            onFallback: (_) => callbackCount++,
+          ),
+          throwsArgumentError,
+        );
+        expect(callbackCount, 0);
+      },
+    );
   });
 
   // These tests exercise the real LiteRT.js runtime, auto-loaded from
@@ -80,6 +113,9 @@ void main() {
     test('compiles on WASM, runs, and reports geometry', () async {
       final cm = await CompiledModel.fromBufferAsync(modelBytes);
       expect(cm.accelerators, {Accelerator.cpu});
+      expect(cm.requestedAccelerators, {Accelerator.cpu});
+      expect(cm.requestedConfig, isNull);
+      expect(cm.didFallback, isFalse);
       expect(cm.tensorBufferMode, TensorBufferMode.managed);
       expect(cm.inputCount, 1);
       expect(cm.outputCount, 1);
@@ -96,6 +132,40 @@ void main() {
       expect(outputs[0][len - 1], closeTo(3.0, 1e-6));
       cm.close();
     });
+
+    test('CPU policy reports requested and effective state', () async {
+      const config = CompiledModelConfig.cpu();
+      final cm = await CompiledModel.fromBufferWithConfigAsync(
+        modelBytes,
+        config: config,
+      );
+
+      expect(cm.requestedConfig, config);
+      expect(cm.requestedAccelerators, {Accelerator.cpu});
+      expect(cm.accelerators, {Accelerator.cpu});
+      expect(cm.didFallback, isFalse);
+      cm.close();
+    });
+
+    test(
+      'NPU with CPU fallback reports unsupported NPU then uses WASM',
+      () async {
+        Object? fallbackError;
+        const config = CompiledModelConfig.npuWithCpuFallback();
+        final cm = await CompiledModel.fromBufferWithConfigAsync(
+          modelBytes,
+          config: config,
+          onFallback: (error) => fallbackError = error,
+        );
+
+        expect(fallbackError, isA<ArgumentError>());
+        expect(cm.requestedConfig, config);
+        expect(cm.requestedAccelerators, {Accelerator.npu, Accelerator.cpu});
+        expect(cm.accelerators, {Accelerator.cpu});
+        expect(cm.didFallback, isTrue);
+        cm.close();
+      },
+    );
 
     test('queued runAsync calls serialize and both complete', () async {
       final cm = await CompiledModel.fromBufferAsync(modelBytes);
@@ -174,6 +244,12 @@ void main() {
           fallbackError,
           cm.accelerators.contains(Accelerator.gpu) ? isNull : isNotNull,
         );
+        expect(
+          cm.requestedConfig,
+          const CompiledModelConfig.gpuWithCpuFallback(),
+        );
+        expect(cm.requestedAccelerators, {Accelerator.gpu, Accelerator.cpu});
+        expect(cm.didFallback, !cm.accelerators.contains(Accelerator.gpu));
 
         final len = cm.inputByteSizes[0] ~/ 4;
         final input = Float32List(len)..fillRange(0, len, 1.0);
@@ -189,6 +265,9 @@ void main() {
         forceCpu: true,
       );
       expect(cm.accelerators, {Accelerator.cpu});
+      expect(cm.requestedConfig, const CompiledModelConfig.cpu());
+      expect(cm.requestedAccelerators, {Accelerator.cpu});
+      expect(cm.didFallback, isFalse);
       cm.close();
     });
   });
@@ -277,6 +356,44 @@ void main() {
       ).timeout(const Duration(seconds: 20));
       expect(cm.accelerators, {Accelerator.cpu});
       expect(fallbackError, isA<TimeoutException>());
+      expect(cm.didFallback, isTrue);
+      cm.close();
+    });
+
+    test(
+      'Auto abandons hung WebGPU then reports a complete WASM retry',
+      () async {
+        installHangingGpuRuntime();
+        Object? fallbackError;
+        const config = CompiledModelConfig.auto();
+        final cm = await cm_web.CompiledModel.fromBufferWithConfigAsync(
+          modelBytes,
+          config: config,
+          onFallback: (error) => fallbackError = error,
+        ).timeout(const Duration(seconds: 20));
+
+        expect(fallbackError, isA<TimeoutException>());
+        expect(cm.requestedConfig, config);
+        expect(cm.requestedAccelerators, {Accelerator.gpu});
+        expect(cm.accelerators, {Accelerator.cpu});
+        expect(cm.didFallback, isTrue);
+        cm.close();
+      },
+    );
+
+    test('mixed GPU fallback invokes its callback exactly once', () async {
+      installHangingGpuRuntime();
+      var callbackCount = 0;
+      final cm = await cm_web.CompiledModel.fromBufferWithConfigAsync(
+        modelBytes,
+        config: const CompiledModelConfig.gpuWithCpuFallback(),
+        onFallback: (_) => callbackCount++,
+      ).timeout(const Duration(seconds: 20));
+
+      expect(callbackCount, 1);
+      expect(cm.requestedAccelerators, {Accelerator.gpu, Accelerator.cpu});
+      expect(cm.accelerators, {Accelerator.cpu});
+      expect(cm.didFallback, isTrue);
       cm.close();
     });
 

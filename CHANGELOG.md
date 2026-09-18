@@ -1,3 +1,36 @@
+## 3.9.0
+
+* **New policy-based `CompiledModel` construction.** `CompiledModelConfig` and
+  `CompiledModelPolicy` add `auto`, `cpu`, strict `gpu`, mixed
+  `gpuWithCpuFallback`, strict `npu`, and mixed `npuWithCpuFallback` choices.
+  Use `fromFileWithConfig`, `fromBufferWithConfig`, or the portable
+  `fromBufferWithConfigAsync`. This provides the `PerformanceConfig.auto`
+  equivalent requested in
+  [issue #18](https://github.com/hugocornellier/flutter_litert/issues/18)
+  without changing any existing constructor.
+* **Auto has a narrow, deterministic contract:** request strict GPU at fp32,
+  then retry the complete model CPU-only if GPU construction fails. Auto does
+  not first request a mixed `{gpu, cpu}` graph, select NPU, benchmark available
+  accelerators, or treat successful compilation as proof of numerical
+  correctness. Production models still need per-model validation.
+* The distinction between fallback modes is now represented directly in the
+  API. `gpu`/`npu` perform no package-level CPU retry;
+  `gpuWithCpuFallback`/`npuWithCpuFallback` first request a mixed graph that can
+  place operations on CPU, then perform a complete CPU-only retry if that
+  construction throws. The existing `fromBufferWithGpuFallback` methods retain
+  their mixed-graph-first behavior and map to the new explicit policy.
+* New `requestedConfig`, `requestedAccelerators`, and `didFallback` getters sit
+  alongside the existing effective `accelerators` and `isFullyAccelerated`
+  diagnostics. They distinguish what the caller requested, what LiteRT
+  constructed, whether a complete retry or runtime narrowing occurred, and
+  whether the whole graph was accelerated. Operation-level placement inside a
+  successful mixed graph does not set `didFallback`.
+* Web exposes the same policy surface through `fromBufferWithConfigAsync`.
+  Auto uses WebGPU with the existing hung-compile watchdog and retries on WASM;
+  strict NPU remains unsupported, while `npuWithCpuFallback` reports the NPU
+  failure and continues on WASM. Unsupported-platform stubs carry matching
+  signatures for conditional-import parity.
+
 ## 3.8.0
 
 * **`CompiledModel` now defaults to `Precision.fp32` instead of `fp16`.** This

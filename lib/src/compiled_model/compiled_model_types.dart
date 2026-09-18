@@ -43,3 +43,174 @@ enum Precision { fp16, fp32 }
 /// GPU models, but are slower for others. [hostMemory] is native-only; the web
 /// implementation supports [managed] buffers exclusively.
 enum TensorBufferMode { managed, hostMemory }
+
+/// Ordered accelerator policy for building a [CompiledModel].
+///
+/// This is deliberately separate from [Accelerator]. An accelerator is a
+/// hardware target, while a policy describes preference and fallback order;
+/// an unordered `Set<Accelerator>` cannot distinguish an automatic choice
+/// from an exact request.
+enum CompiledModelPolicy {
+  /// Package-recommended selection.
+  ///
+  /// In flutter_litert 3.9 this means a strict GPU request at
+  /// [Precision.fp32], with a complete CPU-only retry when GPU construction
+  /// fails. It does not first request a mixed `{gpu, cpu}` graph. NPU is
+  /// intentionally excluded because availability and correctness remain
+  /// device- and model-specific.
+  ///
+  /// Auto is a construction policy, not a correctness test or benchmark. A
+  /// model that compiles can still be numerically unsuitable for a backend;
+  /// validate production models separately with `verifyCompiledModel`.
+  auto,
+
+  /// CPU only.
+  cpu,
+
+  /// GPU compilation with no complete CPU retry.
+  ///
+  /// "Strict" here describes the requested accelerator set and fallback
+  /// policy. Use `CompiledModel.isFullyAccelerated` to inspect whether the
+  /// runtime placed the whole graph on an accelerator.
+  gpu,
+
+  /// Request a mixed `{gpu, cpu}` graph, then retry the whole model CPU-only
+  /// if construction fails.
+  gpuWithCpuFallback,
+
+  /// NPU compilation with no complete CPU retry.
+  npu,
+
+  /// Request a mixed `{npu, cpu}` graph, then retry the whole model CPU-only
+  /// if construction fails.
+  ///
+  /// NPU is experimental and must be validated per model and target device.
+  npuWithCpuFallback,
+}
+
+/// Value configuration for policy-based [CompiledModel] construction.
+///
+/// Use this with `CompiledModel.fromFileWithConfig`,
+/// `CompiledModel.fromBufferWithConfig`, or
+/// `CompiledModel.fromBufferWithConfigAsync`. The existing low-level
+/// constructors that accept an exact `Set<Accelerator>` remain available for
+/// advanced combinations and retain their original semantics.
+class CompiledModelConfig {
+  /// Ordered accelerator selection and fallback policy.
+  final CompiledModelPolicy policy;
+
+  /// GPU precision.
+  ///
+  /// This is retained for CPU and NPU policies so a single immutable config
+  /// can move between policies without losing the user's precision choice.
+  /// Those backends do not currently expose a configurable precision.
+  final Precision precision;
+
+  /// Tensor buffer allocation mode.
+  final TensorBufferMode tensorBufferMode;
+
+  /// Creates a policy-based CompiledModel configuration.
+  const CompiledModelConfig({
+    this.policy = CompiledModelPolicy.auto,
+    this.precision = Precision.fp32,
+    this.tensorBufferMode = TensorBufferMode.managed,
+  });
+
+  /// Package-recommended accelerator selection.
+  const CompiledModelConfig.auto({
+    this.precision = Precision.fp32,
+    this.tensorBufferMode = TensorBufferMode.managed,
+  }) : policy = CompiledModelPolicy.auto;
+
+  /// CPU-only compilation.
+  const CompiledModelConfig.cpu({
+    this.precision = Precision.fp32,
+    this.tensorBufferMode = TensorBufferMode.managed,
+  }) : policy = CompiledModelPolicy.cpu;
+
+  /// Strict GPU compilation.
+  const CompiledModelConfig.gpu({
+    this.precision = Precision.fp32,
+    this.tensorBufferMode = TensorBufferMode.managed,
+  }) : policy = CompiledModelPolicy.gpu;
+
+  /// GPU-preferred compilation with a complete CPU retry.
+  const CompiledModelConfig.gpuWithCpuFallback({
+    this.precision = Precision.fp32,
+    this.tensorBufferMode = TensorBufferMode.managed,
+  }) : policy = CompiledModelPolicy.gpuWithCpuFallback;
+
+  /// Strict NPU compilation.
+  const CompiledModelConfig.npu({
+    this.precision = Precision.fp32,
+    this.tensorBufferMode = TensorBufferMode.managed,
+  }) : policy = CompiledModelPolicy.npu;
+
+  /// NPU-preferred compilation with a complete CPU retry.
+  const CompiledModelConfig.npuWithCpuFallback({
+    this.precision = Precision.fp32,
+    this.tensorBufferMode = TensorBufferMode.managed,
+  }) : policy = CompiledModelPolicy.npuWithCpuFallback;
+
+  /// Exact accelerator set used for the policy's first construction attempt.
+  Set<Accelerator> get primaryAccelerators => switch (policy) {
+    CompiledModelPolicy.auto ||
+    CompiledModelPolicy.gpu => const {Accelerator.gpu},
+    CompiledModelPolicy.cpu => const {Accelerator.cpu},
+    CompiledModelPolicy.gpuWithCpuFallback => const {
+      Accelerator.gpu,
+      Accelerator.cpu,
+    },
+    CompiledModelPolicy.npu => const {Accelerator.npu},
+    CompiledModelPolicy.npuWithCpuFallback => const {
+      Accelerator.npu,
+      Accelerator.cpu,
+    },
+  };
+
+  /// Whether a failed preferred compilation is retried as CPU-only.
+  bool get allowsCpuFallback => switch (policy) {
+    CompiledModelPolicy.auto ||
+    CompiledModelPolicy.gpuWithCpuFallback ||
+    CompiledModelPolicy.npuWithCpuFallback => true,
+    _ => false,
+  };
+
+  /// Accelerator set used for a complete retry after primary construction
+  /// fails, or null when the policy has no complete fallback.
+  Set<Accelerator>? get fallbackAccelerators =>
+      allowsCpuFallback ? const {Accelerator.cpu} : null;
+
+  /// Returns a copy with the supplied fields replaced.
+  CompiledModelConfig copyWith({
+    CompiledModelPolicy? policy,
+    Precision? precision,
+    TensorBufferMode? tensorBufferMode,
+  }) {
+    return CompiledModelConfig(
+      policy: policy ?? this.policy,
+      precision: precision ?? this.precision,
+      tensorBufferMode: tensorBufferMode ?? this.tensorBufferMode,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is CompiledModelConfig &&
+            policy == other.policy &&
+            precision == other.precision &&
+            tensorBufferMode == other.tensorBufferMode;
+  }
+
+  @override
+  int get hashCode => Object.hash(policy, precision, tensorBufferMode);
+
+  @override
+  String toString() {
+    return 'CompiledModelConfig('
+        'policy: CompiledModelPolicy.${policy.name}, '
+        'precision: Precision.${precision.name}, '
+        'tensorBufferMode: TensorBufferMode.${tensorBufferMode.name})';
+  }
+}

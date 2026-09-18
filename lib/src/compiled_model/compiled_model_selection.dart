@@ -15,6 +15,12 @@ import 'compiled_model.dart';
 /// This helper centralizes that branch so callers do not each re-derive the
 /// "is this the default set?" predicate.
 ///
+/// This predates [CompiledModelConfig] and does **not** use
+/// [CompiledModelPolicy.auto]. Its default deliberately retains the existing
+/// mixed `{gpu, cpu}`-then-CPU-retry behavior for source compatibility. New
+/// code that wants the 3.9 Auto policy should call
+/// [CompiledModel.fromBufferWithConfig] instead.
+///
 /// [onGpuFallback] is invoked with the compile error when the GPU attempt fails
 /// and the model falls back to CPU. [forceCpu] skips the GPU attempt entirely.
 ///

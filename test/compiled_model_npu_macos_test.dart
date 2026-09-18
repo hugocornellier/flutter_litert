@@ -158,6 +158,26 @@ void main() {
     );
   });
 
+  test('NPU with CPU fallback retries the complete model and reports it', () {
+    Object? fallbackError;
+    const config = CompiledModelConfig.npuWithCpuFallback();
+    final model = CompiledModel.fromFileWithConfig(
+      _unsupportedModel,
+      config: config,
+      onFallback: (error) => fallbackError = error,
+    );
+    addTearDown(model.close);
+
+    expect(fallbackError, isA<StateError>());
+    expect(model.requestedConfig, config);
+    expect(model.requestedAccelerators, {Accelerator.npu, Accelerator.cpu});
+    expect(model.accelerators, {Accelerator.cpu});
+    expect(model.didFallback, isTrue);
+
+    final input = Float32List(model.inputByteSizes.first ~/ 4)..first = -3;
+    expect(model.run([input]).single.single, 3);
+  });
+
   test('strict NPU rejects a partially supported graph', () {
     expect(
       () => CompiledModel.fromFile(

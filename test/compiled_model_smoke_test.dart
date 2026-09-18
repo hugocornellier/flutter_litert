@@ -21,6 +21,47 @@ void main() {
     addTearDown(cm.close);
     expect(cm, isNotNull);
     expect(cm.accelerators, {Accelerator.cpu});
+    expect(cm.requestedAccelerators, {Accelerator.cpu});
+    expect(cm.requestedConfig, isNull);
+    expect(cm.didFallback, isFalse);
+  });
+
+  test('CPU policy reports requested and effective construction state', () {
+    const config = CompiledModelConfig.cpu(
+      tensorBufferMode: TensorBufferMode.hostMemory,
+    );
+    final cm = CompiledModel.fromFileWithConfig(model, config: config);
+    addTearDown(cm.close);
+
+    expect(cm.requestedConfig, config);
+    expect(cm.requestedAccelerators, {Accelerator.cpu});
+    expect(cm.accelerators, {Accelerator.cpu});
+    expect(cm.tensorBufferMode, TensorBufferMode.hostMemory);
+    expect(cm.didFallback, isFalse);
+  });
+
+  test('Auto yields a usable strict-GPU or complete-CPU model', () {
+    Object? fallbackError;
+    const config = CompiledModelConfig.auto();
+    final cm = CompiledModel.fromFileWithConfig(
+      model,
+      config: config,
+      onFallback: (error) => fallbackError = error,
+    );
+    addTearDown(cm.close);
+
+    expect(cm.requestedConfig, config);
+    expect(cm.requestedAccelerators, {Accelerator.gpu});
+    if (cm.didFallback) {
+      expect(cm.accelerators, {Accelerator.cpu});
+      expect(fallbackError, isNotNull);
+    } else {
+      expect(cm.accelerators, {Accelerator.gpu});
+      expect(fallbackError, isNull);
+    }
+
+    final input = Float32List(cm.inputByteSizes.first ~/ 4)..first = 3;
+    expect(cm.run([input]).single.single, closeTo(7, 1e-5));
   });
 
   test('CompiledModel compiles model bytes on the CPU accelerator', () {
@@ -28,6 +69,72 @@ void main() {
     final cm = CompiledModel.fromBuffer(bytes, accelerators: {Accelerator.cpu});
     addTearDown(cm.close);
     expect(cm, isNotNull);
+  });
+
+  test(
+    'policy-configured async factory matches the synchronous factory',
+    () async {
+      final bytes = File(model).readAsBytesSync();
+      const config = CompiledModelConfig.cpu();
+      final cm = await CompiledModel.fromBufferWithConfigAsync(
+        bytes,
+        config: config,
+      );
+      addTearDown(cm.close);
+
+      expect(cm.requestedConfig, config);
+      expect(cm.requestedAccelerators, {Accelerator.cpu});
+      expect(cm.accelerators, {Accelerator.cpu});
+      expect(cm.didFallback, isFalse);
+    },
+  );
+
+  test('legacy GPU-fallback forceCpu maps to CPU policy metadata', () {
+    final bytes = File(model).readAsBytesSync();
+    final cm = CompiledModel.fromBufferWithGpuFallback(bytes, forceCpu: true);
+    addTearDown(cm.close);
+
+    expect(cm.requestedConfig, const CompiledModelConfig.cpu());
+    expect(cm.requestedAccelerators, {Accelerator.cpu});
+    expect(cm.accelerators, {Accelerator.cpu});
+    expect(cm.didFallback, isFalse);
+  });
+
+  test('legacy detector Auto helper retains its exact-set API', () {
+    final bytes = File(model).readAsBytesSync();
+    final cm = compiledModelFromBufferAuto(bytes, forceCpu: true);
+    addTearDown(cm.close);
+
+    expect(cm.requestedConfig, isNull);
+    expect(cm.requestedAccelerators, {Accelerator.cpu});
+    expect(cm.accelerators, {Accelerator.cpu});
+    expect(cm.didFallback, isFalse);
+  });
+
+  test('invalid bytes fail before a fallback callback', () {
+    var callbackCount = 0;
+
+    expect(
+      () => CompiledModel.fromBufferWithConfig(
+        Uint8List(0),
+        onFallback: (_) => callbackCount++,
+      ),
+      throwsArgumentError,
+    );
+    expect(callbackCount, 0);
+  });
+
+  test('legacy GPU fallback retains its malformed-input callback behavior', () {
+    var callbackCount = 0;
+
+    expect(
+      () => CompiledModel.fromBufferWithGpuFallback(
+        Uint8List(0),
+        onFallback: (_) => callbackCount++,
+      ),
+      throwsArgumentError,
+    );
+    expect(callbackCount, 1);
   });
 
   // NOTE: The GPU (Metal) accelerator needs a real GPU/Metal device context,

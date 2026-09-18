@@ -1,7 +1,13 @@
 // Platform-neutral (WASM-safe) exports shared by the portable
 // `flutter_litert.dart` barrel and the native-only `native.dart` barrel.
 export 'compiled_model/compiled_model.dart'
-    show Accelerator, CompiledModel, Precision, TensorBufferMode;
+    show
+        Accelerator,
+        CompiledModel,
+        CompiledModelConfig,
+        CompiledModelPolicy,
+        Precision,
+        TensorBufferMode;
 export 'compiled_model/compiled_model_selection.dart';
 export 'isolate_interpreter_state.dart';
 export 'isolate_rpc_server.dart';

@@ -52,7 +52,10 @@ It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutt
 
 ## Features
 
-- `CompiledModel` (LiteRT Next), the recommended path. Request accelerators and the runtime picks CPU, GPU, or NPU automatically, with CPU fallback. See [CompiledModel (LiteRT Next)](#compiledmodel-litert-next).
+- `CompiledModel` (LiteRT Next), the recommended path. Use an explicit
+  accelerator policy—including GPU-first Auto with a complete CPU retry—or
+  request an exact accelerator set. See
+  [CompiledModel (LiteRT Next)](#compiledmodel-litert-next).
 - The classic `Interpreter` API remains fully supported when needed.
 - Auto-bundled native libraries. No hand-built `.so`, `.dll`, or `.dylib` files: just add the dependency and it works on Android, iOS, macOS, Windows, and Linux (plus web via `initializeWeb()`). See [Platform support](#platform-support).
 - Interpreter delegates. XNNPACK (CPU) on all native platforms, plus GPU, Metal, and CoreML. None are deprecated: `CompiledModel` is the newer API but currently miscomputes some models, so delegate-backed `Interpreter` inference stays a first-class path. See [Delegates](#delegates).
@@ -63,15 +66,14 @@ It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutt
 
 ## Quick start
 
-Start with `CompiledModel`, the recommended LiteRT Next path. You request a set of accelerators and the runtime selects the best available backend, with CPU fallback:
+Start with `CompiledModel`, the recommended LiteRT Next path. Its Auto policy
+tries strict GPU at fp32, then reconstructs the complete model on CPU if GPU
+construction fails:
 
 ```dart
 import 'package:flutter_litert/flutter_litert.dart';
 
-final model = CompiledModel.fromFile(
-  'model.tflite',
-  accelerators: {Accelerator.gpu, Accelerator.cpu}, // GPU with CPU fallback
-);
+final model = CompiledModel.fromFileWithConfig('model.tflite');
 
 final outputs = model.run(inputs); // List<Float32List> in, List<Float32List> out
 model.close();
@@ -79,7 +81,9 @@ model.close();
 
 See [CompiledModel (LiteRT Next)](#compiledmodel-litert-next) for accelerator selection, precision options, and the zero-copy hot path.
 
-Use the classic `Interpreter` when you need web, on-device training, custom ops, named signatures, quantized or integer I/O, or a drop-in `tflite_flutter` replacement:
+Use the classic `Interpreter` when you need on-device training, custom ops,
+named signatures, quantized or integer I/O, or a drop-in `tflite_flutter`
+replacement:
 
 ```dart
 import 'package:flutter_litert/flutter_litert.dart';
@@ -190,6 +194,62 @@ supported platform, so all of that can go.
 
 ### Accelerator selection and precision
 
+For most applications, use the policy API added in 3.9.0:
+
+```dart
+final model = CompiledModel.fromFileWithConfig(
+  'model.tflite',
+  config: const CompiledModelConfig.auto(),
+  onFallback: (error) => print('GPU unavailable; using CPU: $error'),
+);
+```
+
+The policies are deliberately explicit about two different kinds of fallback:
+
+| Policy | First construction request | Complete retry if it throws |
+|---|---|---|
+| `auto` | `{gpu}` at fp32 by default | `{cpu}` |
+| `cpu` | `{cpu}` | none |
+| `gpu` | `{gpu}` | none |
+| `gpuWithCpuFallback` | `{gpu, cpu}` | `{cpu}` |
+| `npu` | `{npu}` | none |
+| `npuWithCpuFallback` | `{npu, cpu}` | `{cpu}` |
+
+- **Strict GPU/NPU** means the package does not perform a complete CPU retry.
+  It does not promise every operation was placed on that accelerator; inspect
+  `isFullyAccelerated` for whole-graph placement.
+- **Mixed GPU+CPU or NPU+CPU** gives LiteRT both accelerators in one
+  construction request, allowing it to partition operations between them.
+- **Complete CPU retry** discards the failed preferred construction and builds
+  a new CPU-only model. `onFallback` receives the first error.
+- **Auto** is strict GPU first, followed by a complete CPU retry. It does not
+  start with a mixed `{gpu, cpu}` graph, benchmark candidates, select NPU, or
+  validate numerical output.
+
+Construction success is not proof that a backend is correct for a model. Use
+`verifyCompiledModel` or application-level golden tests before enabling a
+backend in production, particularly for an arbitrary custom model.
+
+The model exposes the decision without requiring callers to infer it:
+
+```dart
+print(model.requestedConfig);        // CompiledModelConfig.auto(...)
+print(model.requestedAccelerators);  // {Accelerator.gpu}
+print(model.accelerators);           // effective construction set
+print(model.didFallback);            // complete retry or runtime narrowing
+print(model.isFullyAccelerated);     // whole-graph placement diagnostic
+```
+
+`didFallback` does not report operation-level CPU placement inside a successful
+mixed graph. It reports a complete retry, an unavailable mixed NPU request that
+was narrowed, or—on web—a WebGPU request that resolved to WASM.
+
+The synchronous `fromFileWithConfig` and `fromBufferWithConfig` factories work
+on native platforms. Use `fromBufferWithConfigAsync` for portable native/web
+code.
+
+The original exact-set API remains available and keeps its behavior:
+
 ```dart
 final model = CompiledModel.fromFile(
   'model.tflite',
@@ -230,7 +290,12 @@ For the common "GPU if available, otherwise CPU" case there is a convenience met
 final model = CompiledModel.fromBufferWithGpuFallback(modelBytes);
 ```
 
-This first requests `{gpu, cpu}`. If compilation fails because the GPU is unavailable, an operation is unsupported, or a driver fails, it reports the error through the optional `onFallback` callback and retries CPU-only. `CompiledModel.fromBufferWithGpuFallbackAsync` provides the same guaranteed-model path through the portable async API.
+This maps to `CompiledModelConfig.gpuWithCpuFallback()`: it first requests the
+mixed `{gpu, cpu}` graph. If construction fails because the GPU is unavailable,
+an operation is unsupported, or a driver fails, it reports the error through
+the optional `onFallback` callback and retries CPU-only.
+`CompiledModel.fromBufferWithGpuFallbackAsync` provides the same path through
+the portable async API. Existing callers retain their previous behavior.
 
 Android emulators are a common case: the accelerator library can register, but emulators do not provide working OpenCL, so direct `{gpu, cpu}` compilation returns an error. The fallback factories catch that error and return a CPU model.
 
@@ -530,19 +595,27 @@ The accelerator adds about 2.7 MB on arm64 or 3.4 MB on x86_64 before APK compre
 On the web, `CompiledModel` is backed by Google's LiteRT.js runtime: `Accelerator.cpu` maps to the WASM backend and `Accelerator.gpu` to WebGPU. Compilation and inference are Promise-based in the browser, so only the asynchronous API is available there. The async variants also work on native (where they wrap the synchronous path), so portable code should use them:
 
 ```dart
-final model = await CompiledModel.fromBufferAsync(
+final model = await CompiledModel.fromBufferWithConfigAsync(
   modelBytes,
-  accelerators: {Accelerator.gpu, Accelerator.cpu}, // WebGPU with WASM fallback
+  config: const CompiledModelConfig.auto(),
 );
 final outputs = await model.runAsync(inputs);
 model.close();
 ```
 
-`CompiledModel.fromBufferWithGpuFallbackAsync(modelBytes)` is the async counterpart of `fromBufferWithGpuFallback` and likewise works on every platform.
+`CompiledModel.fromBufferWithGpuFallbackAsync(modelBytes)` remains the async
+counterpart of `fromBufferWithGpuFallback` and likewise works on every
+platform.
 
 Web specifics:
 
-- The synchronous members (`fromFile`, `fromBuffer`, `fromBufferWithGpuFallback`, `run`) throw `UnsupportedError` on the web; use the async variants.
+- The synchronous factories (`fromFile`, `fromFileWithConfig`, `fromBuffer`,
+  `fromBufferWithConfig`, `fromBufferWithGpuFallback`) and `run` throw
+  `UnsupportedError` on the web; use the async variants.
+- LiteRT.js selects one named backend rather than accepting a native
+  accelerator mask. On web, `gpuWithCpuFallback` and an exact `{gpu, cpu}`
+  request therefore mean "try WebGPU, then reconstruct on WASM" rather than a
+  native mixed-accelerator construction.
 - `model.accelerators` reports what LiteRT.js actually resolved: `{Accelerator.gpu}` for a fully accelerated WebGPU model, `{Accelerator.cpu}` for WASM, and `{Accelerator.gpu, Accelerator.cpu}` when the runtime reports a WebGPU model as only partially accelerated.
 - `precision` is accepted but ignored (LiteRT.js does not expose a precision option), and the zero-copy `TensorBufferMode.hostMemory` path is native-only.
 - The first `fromBufferAsync` call auto-loads the LiteRT.js runtime from jsDelivr, exactly like `LiteRtInterpreter`; call `configureLiteRtWebLoader(...)` first to self-host the module and WASM files or to disable auto-loading.
@@ -601,10 +674,7 @@ interpreter.close();
 After (CompiledModel):
 
 ```dart
-final model = CompiledModel.fromFile(
-  'model.tflite',
-  accelerators: {Accelerator.gpu, Accelerator.cpu}, // GPU with CPU fallback
-);
+final model = CompiledModel.fromFileWithConfig('model.tflite');
 
 final outputs = model.run(inputs); // List<Float32List> in, List<Float32List> out
 model.close();
@@ -614,8 +684,8 @@ What changes:
 
 | Interpreter API | CompiledModel API |
 |-----------------|-------------------|
-| `Interpreter.fromAsset` / `fromFile` / `fromBuffer` | `CompiledModel.fromFile` / `CompiledModel.fromBuffer` |
-| `options.addDelegate(GpuDelegateV2())` (or Metal / CoreML) | `accelerators: {Accelerator.gpu, Accelerator.cpu}` |
+| `Interpreter.fromAsset` / `fromFile` / `fromBuffer` | `CompiledModel.fromFileWithConfig` / `fromBufferWithConfig` |
+| `options.addDelegate(GpuDelegateV2())` (or Metal / CoreML) | `CompiledModelConfig.auto()` or an explicit policy |
 | `GpuDelegateOptionsV2(isPrecisionLossAllowed: true)` | `precision: Precision.fp16` (or `Precision.fp32`) |
 | `interpreter.run(input, output)` with nested lists | `model.run(inputs)` returning `List<Float32List>` |
 | `interpreter.close()` | `model.close()` |
@@ -1704,7 +1774,11 @@ iOS and macOS will be migrated to LiteRT as official CocoaPods artifacts become 
 
 1. **`Interpreter`** (standard cross-platform class). Bound to the third-party `tflite-js` runtime via `tf-tflite.min.js`. Pure CPU/WASM execution. Existing API, no setup beyond `initializeWeb()`.
 2. **`LiteRtInterpreter`** (opt-in LiteRT.js runtime, since 2.5.0). Google's official **LiteRT.js** runtime. Defaults to WASM; pass `accelerator: 'webgpu'` to use the **WebGPU** delegate with WASM fallback. Same .tflite models, dramatically faster on browsers that support WebGPU. Async: `runForMultipleInputs(...)` returns a `Future`.
-3. **`CompiledModel`** (since 3.4.0). The recommended cross-platform API, backed by the same LiteRT.js runtime on web. Only the async variants (`fromBufferAsync`, `fromBufferWithGpuFallbackAsync`, `runAsync`) are available in the browser. See [CompiledModel on the web](#compiledmodel-on-the-web).
+3. **`CompiledModel`** (since 3.4.0). The recommended cross-platform API,
+   backed by the same LiteRT.js runtime on web. Only the async variants
+   (`fromBufferAsync`, `fromBufferWithConfigAsync`,
+   `fromBufferWithGpuFallbackAsync`, `runAsync`) are available in the browser.
+   See [CompiledModel on the web](#compiledmodel-on-the-web).
 
 ### Web Demo / Example
 

@@ -34,12 +34,30 @@ class CompiledModel {
     throw UnsupportedError('CompiledModel is not supported on this platform.');
   }
 
+  /// Creates a policy-configured model from a model file.
+  static CompiledModel fromFileWithConfig(
+    String path, {
+    CompiledModelConfig config = const CompiledModelConfig.auto(),
+    void Function(Object error)? onFallback,
+  }) {
+    throw UnsupportedError('CompiledModel is not supported on this platform.');
+  }
+
   /// Creates a compiled model from model bytes.
   static CompiledModel fromBuffer(
     Uint8List bytes, {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
     Precision precision = Precision.fp32,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
+  }) {
+    throw UnsupportedError('CompiledModel is not supported on this platform.');
+  }
+
+  /// Creates a policy-configured model from model bytes.
+  static CompiledModel fromBufferWithConfig(
+    Uint8List bytes, {
+    CompiledModelConfig config = const CompiledModelConfig.auto(),
+    void Function(Object error)? onFallback,
   }) {
     throw UnsupportedError('CompiledModel is not supported on this platform.');
   }
@@ -51,6 +69,16 @@ class CompiledModel {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
     Precision precision = Precision.fp32,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
+  }) {
+    throw UnsupportedError('CompiledModel is not supported on this platform.');
+  }
+
+  /// Creates a policy-configured model from bytes without requiring
+  /// synchronous compilation.
+  static Future<CompiledModel> fromBufferWithConfigAsync(
+    Uint8List bytes, {
+    CompiledModelConfig config = const CompiledModelConfig.auto(),
+    void Function(Object error)? onFallback,
   }) {
     throw UnsupportedError('CompiledModel is not supported on this platform.');
   }
@@ -80,6 +108,21 @@ class CompiledModel {
 
   /// Tensor buffer allocation mode used by this model.
   TensorBufferMode get tensorBufferMode => throw UnsupportedError(
+    'CompiledModel is not supported on this platform.',
+  );
+
+  /// Policy configuration used to construct this model.
+  CompiledModelConfig? get requestedConfig => throw UnsupportedError(
+    'CompiledModel is not supported on this platform.',
+  );
+
+  /// Accelerators requested before any complete fallback.
+  Set<Accelerator> get requestedAccelerators => throw UnsupportedError(
+    'CompiledModel is not supported on this platform.',
+  );
+
+  /// Whether construction retried or narrowed the accelerator selection.
+  bool get didFallback => throw UnsupportedError(
     'CompiledModel is not supported on this platform.',
   );
 

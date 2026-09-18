@@ -62,6 +62,9 @@ class CompiledModel {
     this._outputByteSizes,
     this._tensorBufferMode,
     this._accelerators,
+    this._requestedAccelerators,
+    this._requestedConfig,
+    this._didFallback,
     this._gpuOptionsIdentifier,
   ) : _inputCount = _inputByteSizes.length,
       _outputCount = _outputByteSizes.length;
@@ -81,6 +84,9 @@ class CompiledModel {
   final List<int> _outputByteSizes;
   final TensorBufferMode _tensorBufferMode;
   final Set<Accelerator> _accelerators;
+  final Set<Accelerator> _requestedAccelerators;
+  final CompiledModelConfig? _requestedConfig;
+  final bool _didFallback;
   final Pointer<Utf8>? _gpuOptionsIdentifier;
   final int _inputCount;
   final int _outputCount;
@@ -111,6 +117,27 @@ class CompiledModel {
 
   /// Tensor buffer allocation mode used by this model.
   TensorBufferMode get tensorBufferMode => _tensorBufferMode;
+
+  /// Policy configuration used to construct this model.
+  ///
+  /// This is also populated by the legacy GPU-fallback convenience factories,
+  /// which map to [CompiledModelConfig.gpuWithCpuFallback]. Null means the
+  /// model was created through a low-level constructor with an exact
+  /// `Set<Accelerator>`.
+  CompiledModelConfig? get requestedConfig => _requestedConfig;
+
+  /// Accelerators requested before any complete fallback or runtime narrowing.
+  Set<Accelerator> get requestedAccelerators =>
+      Set.unmodifiable(_requestedAccelerators);
+
+  /// Whether construction fell back from the requested accelerator selection.
+  ///
+  /// This becomes true when a policy retries the complete model on CPU or when
+  /// a mixed NPU request is narrowed because its runtime is unavailable. It
+  /// does not report operation-level placement: a successfully constructed
+  /// mixed GPU+CPU or NPU+CPU graph can place some operations on CPU while this
+  /// remains false. Use [isFullyAccelerated] for whole-graph placement.
+  bool get didFallback => _didFallback;
 
   /// Accelerators this model was compiled with.
   ///
@@ -180,10 +207,38 @@ class CompiledModel {
   }) {
     return _fromSource(
       accelerators: accelerators,
+      requestedAccelerators: accelerators,
       precision: precision,
       tensorBufferMode: tensorBufferMode,
       createModel: (rt, environment) =>
           _createModelFromFile(rt, environment, path),
+    );
+  }
+
+  /// Creates a compiled model from a file using an ordered accelerator policy.
+  ///
+  /// The default [CompiledModelConfig.auto] policy prefers GPU at fp32 and
+  /// retries the whole model on CPU if GPU compilation fails. NPU is never
+  /// selected by Auto. [onFallback] receives the failed preferred-compilation
+  /// error before the CPU retry.
+  static CompiledModel fromFileWithConfig(
+    String path, {
+    CompiledModelConfig config = const CompiledModelConfig.auto(),
+    void Function(Object error)? onFallback,
+  }) {
+    return _fromConfig(
+      config: config,
+      onFallback: onFallback,
+      compile: (accelerators, didFallback) => _fromSource(
+        accelerators: accelerators,
+        requestedAccelerators: config.primaryAccelerators,
+        requestedConfig: config,
+        didFallback: didFallback,
+        precision: config.precision,
+        tensorBufferMode: config.tensorBufferMode,
+        createModel: (rt, environment) =>
+            _createModelFromFile(rt, environment, path),
+      ),
     );
   }
 
@@ -202,10 +257,51 @@ class CompiledModel {
   }) {
     return _fromSource(
       accelerators: accelerators,
+      requestedAccelerators: accelerators,
       precision: precision,
       tensorBufferMode: tensorBufferMode,
       createModel: (rt, environment) =>
           _createModelFromBuffer(rt, environment, bytes),
+    );
+  }
+
+  /// Creates a compiled model from bytes using an ordered accelerator policy.
+  ///
+  /// The default [CompiledModelConfig.auto] policy prefers GPU at fp32 and
+  /// retries the whole model on CPU if GPU compilation fails. NPU is never
+  /// selected by Auto. [onFallback] receives the failed preferred-compilation
+  /// error before the CPU retry.
+  static CompiledModel fromBufferWithConfig(
+    Uint8List bytes, {
+    CompiledModelConfig config = const CompiledModelConfig.auto(),
+    void Function(Object error)? onFallback,
+  }) {
+    _validateModelBytes(bytes);
+    return _fromBufferUsingConfig(
+      bytes,
+      config: config,
+      onFallback: onFallback,
+    );
+  }
+
+  static CompiledModel _fromBufferUsingConfig(
+    Uint8List bytes, {
+    required CompiledModelConfig config,
+    required void Function(Object error)? onFallback,
+  }) {
+    return _fromConfig(
+      config: config,
+      onFallback: onFallback,
+      compile: (accelerators, didFallback) => _fromSource(
+        accelerators: accelerators,
+        requestedAccelerators: config.primaryAccelerators,
+        requestedConfig: config,
+        didFallback: didFallback,
+        precision: config.precision,
+        tensorBufferMode: config.tensorBufferMode,
+        createModel: (rt, environment) =>
+            _createModelFromBuffer(rt, environment, bytes),
+      ),
     );
   }
 
@@ -228,6 +324,20 @@ class CompiledModel {
       precision: precision,
       tensorBufferMode: tensorBufferMode,
     );
+  }
+
+  /// Creates a policy-configured model without requiring synchronous
+  /// compilation.
+  ///
+  /// On native platforms compilation still completes synchronously inside this
+  /// call. This method has the same API on the web, where compilation is
+  /// Promise-based.
+  static Future<CompiledModel> fromBufferWithConfigAsync(
+    Uint8List bytes, {
+    CompiledModelConfig config = const CompiledModelConfig.auto(),
+    void Function(Object error)? onFallback,
+  }) async {
+    return fromBufferWithConfig(bytes, config: config, onFallback: onFallback);
   }
 
   /// Creates a compiled model from [bytes], preferring GPU with a CPU fallback.
@@ -254,30 +364,23 @@ class CompiledModel {
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
     void Function(Object error)? onFallback,
   }) {
-    if (forceCpu) {
-      return fromBuffer(
-        bytes,
-        accelerators: const {Accelerator.cpu},
-        precision: precision,
-        tensorBufferMode: tensorBufferMode,
-      );
-    }
-    try {
-      return fromBuffer(
-        bytes,
-        accelerators: const {Accelerator.gpu, Accelerator.cpu},
-        precision: precision,
-        tensorBufferMode: tensorBufferMode,
-      );
-    } catch (e) {
-      onFallback?.call(e);
-      return fromBuffer(
-        bytes,
-        accelerators: const {Accelerator.cpu},
-        precision: precision,
-        tensorBufferMode: tensorBufferMode,
-      );
-    }
+    final config = forceCpu
+        ? CompiledModelConfig.cpu(
+            precision: precision,
+            tensorBufferMode: tensorBufferMode,
+          )
+        : CompiledModelConfig.gpuWithCpuFallback(
+            precision: precision,
+            tensorBufferMode: tensorBufferMode,
+          );
+    // Route through the policy executor without the new factory's eager input
+    // validation so this legacy method retains its original callback behavior
+    // for malformed bytes.
+    return _fromBufferUsingConfig(
+      bytes,
+      config: config,
+      onFallback: onFallback,
+    );
   }
 
   /// Creates a compiled model from [bytes], preferring GPU with a CPU
@@ -300,6 +403,26 @@ class CompiledModel {
       tensorBufferMode: tensorBufferMode,
       onFallback: onFallback,
     );
+  }
+
+  static CompiledModel _fromConfig({
+    required CompiledModelConfig config,
+    required void Function(Object error)? onFallback,
+    required CompiledModel Function(
+      Set<Accelerator> accelerators,
+      bool didFallback,
+    )
+    compile,
+  }) {
+    final primary = config.primaryAccelerators;
+    try {
+      return compile(primary, false);
+    } catch (error) {
+      final fallback = config.fallbackAccelerators;
+      if (fallback == null) rethrow;
+      onFallback?.call(error);
+      return compile(fallback, true);
+    }
   }
 
   /// Process-wide (per-isolate) shared LiteRT environments.
@@ -423,8 +546,11 @@ class CompiledModel {
 
   static CompiledModel _fromSource({
     required Set<Accelerator> accelerators,
+    required Set<Accelerator> requestedAccelerators,
     required Precision precision,
     required TensorBufferMode tensorBufferMode,
+    CompiledModelConfig? requestedConfig,
+    bool didFallback = false,
     required _ModelSource Function(LiteRtBindings rt, Pointer<Void> environment)
     createModel,
   }) {
@@ -561,6 +687,10 @@ class CompiledModel {
         outputByteSizes,
         tensorBufferMode,
         Set.of(effectiveAccelerators),
+        Set.of(requestedAccelerators),
+        requestedConfig,
+        didFallback ||
+            !_sameAcceleratorSet(requestedAccelerators, effectiveAccelerators),
         gpuOptionsIdentifier,
       );
     } catch (_) {
@@ -1182,13 +1312,7 @@ _ModelSource _createModelFromBuffer(
   Pointer<Void> environment,
   Uint8List bytes,
 ) {
-  if (bytes.isEmpty) {
-    throw ArgumentError.value(
-      bytes.length,
-      'bytes.length',
-      'Must be non-zero.',
-    );
-  }
+  _validateModelBytes(bytes);
 
   final buffer = malloc<Uint8>(bytes.length);
   buffer.asTypedList(bytes.length).setAll(0, bytes);
@@ -1210,6 +1334,16 @@ _ModelSource _createModelFromBuffer(
     rethrow;
   } finally {
     calloc.free(out);
+  }
+}
+
+void _validateModelBytes(Uint8List bytes) {
+  if (bytes.isEmpty) {
+    throw ArgumentError.value(
+      bytes.length,
+      'bytes.length',
+      'Must be non-zero.',
+    );
   }
 }
 
@@ -1547,6 +1681,10 @@ Set<Accelerator> _effectiveAccelerators(Set<Accelerator> requested) {
   // LiteRT can compile the model. Strict {npu} remains unchanged and produces
   // the actionable missing-runtime error in _sharedEnvironmentOf.
   return Set<Accelerator>.of(requested)..remove(Accelerator.npu);
+}
+
+bool _sameAcceleratorSet(Set<Accelerator> first, Set<Accelerator> second) {
+  return first.length == second.length && first.containsAll(second);
 }
 
 int _acceleratorMask(Set<Accelerator> accelerators) {
