@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
 LiteRT (formerly TensorFlow Lite) Flutter plugin with MediaPipe custom operations support.
                        DESC
   s.homepage         = 'https://github.com/hugocornellier/flutter_litert'
-  s.license          = { :file => '../LICENSE' }
+  s.license          = { :type => 'Apache-2.0', :file => '../LICENSE' }
   s.author           = { 'Hugo Cornellier' => 'hugo@hugocornellier.com' }
 
   s.source           = { :path => '.' }

@@ -1,1 +1,4 @@
 #include "Generated.xcconfig"
+
+// The published TensorFlow Lite simulator binaries are arm64-only.
+EXCLUDED_ARCHS[sdk=iphonesimulator*]=x86_64

@@ -92,7 +92,6 @@ let package = Package(
                 .linkedFramework("CoreML", .when(platforms: [.iOS])),
                 .linkedFramework("Accelerate", .when(platforms: [.iOS])),
                 .linkedLibrary("c++"),
-                .unsafeFlags(["-ObjC"]),
             ]
         ),
         .target(

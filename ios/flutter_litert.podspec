@@ -7,10 +7,11 @@ Pod::Spec.new do |s|
   s.version          = '3.6.0'
   s.summary          = 'LiteRT (formerly TensorFlow Lite) plugin for Flutter apps.'
   s.description      = <<-DESC
-LiteRT (formerly TensorFlow Lite) plugin for Flutter apps.
+LiteRT (formerly TensorFlow Lite) plugin for Flutter apps with bundled native
+runtimes, classic delegates, and the CompiledModel API.
                        DESC
   s.homepage         = 'https://github.com/hugocornellier/flutter_litert'
-  s.license          = { :file => '../LICENSE' }
+  s.license          = { :type => 'Apache-2.0', :file => '../LICENSE' }
   s.author           = { 'Hugo Cornellier' => 'hugo@hugocornellier.com' }
 
   # This will ensure the source files in Classes/ are included in the native
@@ -176,7 +177,10 @@ LiteRT (formerly TensorFlow Lite) plugin for Flutter apps.
                            'LiteRtMetalAccelerator.xcframework'
 
   s.pod_target_xcconfig = common_xcconfig.merge({
-    'OTHER_LDFLAGS' => '$(inherited) -ObjC -all_load'
+    # Xcode 27's linker rejects the legacy -ObjC option. The generated
+    # tflite_ffi_symbols.c anchor keeps the packaged C API reachable; retain
+    # -all_load for Flex's C++ static op registrars.
+    'OTHER_LDFLAGS' => '$(inherited) -all_load'
   })
 
   # TFLite's C symbols are resolved at runtime via dlsym(RTLD_DEFAULT, ...).
@@ -184,7 +188,6 @@ LiteRT (formerly TensorFlow Lite) plugin for Flutter apps.
   # packaged C API. Keep these app-target settings as defense in depth against
   # App Store / TestFlight post-processing stripping global symbols (#8, #9).
   s.user_target_xcconfig = {
-    'OTHER_LDFLAGS' => '$(inherited) -ObjC',
     'DEAD_CODE_STRIPPING' => 'NO',
     'STRIP_STYLE' => 'non-global'
   }

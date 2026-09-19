@@ -5,6 +5,18 @@
   `package:flutter_litert/native.dart` so their native types resolve consistently
   in IDEs and static analysis. Document their supported platforms and the
   portable `CompiledModelConfig.auto()` alternative.
+* **Document the external OpenCV iOS CMake deployment-target fix** ([issue #19](https://github.com/hugocornellier/flutter_litert/issues/19)).
+  `dartcv4` 2.3.1 removes its hardcoded iOS 12 target and adds a deployment-target
+  hook option. Document the upgrade, iOS 15 configuration, and Flutter SDK
+  `meta` pin compatibility requirement. Upgrade the example to the fixed
+  dependency with Flutter 3.47.5 and an iOS 15 Runner and hook target.
+  A clean Xcode 27.0 / iOS 27 simulator build now passes the DartCV CMake
+  probe and final Runner link. The iOS package also drops the legacy `-ObjC`
+  linker option that Xcode 27 rejects; explicit C API symbol anchors retain the
+  packaged FFI entry points. The bundled SwiftPM TensorFlow Lite simulator
+  slices are arm64-only, so the example excludes x86_64 when building for the
+  simulator. The package's minimum iOS version remains 13.0; the example's iOS
+  15 DartCV target and the macOS Core ML build are independent constraints.
 * **New policy-based `CompiledModel` construction.** `CompiledModelConfig` and
   `CompiledModelPolicy` add `auto`, `cpu`, strict `gpu`, mixed
   `gpuWithCpuFallback`, strict `npu`, and mixed `npuWithCpuFallback` choices.

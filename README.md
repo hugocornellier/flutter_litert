@@ -1761,6 +1761,47 @@ for when you want to control rotation or share one frame across detectors.
 
 ## Platform support
 
+iOS requires **iOS 13.0 or newer** for both CocoaPods and Swift Package Manager.
+If your Xcode SDK requires a newer deployment target, raise the app's
+`IPHONEOS_DEPLOYMENT_TARGET` for every build configuration. CocoaPods apps must
+also raise `platform :ios, '…'` in `ios/Podfile` and run `pod install` again.
+
+If a build still reports `12.0` in a `CMAKE_TRY_COMPILE` target, check the
+dependency invoking CMake: flutter_litert's iOS integration uses prebuilt
+xcframeworks and does not invoke CMake. That dependency's iOS CMake configure
+step must pass [`-DCMAKE_OSX_DEPLOYMENT_TARGET=15.0`](https://cmake.org/cmake/help/latest/variable/CMAKE_OSX_DEPLOYMENT_TARGET.html) (or the app's higher target)
+before compiler checks run, then regenerate its cached build configuration.
+The `minimum_os_version` in `build-coreml-macos.yml` applies only to macOS.
+For example, `opencv_dart` uses `dartcv4`, whose `2.2.1+4` build hook hardcodes
+`-DDEPLOYMENT_TARGET=12.0`. [Upstream PR #460](https://github.com/rainyl/opencv_dart/pull/460)
+removes that override and adds a configurable deployment target. Upgrade to
+`opencv_dart` 2.2.2 or newer and ensure `dartcv4` resolves to 2.3.1 or newer
+(a direct `dartcv4: ^2.3.1` dependency enforces that minimum).
+For an SDK requiring iOS 15, also configure the app's `pubspec.yaml`:
+
+```yaml
+hooks:
+  user_defines:
+    dartcv4:
+      ios:
+        deployment_target: '15.0'
+```
+
+`dartcv4` 2.3.1 requires `meta: ^1.19.0`. A Flutter SDK whose `flutter_test`
+pins `meta` to 1.18.0 cannot resolve this upgrade; use a compatible Flutter SDK
+before upgrading the dependency. The example requires Flutter 3.47.5 or newer
+and configures both its Runner and OpenCV hook for iOS 15.
+
+Raise the Runner target (and CocoaPods platform, if applicable) to match, run
+`flutter pub get`, and regenerate the native build with `flutter clean` before
+rebuilding. Raising only the Runner or flutter_litert target cannot override
+the old hook's hardcoded value.
+
+The example was verified with `-DDEPLOYMENT_TARGET=15.0` on Flutter 3.47.5 and
+Xcode 27.0. A clean iOS 27 simulator build completes the OpenCV CMake probe and
+the final Runner link. The published TensorFlow Lite simulator frameworks are
+arm64-only, so the example excludes x86_64 for simulator builds.
+
 flutter_litert ships two independent native runtimes, one per API. The classic `Interpreter` API runs on the TensorFlow Lite / LiteRT runtime, while the `CompiledModel` API (LiteRT Next, the recommended path for GPU and NPU) runs on a separate `libLiteRt` runtime. They are bundled side by side, so the two runtimes carry their own versions per platform.
 
 | Platform | Interpreter runtime | CompiledModel runtime |

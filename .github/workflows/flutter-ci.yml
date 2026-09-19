@@ -468,6 +468,17 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      # Flutter installs plugin podspecs through a local :path, so their
+      # `source` field intentionally has no public git/http key. CocoaPods
+      # reports that Flutter-specific shape as a warning; all other warnings
+      # are fixed in the podspec metadata and the command still performs a
+      # complete build. Xcode 16.4 retains the package's documented iOS 13 and
+      # macOS 10.15 compatibility floors, which Xcode 27 can no longer lint.
+      - name: Lint CocoaPods specifications at compatibility deployment targets
+        run: |
+          pod lib lint ios/flutter_litert.podspec --allow-warnings
+          pod lib lint macos/flutter_litert.podspec --allow-warnings
+
       - name: Stage patched Core ML framework for SwiftPM tests
         run: |
           ./scripts/use_local_coreml_xcframework.sh \
