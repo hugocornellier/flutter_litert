@@ -759,8 +759,11 @@ path.
 
 ## Impact on the seven consumer packages
 
-`face_detection_tflite`, `pose_detection`, `hand_detection`, `cat_detection`,
-`dog_detection`, `animal_detection`, `object_detection` all pin `flutter_litert: ^3.6.0`.
+At the time of this audit, `face_detection_tflite`, `pose_detection`,
+`hand_detection`, `cat_detection`, `dog_detection`, `animal_detection`, and
+`object_detection` all pinned `flutter_litert: ^3.6.0`. That version is part of
+the historical audit context; current consumer releases should use the latest
+compatible flutter_litert release.
 
 > **Qualified by the merged review.** Two caveats found later: (1) four sites across three
 > packages delete the delegate *before* closing the interpreter, violating the C contract

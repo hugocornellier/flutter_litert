@@ -45,6 +45,7 @@ test/
 
 # Local planning/generated documentation that is not part of the package API.
 doc/MODEL_STORE_PLAN.md
+doc/RELEASE_3_9_0_PLAN.md
 doc/api/
 
 # Old example subdirectories (leftover from tflite_flutter)

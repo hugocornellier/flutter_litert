@@ -261,7 +261,7 @@ List<Detection> postProcessDetections({
 ///
 /// It is OFF by default because it is NOT result-equivalent and it LOWERS
 /// PRECISION. The default path applies a cross-class top-k cap (keep the global
-/// top [effectiveTopk] by score) *before* filtering to the target class; that
+/// top `effectiveTopk` by score) *before* filtering to the target class; that
 /// cap incidentally suppresses near-threshold filter-class false positives that
 /// are out-scored by other classes. The fast path collects only filter-class
 /// anchors, so it never sees that cross-class ranking and emits those FPs:

@@ -68,7 +68,7 @@ class CameraFrameDecodePlan {
   /// Logical image height before [rotation].
   final int visibleHeight;
 
-  /// Whether [sourceLayout.cols] contains padded columns beyond [visibleWidth].
+  /// Whether `sourceLayout.cols` contains padded columns beyond [visibleWidth].
   final bool hasStridePadding;
 
   /// Colour conversion required by the source bytes.

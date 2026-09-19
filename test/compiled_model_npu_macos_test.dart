@@ -59,73 +59,65 @@ void main() {
     expect(expected.single.single, closeTo(-3, 1e-5));
   });
 
-  test(
-    'MEAN-containing model engages NPU and stays within tolerance',
-    () {
-      // This model contains ten MEAN ops. It guards the required-padding patch:
-      // without mutable_valid(), Core ML rejects the generated model and silently
-      // leaves the whole graph on CPU.
-      const path = 'example/assets/species_classifier_float16.tflite';
+  test('MEAN-containing model engages NPU and stays within tolerance', () {
+    // This model contains ten MEAN ops. It guards the required-padding patch:
+    // without mutable_valid(), Core ML rejects the generated model and silently
+    // leaves the whole graph on CPU.
+    const path = 'example/assets/species_classifier_float16.tflite';
+    final bytes = File(path).readAsBytesSync();
+    final model = CompiledModel.fromBuffer(
+      bytes,
+      accelerators: {Accelerator.npu, Accelerator.cpu},
+      precision: Precision.fp32,
+    );
+    addTearDown(model.close);
+
+    final verification = verifyCompiledModel(bytes, model);
+    expect(verification.skipped, isFalse, reason: verification.toString());
+    expect(verification.agrees, isTrue, reason: verification.toString());
+    expect(
+      verification.absoluteDeviation,
+      greaterThan(0),
+      reason:
+          'A bit-identical result would indicate that the Core ML path did '
+          'not contribute to this model.',
+    );
+    expect(
+      verification.relativeDeviation,
+      lessThan(kDefaultBackendTolerance),
+      reason: verification.toString(),
+    );
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('NPU + CPU agrees across representative production models', () {
+    const models = <String>[
+      'test/assets/face_detection_short_range.tflite',
+      'example/assets/mobilefacenet.tflite',
+      'example/assets/efficientdet_lite0.tflite',
+      'example/assets/yolov8n_float32.tflite',
+    ];
+
+    for (final path in models) {
       final bytes = File(path).readAsBytesSync();
       final model = CompiledModel.fromBuffer(
         bytes,
         accelerators: {Accelerator.npu, Accelerator.cpu},
         precision: Precision.fp32,
       );
-      addTearDown(model.close);
-
-      final verification = verifyCompiledModel(bytes, model);
-      expect(verification.skipped, isFalse, reason: verification.toString());
-      expect(verification.agrees, isTrue, reason: verification.toString());
-      expect(
-        verification.absoluteDeviation,
-        greaterThan(0),
-        reason:
-            'A bit-identical result would indicate that the Core ML path did '
-            'not contribute to this model.',
-      );
-      expect(
-        verification.relativeDeviation,
-        lessThan(kDefaultBackendTolerance),
-        reason: verification.toString(),
-      );
-    },
-    timeout: const Timeout(Duration(minutes: 2)),
-  );
-
-  test(
-    'NPU + CPU agrees across representative production models',
-    () {
-      const models = <String>[
-        'test/assets/face_detection_short_range.tflite',
-        'example/assets/mobilefacenet.tflite',
-        'example/assets/efficientdet_lite0.tflite',
-        'example/assets/yolov8n_float32.tflite',
-      ];
-
-      for (final path in models) {
-        final bytes = File(path).readAsBytesSync();
-        final model = CompiledModel.fromBuffer(
-          bytes,
-          accelerators: {Accelerator.npu, Accelerator.cpu},
-          precision: Precision.fp32,
+      try {
+        final verification = verifyCompiledModel(bytes, model);
+        expect(verification.skipped, isFalse, reason: '$path: $verification');
+        expect(verification.agrees, isTrue, reason: '$path: $verification');
+        expect(
+          verification.absoluteDeviation,
+          greaterThan(0),
+          reason: '$path was bit-identical to bare CPU',
         );
-        try {
-          final verification = verifyCompiledModel(bytes, model);
-          expect(verification.skipped, isFalse, reason: '$path: $verification');
-          expect(verification.agrees, isTrue, reason: '$path: $verification');
-          expect(
-            verification.absoluteDeviation,
-            greaterThan(0),
-            reason: '$path was bit-identical to bare CPU',
-          );
-        } finally {
-          model.close();
-        }
+      } finally {
+        model.close();
       }
-    },
-    timeout: const Timeout(Duration(minutes: 5)),
-  );
+    }
+  }, timeout: const Timeout(Duration(minutes: 5)));
 
   test('rejects a zero-node mixed request instead of silently using CPU', () {
     // Compile a supported graph first so this also catches a stale diagnostics

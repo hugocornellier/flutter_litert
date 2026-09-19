@@ -44,56 +44,50 @@ void main() {
     expect(model.isFullyAccelerated, isTrue);
   });
 
-  testWidgets(
-    'NPU + CPU agrees with bare CPU across representative models',
-    (tester) async {
-      if (!isSupportedPlatform) {
-        markTestSkipped('Core ML NPU validation is Apple-platform only.');
-        return;
-      }
+  testWidgets('NPU + CPU agrees with bare CPU across representative models', (
+    tester,
+  ) async {
+    if (!isSupportedPlatform) {
+      markTestSkipped('Core ML NPU validation is Apple-platform only.');
+      return;
+    }
 
-      const assets = <String>[
-        // Ten MEAN ops: guards the required Core ML pooling-padding patch.
-        'assets/species_classifier_float16.tflite',
-        // Face embedding / landmark-style graph.
-        'assets/mobilefacenet.tflite',
-        // Object detection graph.
-        'assets/efficientdet_lite0.tflite',
-        // YOLO detection graph.
-        'assets/yolov8n_float32.tflite',
-        // Production pose graph.
-        'assets/pose_landmark_heavy.tflite',
-      ];
+    const assets = <String>[
+      // Ten MEAN ops: guards the required Core ML pooling-padding patch.
+      'assets/species_classifier_float16.tflite',
+      // Face embedding / landmark-style graph.
+      'assets/mobilefacenet.tflite',
+      // Object detection graph.
+      'assets/efficientdet_lite0.tflite',
+      // YOLO detection graph.
+      'assets/yolov8n_float32.tflite',
+      // Production pose graph.
+      'assets/pose_landmark_heavy.tflite',
+    ];
 
-      for (final asset in assets) {
-        final bytes = await loadAsset(asset);
-        final model = CompiledModel.fromBuffer(
-          bytes,
-          accelerators: {Accelerator.npu, Accelerator.cpu},
-          precision: Precision.fp32,
+    for (final asset in assets) {
+      final bytes = await loadAsset(asset);
+      final model = CompiledModel.fromBuffer(
+        bytes,
+        accelerators: {Accelerator.npu, Accelerator.cpu},
+        precision: Precision.fp32,
+      );
+      try {
+        final verification = verifyCompiledModel(bytes, model);
+        expect(verification.skipped, isFalse, reason: '$asset: $verification');
+        expect(verification.agrees, isTrue, reason: '$asset: $verification');
+        expect(
+          verification.absoluteDeviation,
+          greaterThan(0),
+          reason:
+              '$asset was bit-identical to bare CPU despite reported Core '
+              'ML delegation',
         );
-        try {
-          final verification = verifyCompiledModel(bytes, model);
-          expect(
-            verification.skipped,
-            isFalse,
-            reason: '$asset: $verification',
-          );
-          expect(verification.agrees, isTrue, reason: '$asset: $verification');
-          expect(
-            verification.absoluteDeviation,
-            greaterThan(0),
-            reason:
-                '$asset was bit-identical to bare CPU despite reported Core '
-                'ML delegation',
-          );
-        } finally {
-          model.close();
-        }
+      } finally {
+        model.close();
       }
-    },
-    timeout: const Timeout(Duration(minutes: 15)),
-  );
+    }
+  }, timeout: const Timeout(Duration(minutes: 15)));
 
   testWidgets('mixed mode rejects a zero-node Core ML fallback', (
     tester,
