@@ -12,7 +12,7 @@ jobs:
   build-macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -38,7 +38,7 @@ jobs:
         run: flutter analyze .
 
       - name: Cache FlexDelegate library (macOS)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/Library/Caches/flutter_litert
           key: flex-delegate-macos-v1.0.0
@@ -96,9 +96,9 @@ jobs:
           done
 
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -133,7 +133,7 @@ jobs:
         run: flutter analyze .
 
       - name: Cache FlexDelegate library (Linux)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/flutter_litert
           key: flex-delegate-linux-v1.0.0
@@ -171,7 +171,7 @@ jobs:
   build-windows:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -228,18 +228,18 @@ jobs:
   # Runs on Linux: the check reads Mach-O string tables and verifies checksums,
   # neither of which needs Xcode, so it stays off the contended macOS runners.
   verify-published-ios-frameworks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify published iOS frameworks carry the Core ML NPU entry points
         run: ./scripts/verify_published_ios_frameworks.sh
 
   build-web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -327,10 +327,10 @@ jobs:
           cat build/integration_response_data.json || true
 
   build-android:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -392,10 +392,10 @@ jobs:
   # the AAR (the CMake custom-ops lib plus the downloaded LiteRT Next runtime
   # and GPU accelerator).
   build-android-agp9:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -450,10 +450,10 @@ jobs:
   build-ios:
     runs-on: macos-15
     # Per-test, per-attempt timeouts and retries live in the test step below.
-    # This outer cap only bounds the complete three-test sequence.
+    # This outer cap only bounds the complete four-test sequence.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -504,30 +504,35 @@ jobs:
         working-directory: example
         run: |
           set +e
-          # A successful suite takes 2-5 minutes here including the app build,
-          # so 900s leaves roughly 3x headroom while bounding the damage when
-          # the simulator wedges on launch (the connect-forever hang the
-          # recycle logic below exists for). At the previous 1500s a single
-          # hang burned 25 minutes, and three hung first attempts would exceed
-          # this job's 90-minute cap and be killed mid-run; at 900s the worst
-          # case is about an hour.
+          # Warm builds complete comfortably inside 900s, which bounds the
+          # damage when the simulator wedges on launch. The first suite also
+          # performs the cold Xcode build; two release-candidate runs showed
+          # that valid build exceeding 900s before a cached retry passed. Give
+          # only that first attempt 1800s so CI does not kill useful compiler
+          # work while every retry and later suite keeps the tighter bound.
           attempt_timeout=900
+          cold_build_timeout=1800
           max=2
 
           run_ios_test() {
             test_file="$1"
             rc=1
             for attempt in $(seq 1 "$max"); do
+              watchdog_timeout="$attempt_timeout"
+              if [ "$test_file" = "integration_test/compiled_model_test.dart" ] \
+                && [ "$attempt" -eq 1 ]; then
+                watchdog_timeout="$cold_build_timeout"
+              fi
               timeout_marker="$RUNNER_TEMP/ios-timeout-$(basename "$test_file")-$attempt"
               rm -f "$timeout_marker"
               echo "::group::$test_file (attempt $attempt/$max)"
               flutter test "$test_file" \
                 -d "$SIMULATOR_UDID" --timeout 600s &
               pid=$!
-              ( sleep "$attempt_timeout"
+              ( sleep "$watchdog_timeout"
                 if kill -0 "$pid" 2>/dev/null; then
                   touch "$timeout_marker"
-                  echo "::warning::$test_file exceeded ${attempt_timeout}s; killing"
+                  echo "::warning::$test_file exceeded ${watchdog_timeout}s; killing"
                   kill -TERM "$pid" 2>/dev/null
                   sleep 15
                   kill -KILL "$pid" 2>/dev/null
