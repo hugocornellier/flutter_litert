@@ -1,3 +1,26 @@
+## 3.9.1
+
+* Android's CompiledModel runtime is updated from LiteRT Next 2.1.6 to 2.2.0.
+  The 2.2.0 AAR ships the same `libLiteRt.so` and
+  `libLiteRtClGlAccelerator.so` set per ABI, every C API symbol the package
+  binds is still exported, and the headers it relies on change only
+  additively. The Qualcomm JIT runtime keeps the same library names and QAIRT
+  2.47.0.260601 pin, so a `flutterLitert.qualcommNpuRuntimeDir` bundle must
+  now come from the LiteRT 2.2.0 JIT runtime release. The Interpreter stays on
+  LiteRT 1.4.2, and iOS, macOS, Windows, and Linux stay on LiteRT Next 2.1.5.
+* The web runtime (`LiteRtInterpreter` and `CompiledModel`) is updated from
+  LiteRT.js 2.4.0 to 2.5.3 (`@litertjs/core@2.5.3`, auto-loaded from
+  jsDelivr). Since 2.5.0, a WebGPU compile that cannot place every op no
+  longer throws. Chromium browsers with JSPI return a partially delegated
+  WebGPU model, which `CompiledModel` reports as
+  `{Accelerator.gpu, Accelerator.cpu}` with `isFullyAccelerated` false.
+  Browsers without JSPI recompile the model on WASM inside LiteRT.js. Requests
+  that allow a CPU fallback (`auto`, `gpuWithCpuFallback`, `{gpu, cpu}`)
+  accept that model and report `{Accelerator.cpu}` with `didFallback` true.
+  A strict `CompiledModelConfig.gpu()` or `{Accelerator.gpu}` request now
+  disposes it and throws `StateError`, preserving the 2.4.0 contract that a
+  strict GPU request never silently runs on the CPU.
+
 ## 3.9.0
 
 * **Correct the native-only inference utility documentation** ([issue #17](https://github.com/hugocornellier/flutter_litert/issues/17)).

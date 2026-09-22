@@ -96,7 +96,7 @@ jobs:
       MATRIX_SHARDS: ${{ inputs.single_execution && 'all' || '0 1 2 3 4' }}
       MATRIX_MODE_FILTER: ${{ inputs.mode_filter || '' }}
       MATRIX_MODEL_FILTER: ${{ inputs.model_filter || '' }}
-      LITERT_NEXT_VERSION: 2.1.6
+      LITERT_NEXT_VERSION: 2.2.0
       QAIRT_VERSION: 2.47.0.260601
       QUALCOMM_HTP_VERSION: '73'
       NPU_RUNTIME_DIR: ${{ github.workspace }}/build/codex-tmp/android-npu-runtime/qualcomm-v73
@@ -196,7 +196,7 @@ jobs:
           curl --fail --location --retry 3 --silent --show-error \
             "https://github.com/google-ai-edge/LiteRT/releases/download/v${LITERT_NEXT_VERSION}/litert_npu_runtime_libraries_jit.zip" \
             --output "$LITERT_ZIP"
-          echo "a01535b3932e64ed965570fa3b28f74ac49841e357770329b8fe527d93d6ac25  $LITERT_ZIP" \
+          echo "d6d160104f110e690f1c9b0c54ab3855af1a12e405dcc6e644dd7e3e1955aac4  $LITERT_ZIP" \
             | sha256sum --check -
           unzip -jo "$LITERT_ZIP" \
             "qualcomm_runtime_v${QUALCOMM_HTP_VERSION}/src/main/jni/arm64-v8a/*.so" \

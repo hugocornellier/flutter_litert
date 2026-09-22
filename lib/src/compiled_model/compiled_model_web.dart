@@ -150,8 +150,9 @@ class CompiledModel {
   /// Creates a compiled model from model bytes via LiteRT.js.
   ///
   /// [accelerators] selects the backend: `{cpu}` compiles on WASM, `{gpu}` on
-  /// WebGPU (throwing if that fails), and `{gpu, cpu}` tries WebGPU first and
-  /// falls back to WASM. [Accelerator.npu] is not available on the web.
+  /// WebGPU (throwing if that fails, including when LiteRT.js would place the
+  /// model on WASM instead), and `{gpu, cpu}` tries WebGPU first and falls
+  /// back to WASM. [Accelerator.npu] is not available on the web.
   ///
   /// [precision] is accepted for API parity but ignored: LiteRT.js does not
   /// expose a precision option, so WebGPU kernels run at their default
@@ -262,6 +263,11 @@ class CompiledModel {
 
     lrt.CompiledModelJS compiled;
     Accelerator requested;
+    // A strict request has no CPU fallback here or in a policy caller.
+    final bool strictGpu =
+        accelerators.contains(Accelerator.gpu) &&
+        !accelerators.contains(Accelerator.cpu) &&
+        !useGpuCompileWatchdog;
     if (accelerators.contains(Accelerator.gpu)) {
       final bool canFallBack = accelerators.contains(Accelerator.cpu);
       try {
@@ -288,6 +294,7 @@ class CompiledModel {
       requestedAccelerators: requestedAccelerators,
       requestedConfig: requestedConfig,
       didFallback: didFallback,
+      strictGpu: strictGpu,
     );
   }
 
@@ -395,11 +402,13 @@ class CompiledModel {
     required Set<Accelerator> requestedAccelerators,
     CompiledModelConfig? requestedConfig,
     required bool didFallback,
+    bool strictGpu = false,
   }) {
     try {
+      final resolved = _resolvedAccelerator(compiled, requested);
+      debugCheckStrictGpuResolution(strictGpu: strictGpu, resolved: resolved);
       final inputs = _parseDetails(compiled.getInputDetails(), 'input');
       final outputs = _parseDetails(compiled.getOutputDetails(), 'output');
-      final resolved = _resolvedAccelerator(compiled, requested);
       final acceleratorSet = <Accelerator>{resolved};
       if (resolved == Accelerator.gpu && !_isFullyAccelerated(compiled)) {
         // The runtime placed some ops on the CPU (partial delegation),
@@ -423,13 +432,34 @@ class CompiledModel {
     }
   }
 
+  /// Rejects a strict WebGPU request that LiteRT.js resolved on WASM.
+  ///
+  /// Since LiteRT.js 2.5.0, browsers without JSPI recompile a model that
+  /// WebGPU cannot fully place on WASM instead of throwing. A strict `{gpu}`
+  /// request has no CPU fallback, so surface that as the same [StateError] a
+  /// failed WebGPU compile produces. A partially delegated WebGPU model is
+  /// still accepted; [isFullyAccelerated] reports it.
+  @visibleForTesting
+  static void debugCheckStrictGpuResolution({
+    required bool strictGpu,
+    required Accelerator resolved,
+  }) {
+    if (strictGpu && resolved != Accelerator.gpu) {
+      throw StateError(
+        'LiteRT.js compiled a strict {Accelerator.gpu} request on WASM '
+        'because WebGPU could not place the whole model in this browser. '
+        'Use CompiledModelConfig.gpuWithCpuFallback() to accept WASM.',
+      );
+    }
+  }
+
   /// The accelerator the model was actually compiled with.
   ///
-  /// LiteRT.js 2.4.0 throws when a WebGPU request cannot compile, but newer
-  /// builds (reachable via `configureLiteRtWebLoader`) can silently recompile
-  /// on WASM instead. The final compile options live on the model, so prefer
-  /// those over [requested]; fall back to [requested] if the property shape
-  /// ever changes.
+  /// Since LiteRT.js 2.5.0, a WebGPU compile that cannot place every op no
+  /// longer throws: browsers without JSPI silently recompile on WASM, and
+  /// JSPI browsers return a partially delegated WebGPU model. The final
+  /// compile options live on the model, so prefer those over [requested];
+  /// fall back to [requested] if the property shape ever changes.
   static Accelerator _resolvedAccelerator(
     lrt.CompiledModelJS compiled,
     Accelerator requested,
@@ -453,7 +483,7 @@ class CompiledModel {
 
   /// Whether every op was placed on the requested accelerator. Unknown (older
   /// or reshaped runtimes) is treated as fully accelerated, matching LiteRT.js
-  /// 2.4.0 semantics where a WebGPU compile that cannot place ops throws.
+  /// 2.4.0 and earlier, where a WebGPU compile that cannot place ops throws.
   static bool _isFullyAccelerated(lrt.CompiledModelJS compiled) {
     try {
       final value = compiled.getProperty<JSAny?>('isFullyAccelerated'.toJS);

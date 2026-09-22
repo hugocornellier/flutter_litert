@@ -100,7 +100,7 @@ int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Pointer<Void>>)
 _bindCreateModelFromFile(DynamicLibrary dylib) {
   // LiteRT 2.1.6 added an environment as the first model-loading argument but
   // kept the same exported symbol names and public API version. Android is
-  // pinned to 2.1.6; the currently bundled Apple/desktop runtimes retain the
+  // pinned to 2.2.0; the currently bundled Apple/desktop runtimes retain the
   // legacy ABI. Present one environment-aware Dart signature to the caller and
   // adapt only at this binding boundary.
   if (Platform.isAndroid) {

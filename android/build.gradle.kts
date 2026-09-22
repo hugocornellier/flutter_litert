@@ -105,7 +105,7 @@ dependencies {
 // versions of the same module would resolve to a single version and break one
 // of the two runtimes. Selectively extracting the 2.x native libraries keeps
 // them side by side.
-val litertNextVersion = "2.1.6"
+val litertNextVersion = "2.2.0"
 
 // The GPU accelerator is bundled by default. Apps that do not use it can set
 // flutterLitert.bundleGpuAccelerator=false in android/gradle.properties.

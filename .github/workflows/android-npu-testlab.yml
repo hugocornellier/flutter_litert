@@ -34,7 +34,7 @@ jobs:
       FIREBASE_PROJECT_ID: flutter-litert
       DEVICE_MODEL: ${{ inputs.target == 'galaxy-s25-ultra-sm8750-htp-v79' && 'pa3q' || inputs.target == 'galaxy-s24-ultra-sm8650-htp-v75' && 'e3q' || 'dm1q' }}
       ANDROID_VERSION: ${{ inputs.target == 'galaxy-s24-ultra-sm8650-htp-v75' && '34' || '35' }}
-      LITERT_NEXT_VERSION: 2.1.6
+      LITERT_NEXT_VERSION: 2.2.0
       QAIRT_VERSION: 2.47.0.260601
       BUNDLETOOL_VERSION: 1.18.3
       QUALCOMM_HTP_VERSION: ${{ inputs.target == 'galaxy-s25-ultra-sm8750-htp-v79' && '79' || inputs.target == 'galaxy-s24-ultra-sm8650-htp-v75' && '75' || '73' }}
@@ -79,7 +79,7 @@ jobs:
           curl --fail --location --retry 3 --silent --show-error \
             "https://github.com/google-ai-edge/LiteRT/releases/download/v${LITERT_NEXT_VERSION}/litert_npu_runtime_libraries_jit.zip" \
             --output "$LITERT_ZIP"
-          echo "a01535b3932e64ed965570fa3b28f74ac49841e357770329b8fe527d93d6ac25  $LITERT_ZIP" \
+          echo "d6d160104f110e690f1c9b0c54ab3855af1a12e405dcc6e644dd7e3e1955aac4  $LITERT_ZIP" \
             | sha256sum --check -
           unzip -q "$LITERT_ZIP" \
             "runtime_strings/*" \
@@ -151,6 +151,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Pin where Gradle creates its debug keystore so the APK derived with
+          # bundletool below can be signed with the same key.
+          export ANDROID_USER_HOME="$RUNNER_TEMP/android-user-home"
+          mkdir -p "$ANDROID_USER_HOME"
+          echo "ANDROID_USER_HOME=$ANDROID_USER_HOME" >> "$GITHUB_ENV"
           flutter build apk --config-only --debug
           FULL_SWEEP_DEFINE="$(printf 'ANDROID_NPU_FULL_SWEEP=%s' "$FULL_SWEEP" | base64 -w 0)"
           TOLERANCE_DEFINE="$(printf 'ANDROID_NPU_ENFORCE_FULL_SWEEP_TOLERANCE=false' | base64 -w 0)"
@@ -184,16 +189,44 @@ jobs:
           AAB=example/build/app/outputs/bundle/debug/app-debug.aab
           java -jar "$BUNDLETOOL" validate --bundle="$AAB"
           mkdir -p "$RUNNER_TEMP/android-npu-testlab"
+          # Without --ks, bundletool emits an unsigned APK when it cannot find
+          # a debug keystore, which Test Lab rejects (NO_SIGNATURE). Sign
+          # with the keystore Gradle used for the instrumentation APK so the
+          # app and test APKs share a certificate.
+          DEBUG_KEYSTORE="$ANDROID_USER_HOME/debug.keystore"
+          if [ ! -f "$DEBUG_KEYSTORE" ]; then
+            echo "::error::Gradle debug keystore not found at $DEBUG_KEYSTORE"
+            find "$HOME" "$RUNNER_TEMP" -name debug.keystore 2>/dev/null || true
+            exit 1
+          fi
           java -jar "$BUNDLETOOL" build-apks \
             --bundle="$AAB" \
             --output="$RUNNER_TEMP/android-npu-testlab/app.apks" \
             --mode=universal \
             --modules="base,qualcomm_runtime_v${QUALCOMM_HTP_VERSION}" \
+            --ks="$DEBUG_KEYSTORE" \
+            --ks-pass=pass:android \
+            --ks-key-alias=androiddebugkey \
+            --key-pass=pass:android \
             --overwrite
           unzip -jo "$RUNNER_TEMP/android-npu-testlab/app.apks" universal.apk \
             -d "$RUNNER_TEMP/android-npu-testlab"
 
           APK="$RUNNER_TEMP/android-npu-testlab/universal.apk"
+          TEST_APK=example/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          APP_CERT="$("$APKSIGNER" verify --print-certs "$APK" \
+            | grep 'SHA-256 digest' | grep -oE '[0-9a-f]{64}' | sort -u)"
+          TEST_CERT="$("$APKSIGNER" verify --print-certs "$TEST_APK" \
+            | grep 'SHA-256 digest' | grep -oE '[0-9a-f]{64}' | sort -u)"
+          # Compare only the digests: the signer labels differ by scheme
+          # (bundletool signs v3, Gradle v2) even for the same certificate.
+          if [ -z "$APP_CERT" ] || [ "$APP_CERT" != "$TEST_CERT" ]; then
+            echo "::error::App and instrumentation APKs are signed differently"
+            echo "app:  $APP_CERT"
+            echo "test: $TEST_CERT"
+            exit 1
+          fi
           ACTUAL_NPU_LIBS="$RUNNER_TEMP/android-npu-libs.txt"
           EXPECTED_NPU_LIBS="$RUNNER_TEMP/expected-android-npu-libs.txt"
           zipinfo -1 "$APK" \

@@ -451,4 +451,142 @@ void main() {
       );
     });
   });
+
+  group('strict GPU resolution check', () {
+    test('rejects only a strict request that resolved on WASM', () {
+      expect(
+        () => cm_web.CompiledModel.debugCheckStrictGpuResolution(
+          strictGpu: true,
+          resolved: Accelerator.cpu,
+        ),
+        throwsStateError,
+      );
+      for (final (strict, resolved) in [
+        (true, Accelerator.gpu),
+        (false, Accelerator.cpu),
+        (false, Accelerator.gpu),
+      ]) {
+        expect(
+          () => cm_web.CompiledModel.debugCheckStrictGpuResolution(
+            strictGpu: strict,
+            resolved: resolved,
+          ),
+          returnsNormally,
+          reason: 'strictGpu: $strict, resolved: $resolved',
+        );
+      }
+    });
+  });
+
+  group('web CompiledModel LiteRT.js WASM recompile (network)', () {
+    late JSObject realRoot;
+
+    setUpAll(() async {
+      // Load the real runtime once so the stub can delegate compiles.
+      (await cm_web.CompiledModel.fromBufferAsync(modelBytes)).close();
+      realRoot = globalContext.getProperty<JSObject>('LiteRt'.toJS);
+    });
+
+    tearDown(() {
+      globalContext.setProperty('LiteRt'.toJS, realRoot);
+    });
+
+    /// Replaces `window.LiteRt` with a stub that answers every webgpu
+    /// `loadAndCompile` with a real WASM model, as LiteRT.js 2.5.x does on
+    /// browsers without JSPI when WebGPU cannot place the whole model.
+    /// Returns counters for compile calls and deleted models.
+    ({int Function() compiles, int Function() deletes})
+    installWasmRecompilingRuntime() {
+      var compiles = 0;
+      var deletes = 0;
+      final stub = JSObject();
+      stub.setProperty('Tensor'.toJS, realRoot.getProperty('Tensor'.toJS));
+      stub.setProperty(
+        'loadAndCompile'.toJS,
+        ((JSAny bytes, JSObject options) {
+          compiles++;
+          final wasmOptions = JSObject()
+            ..setProperty('accelerator'.toJS, 'wasm'.toJS);
+          final promise = realRoot.callMethod<JSPromise<JSObject>>(
+            'loadAndCompile'.toJS,
+            bytes,
+            wasmOptions,
+          );
+          return promise.toDart.then((model) {
+            final realDelete = model.getProperty<JSFunction>('delete'.toJS);
+            model.setProperty(
+              'delete'.toJS,
+              (() {
+                deletes++;
+                realDelete.callAsFunction(model);
+              }).toJS,
+            );
+            return model;
+          }).toJS;
+        }).toJS,
+      );
+      globalContext.setProperty('LiteRt'.toJS, stub);
+      return (compiles: () => compiles, deletes: () => deletes);
+    }
+
+    test('a strict {gpu} request throws and disposes the WASM model', () async {
+      final counts = installWasmRecompilingRuntime();
+      await expectLater(
+        cm_web.CompiledModel.fromBufferAsync(
+          modelBytes,
+          accelerators: const {Accelerator.gpu},
+        ),
+        throwsStateError,
+      );
+      expect(counts.compiles(), 1);
+      expect(counts.deletes(), 1);
+    });
+
+    test('the strict GPU policy throws without a CPU retry', () async {
+      final counts = installWasmRecompilingRuntime();
+      var callbackCount = 0;
+      await expectLater(
+        cm_web.CompiledModel.fromBufferWithConfigAsync(
+          modelBytes,
+          config: const CompiledModelConfig.gpu(),
+          onFallback: (_) => callbackCount++,
+        ),
+        throwsStateError,
+      );
+      expect(callbackCount, 0);
+      expect(counts.compiles(), 1);
+      expect(counts.deletes(), 1);
+    });
+
+    test('a {gpu, cpu} request accepts the WASM model', () async {
+      final counts = installWasmRecompilingRuntime();
+      final cm = await cm_web.CompiledModel.fromBufferAsync(
+        modelBytes,
+        accelerators: const {Accelerator.gpu, Accelerator.cpu},
+      );
+      expect(cm.accelerators, {Accelerator.cpu});
+      expect(cm.didFallback, isTrue);
+      final len = cm.inputByteSizes[0] ~/ 4;
+      final input = Float32List(len)..fillRange(0, len, 1.0);
+      expect((await cm.runAsync([input]))[0][0], closeTo(3.0, 1e-6));
+      cm.close();
+      expect(counts.compiles(), 1);
+    });
+
+    test('Auto accepts the WASM model without compiling twice', () async {
+      final counts = installWasmRecompilingRuntime();
+      var callbackCount = 0;
+      final cm = await cm_web.CompiledModel.fromBufferWithConfigAsync(
+        modelBytes,
+        config: const CompiledModelConfig.auto(),
+        onFallback: (_) => callbackCount++,
+      );
+      expect(cm.requestedAccelerators, {Accelerator.gpu});
+      expect(cm.accelerators, {Accelerator.cpu});
+      expect(cm.didFallback, isTrue);
+      expect(callbackCount, 0);
+      expect(counts.compiles(), 1);
+      cm.close();
+    });
+  });
 }

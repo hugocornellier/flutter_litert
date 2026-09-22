@@ -524,7 +524,7 @@ flutterLitert.qualcommNpuFeatureRoot=/path/to/prepared/litert_npu_runtime_librar
 ```
 
 For a local or Firebase Test Lab APK, a single prepared Qualcomm runtime can be
-fused directly. Download and unpack the official LiteRT 2.1.6 JIT runtime,
+fused directly. Download and unpack the official LiteRT 2.2.0 JIT runtime,
 run its `fetch_qualcomm_library.sh`, then point the Gradle property at one
 matching `arm64-v8a` directory:
 
@@ -617,6 +617,7 @@ Web specifics:
   request therefore mean "try WebGPU, then reconstruct on WASM" rather than a
   native mixed-accelerator construction.
 - `model.accelerators` reports what LiteRT.js actually resolved: `{Accelerator.gpu}` for a fully accelerated WebGPU model, `{Accelerator.cpu}` for WASM, and `{Accelerator.gpu, Accelerator.cpu}` when the runtime reports a WebGPU model as only partially accelerated.
+- When WebGPU cannot place the whole model, LiteRT.js 2.5 returns a partially delegated WebGPU model on browsers with JSPI (such as current Chrome) and recompiles on WASM on browsers without it. Requests that allow a CPU fallback accept the WASM model; a strict `CompiledModelConfig.gpu()` or `{Accelerator.gpu}` request throws `StateError` instead of silently running on the CPU.
 - `precision` is accepted but ignored (LiteRT.js does not expose a precision option), and the zero-copy `TensorBufferMode.hostMemory` path is native-only.
 - The first `fromBufferAsync` call auto-loads the LiteRT.js runtime from jsDelivr, exactly like `LiteRtInterpreter`; call `configureLiteRtWebLoader(...)` first to self-host the module and WASM files or to disable auto-loading.
 - Inference-time WebGPU failures (device lost, GPU out of memory) throw `LiteRtRuntimeError`, the same typed error the web `LiteRtInterpreter` uses; dispose the model and rebuild it with `{Accelerator.cpu}` to recover.
@@ -1806,18 +1807,18 @@ flutter_litert ships two independent native runtimes, one per API. The classic `
 
 | Platform | Interpreter runtime | CompiledModel runtime |
 |----------|---------------------|-----------------------|
-| Android | LiteRT 1.4.2 | LiteRT Next 2.1.6 (CPU / OpenCL/GL GPU / app-provided NPU) |
+| Android | LiteRT 1.4.2 | LiteRT Next 2.2.0 (CPU / OpenCL/GL GPU / app-provided NPU) |
 | iOS | TensorFlow Lite 2.20.0 | LiteRT Next (CPU / Metal GPU / Core ML NPU) |
 | macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 (CPU / Metal GPU / Core ML NPU) |
 | Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
 | Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
-| Web | LiteRT.js 2.4.0 / TFLite.js (WASM) | LiteRT.js 2.4.0 (WASM / WebGPU) |
+| Web | LiteRT.js 2.5.3 / TFLite.js (WASM) | LiteRT.js 2.5.3 (WASM / WebGPU) |
 
 Bundling:
-- Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, plus `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64`, from the `2.1.6` AAR. SoC-specific NPU runtimes remain app-provided.
+- Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, plus `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64`, from the `2.2.0` AAR. SoC-specific NPU runtimes remain app-provided.
 - iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` xcframework (release `litert-ios-v1.0.1` for SPM, `litert-ios-v1.0.0` for CocoaPods; both the same commit-pinned LiteRT Next build, commit `1adc2475`).
 - macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.1.5 wheel, bundled via CMake on Windows and Linux and via CocoaPods on macOS.
-- Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.4.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).
+- Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.5.3`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).
 
 > Intel Macs only: the iOS simulator is not supported under Swift Package Manager on x86_64. You have two options: test using a real iOS device or switch to CocoaPods to use the simulator. This applies to Intel Macs only.
 

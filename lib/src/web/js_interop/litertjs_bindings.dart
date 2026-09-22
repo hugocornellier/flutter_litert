@@ -15,7 +15,7 @@ import 'dart:typed_data';
 
 /// Default `@litertjs/core` ESM bundle URL on jsDelivr.
 const String _defaultLiteRtModuleUrl =
-    'https://cdn.jsdelivr.net/npm/@litertjs/core@2.4.0/+esm';
+    'https://cdn.jsdelivr.net/npm/@litertjs/core@2.5.3/+esm';
 
 /// Default WASM location passed to `LiteRt.loadLiteRt(...)`. A DIRECTORY
 /// (trailing slash) so LiteRT.js's runtime feature probe picks the right
@@ -27,7 +27,7 @@ const String _defaultLiteRtModuleUrl =
 /// Threaded builds are only chosen when explicitly requested; they need
 /// SharedArrayBuffer and thus COOP/COEP headers most hosts do not set.
 const String _defaultLiteRtWasmUrl =
-    'https://cdn.jsdelivr.net/npm/@litertjs/core@2.4.0/wasm/';
+    'https://cdn.jsdelivr.net/npm/@litertjs/core@2.5.3/wasm/';
 
 String _liteRtModuleUrl = _defaultLiteRtModuleUrl;
 String _liteRtWasmUrl = _defaultLiteRtWasmUrl;
