@@ -5,6 +5,16 @@ models multiplied by 15 Interpreter/CompiledModel configurations. The raw
 results are in [JSON](MACOS_MODEL_MATRIX_RESULTS.json) and
 [CSV](MACOS_MODEL_MATRIX_RESULTS.csv).
 
+**Note (2026-09-24): the `cat_detection` and `dog_detection` rows are stale.**
+They measured the models those packages shipped before 2026-08-12: dynamic-batch
+exports (landmarks sha256 `b44c9495…` cat, `66409cca…` dog), pinned in the
+matrix manifest at `cat_detection` `500d6ae` and `dog_detection` `98fde41`.
+Their Compiled CPU failures (`LiteRtStatus=3`) match what LiteRT's Python
+CompiledModel does on those same files. Since 3.0.1 both packages ship static
+exports, which CompiledModel runs on CPU and GPU; see the 2026-09-24 update in
+[`doc/graph_shape_vs_delegate.md`](../../doc/graph_shape_vs_delegate.md). Move
+the two pins forward and re-run before quoting these rows.
+
 This supersedes the 2026-08-01 run recorded at commit `a6d0297`. Every mode
 reproduced its earlier counts exactly except Interpreter Core ML, which moved
 from 20 executing / 12 accurate to 24 / 13. That is the patched Core ML dylib

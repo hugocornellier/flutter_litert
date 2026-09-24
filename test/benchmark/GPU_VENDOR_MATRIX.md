@@ -9,6 +9,16 @@ fixtures, and tolerance on every platform. Sources:
 - [Pixel 9 Pro](ANDROID_PIXEL9PRO_MODEL_MATRIX_RESULTS.json), Mali-G715, debug
 - [Galaxy A56](ANDROID_GALAXYA56_MODEL_MATRIX_RESULTS.json), Xclipse (RDNA), debug
 
+**Note (2026-09-24): the `cat_detection` and `dog_detection` rows are stale.**
+They measured the models those packages shipped before 2026-08-12: dynamic-batch
+exports (landmarks sha256 `b44c9495…` cat, `66409cca…` dog), pinned in the
+matrix manifest at `cat_detection` `500d6ae` and `dog_detection` `98fde41`.
+Their Compiled CPU failures (`LiteRtStatus=3`) match what LiteRT's Python
+CompiledModel does on those same files. Since 3.0.1 both packages ship static
+exports, which CompiledModel runs on CPU and GPU; see the 2026-09-24 update in
+[`doc/graph_shape_vs_delegate.md`](../../doc/graph_shape_vs_delegate.md). Move
+the two pins forward and re-run before quoting these rows.
+
 Accuracy is deterministic CPU-reference tensor parity, which is unaffected by
 the debug/profile distinction because the native libraries do the arithmetic
 either way. Timings are not comparable between the profile and debug rows.

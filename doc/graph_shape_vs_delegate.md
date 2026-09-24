@@ -15,6 +15,10 @@ Two patches came out of this and both are verified: `patches/gpu_transpose_conv_
 partition-bounding fix, was made and then **retracted** as a harness artifact; it is
 documented below so the trap is not re-entered.
 
+**Update, 2026-09-24:** the packages have shipped static, ReLU-unfused exports since
+2026-08-12, for the GPU. "What this changes about the shipped guidance" predates that;
+the 2026-09-24 section after it has what CompiledModel needs from a model file.
+
 Follows on from [`macos_transpose_conv_gap.md`](macos_transpose_conv_gap.md) (ruy
 multithreading fix) and
 [`delegate_verification.md`](delegate_verification.md) (silent delegate no-ops and
@@ -358,6 +362,8 @@ Four things follow.
 
 ## What this changes about the shipped guidance
 
+*Superseded on 2026-08-12. See the 2026-09-24 section below.*
+
 Two dependent packages shipped a static re-export (`dog_detection` 2.0.1,
 `cat_detection` 2.0.1) on the strength of flutter_litert **3.6.0** numbers, where
 static was 1.56x faster, then reverted when 3.7.0 inverted it. Both are back on the
@@ -372,6 +378,49 @@ The generalisable rule, which is now understood rather than merely observed:
 > kernel, and the same change became a 2x loss.
 
 For a deconv-headed model on 3.7.0, keep the dynamic export.
+
+## 2026-09-24 update: what CompiledModel needs from a model file
+
+The packages switched to static exports on 2026-08-12 (`cat_detection` and
+`dog_detection` 3.0.1), for the GPU rather than the CPU: every GPU backend refuses
+dynamic-sized tensors, and `useCompiledModel` has defaulted to true since that
+release. To sidestep finding 1's XNNPACK penalty on the static graph, the
+landmark stage defaults to the GPU delegate and falls through to bare CPU where
+there is none. The training repositories' `LANDMARK_DETECTION_REPORT.md` has the
+measurements.
+
+Re-checking the published cat and dog models with LiteRT's Python package
+(`ai-edge-litert` 2.2.0, same M4 Max) found three things a model file needs for
+CompiledModel:
+
+1. **A static batch dimension.** On a dynamic-batch file, CompiledModel's first run
+   returns all zeros without an error, and every later run fails with status 3. That
+   is the Compiled CPU failure the August model matrices recorded for the pre-August
+   cat and dog landmark models (`LiteRtStatus=3` in the Dart matrices, `code=3` in
+   `PYTHON_LITERT_CROSSCHECK.json`); those rows are marked stale in `test/benchmark`.
+   The Interpreter runs the same file correctly, and on a static file CompiledModel
+   matches it.
+2. **`TRANSPOSE_CONV` at version 3 for the GPU.** The CompiledModel Metal accelerator in
+   `ai-edge-litert` 2.2.0 still rejects version 4 (`TRANSPOSE_CONV: Max version
+   supported: 3. Requested version 4.`); finding 4's patch is in the Interpreter's
+   macOS GPU delegate (`libtensorflowlite_gpu-mac.dylib`). The batch-1 conversion does
+   not unfuse the ReLU: every landmark export tried comes out at version 4, and the
+   shipped files are version 3 only because `unfuse_transpose_conv_relu.py` ran on
+   them as a separate step. That is the failure mode "Why fixing it here beats fixing
+   it per-model" predicted: the static EfficientNetV2-S exports skipped the step and
+   silently lost the GPU (cat 448: 294 ms with the head on CPU, 8.5 ms once unfused).
+   `reexport_static.py` in both training repositories now unfuses every export and
+   fails if any `TRANSPOSE_CONV` is still above version 3.
+3. **An explicit thread count, in Python only.** `CpuOptions(num_threads=0)`, the Python
+   default, ran single-threaded: about 200 ms against 22 to 23 ms at 16 threads on the
+   landmark model. flutter_litert is not affected; its macOS matrix puts Compiled CPU
+   at about 1.1x Interpreter + XNNPACK on the median model.
+
+The shipped static landmark models, from Python on the same machine (median):
+CompiledModel CPU 63 ms at 4 threads and 23 ms at 16, CompiledModel GPU 2.1 ms with
+the whole graph on the GPU. The EfficientNetV2-S landmark models were withdrawn from
+Hugging Face and Kaggle on 2026-09-24, so every published cat and dog file is now
+static and unfused.
 
 ## Method notes
 

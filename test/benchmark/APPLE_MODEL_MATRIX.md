@@ -35,6 +35,17 @@ Each target overwrites its own pair of complete, machine-readable datasets,
 The latest authoritative macOS run is summarized in
 [`MACOS_MODEL_MATRIX_REPORT.md`](MACOS_MODEL_MATRIX_REPORT.md).
 
+**Note (2026-09-24): the `cat_detection` and `dog_detection` rows in both
+recorded datasets are stale.** They measured the models those packages shipped
+before 2026-08-12: dynamic-batch exports (landmarks sha256 `b44c9495…` cat,
+`66409cca…` dog), pinned in the matrix manifest at `cat_detection` `500d6ae` and
+`dog_detection` `98fde41`. Their Compiled CPU failures (`LiteRtStatus=3`) match
+what LiteRT's Python CompiledModel does on those same files. Since 3.0.1 both
+packages ship static exports, which CompiledModel runs on CPU and GPU; see the
+2026-09-24 update in
+[`doc/graph_shape_vs_delegate.md`](../../doc/graph_shape_vs_delegate.md). Move
+the two pins forward and re-run before quoting these rows.
+
 ## Model source
 
 macOS reads the `.tflite` files straight from the sibling published checkouts
