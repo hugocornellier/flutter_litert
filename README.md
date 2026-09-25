@@ -1724,8 +1724,13 @@ Add [`camera_desktop`](https://pub.dev/packages/camera_desktop) or
 ```yaml
 dependencies:
   camera: ^0.12.0
-  camera_desktop: ^1.2.0   # Windows, macOS, Linux streaming
+  camera_desktop: ^2.0.0   # Windows, macOS, Linux streaming
 ```
+
+Desktop frames arrive as a single 4-channel plane. `prepareCameraFrameFromImage`
+reads its byte order from `CameraImage.format.raw`, so it decodes both
+camera_desktop 2.x (BGRA on every platform) and 1.x (RGBA on Linux and Windows)
+correctly without an `isBgra` argument.
 
 On Android, set `imageFormatGroup: ImageFormatGroup.yuv420` on the
 `CameraController` to prevent a JPEG fallback. It is ignored on desktop.

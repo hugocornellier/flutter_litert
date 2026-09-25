@@ -214,7 +214,9 @@ void main() {
       expect(frame!.conversion, CameraFrameConversion.yuv2bgrNv12);
     });
 
-    test('defaults isBgra from the host platform', () {
+    test('without a format, defaults isBgra from the host platform', () {
+      // _FakeCameraImage has no `format` getter at all, which the duck-typed
+      // contract allows.
       final image = _FakeCameraImage(
         width: 4,
         height: 2,
@@ -225,14 +227,14 @@ void main() {
       expect(
         prepareCameraFrameFromImage(image)!.conversion,
         CameraFrameConversion.bgra2bgr,
-        reason: 'macOS camera_desktop delivers BGRA',
+        reason: 'no format.raw: BGRA on macOS',
       );
 
       debugDefaultTargetPlatformOverride = TargetPlatform.linux;
       expect(
         prepareCameraFrameFromImage(image)!.conversion,
         CameraFrameConversion.rgba2bgr,
-        reason: 'Linux camera_desktop delivers RGBA',
+        reason: 'no format.raw: RGBA elsewhere',
       );
 
       debugDefaultTargetPlatformOverride = null;
@@ -260,6 +262,99 @@ void main() {
         () => prepareCameraFrameFromImage(Object()),
         throwsA(isA<NoSuchMethodError>()),
       );
+    });
+  });
+
+  group('prepareCameraFrameFromImage - byte order from format.raw', () {
+    tearDown(() => debugDefaultTargetPlatformOverride = null);
+
+    const desktops = [
+      TargetPlatform.macOS,
+      TargetPlatform.linux,
+      TargetPlatform.windows,
+    ];
+
+    /// Decodes a single-plane 4-channel frame exposing [format], like a
+    /// camera_desktop `CameraImage`.
+    CameraFrameConversion decode(Object? format, {bool? isBgra}) =>
+        prepareCameraFrameFromImage(
+          _FakeFormattedCameraImage(
+            width: 4,
+            height: 2,
+            planes: [
+              _FakePlane(Uint8List(32), bytesPerRow: 16, bytesPerPixel: 4),
+            ],
+            format: format,
+          ),
+          isBgra: isBgra,
+        )!.conversion;
+
+    test("'BGRA' decodes as BGRA on every desktop platform", () {
+      // camera_desktop 2.x, including Linux and Windows, where the platform
+      // default would pick RGBA and swap red and blue.
+      for (final p in desktops) {
+        debugDefaultTargetPlatformOverride = p;
+        expect(
+          decode(const _FakeImageFormat('BGRA')),
+          CameraFrameConversion.bgra2bgr,
+          reason: '$p',
+        );
+      }
+    });
+
+    test("'RGBA' decodes as RGBA on every desktop platform", () {
+      // camera_desktop 1.x on Linux and Windows. macOS never reports it, but
+      // format.raw must still beat the macOS platform default.
+      for (final p in desktops) {
+        debugDefaultTargetPlatformOverride = p;
+        expect(
+          decode(const _FakeImageFormat('RGBA')),
+          CameraFrameConversion.rgba2bgr,
+          reason: '$p',
+        );
+      }
+    });
+
+    test('an explicit isBgra overrides format.raw', () {
+      // Each case runs on a platform whose default agrees with format.raw, so
+      // only the explicit argument can produce the expected conversion.
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+      expect(
+        decode(const _FakeImageFormat('BGRA'), isBgra: false),
+        CameraFrameConversion.rgba2bgr,
+      );
+
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      expect(
+        decode(const _FakeImageFormat('RGBA'), isBgra: true),
+        CameraFrameConversion.bgra2bgr,
+      );
+    });
+
+    test('any other format.raw falls back to the host platform', () {
+      final cases = <(Object?, String)>[
+        (const _FakeImageFormat(1111970369), 'iOS integer FourCC'),
+        (const _FakeImageFormat(35), 'Android integer ImageFormat'),
+        (const _FakeImageFormat(null), 'null raw'),
+        (const _FakeImageFormat('bgra'), 'unrecognized string'),
+        (Object(), 'format without raw'),
+        (null, 'null format'),
+      ];
+      for (final (format, label) in cases) {
+        debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+        expect(
+          decode(format),
+          CameraFrameConversion.bgra2bgr,
+          reason: '$label on macOS',
+        );
+
+        debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+        expect(
+          decode(format),
+          CameraFrameConversion.rgba2bgr,
+          reason: '$label on Linux',
+        );
+      }
     });
   });
 
@@ -466,4 +561,23 @@ class _FakeCameraImage {
   final int width;
   final int height;
   final List<_FakePlane> planes;
+}
+
+class _FakeImageFormat {
+  const _FakeImageFormat(this.raw);
+
+  final Object? raw;
+}
+
+/// A [_FakeCameraImage] that also exposes `format`, as a real `CameraImage`
+/// does.
+class _FakeFormattedCameraImage extends _FakeCameraImage {
+  _FakeFormattedCameraImage({
+    required super.width,
+    required super.height,
+    required super.planes,
+    required this.format,
+  });
+
+  final Object? format;
 }

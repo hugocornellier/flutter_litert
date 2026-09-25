@@ -11,10 +11,12 @@ import 'yuv_conversion.dart';
 /// 3-channel BGR image. Detector packages map this to an opencv `COLOR_*` code
 /// at the point of decode, inside their existing detection isolate.
 enum CameraFrameConversion {
-  /// 4-channel packed BGRA to 3-channel BGR (macOS camera_desktop).
+  /// 4-channel packed BGRA to 3-channel BGR (camera_desktop 2.x on every
+  /// desktop platform, and 1.x on macOS).
   bgra2bgr,
 
-  /// 4-channel packed RGBA to 3-channel BGR (Linux camera_desktop).
+  /// 4-channel packed RGBA to 3-channel BGR (camera_desktop 1.x on Linux and
+  /// Windows).
   rgba2bgr,
 
   /// YUV420 semi-planar NV12 to BGR (iOS camera plugin default).
@@ -213,6 +215,13 @@ class CameraFrame {
 /// not expose the expected shape; this is an acceptable tradeoff vs. either
 /// adding a `camera` dep here or asking every caller to write a plane mapper.
 ///
+/// When [isBgra] is null, a desktop single-plane frame's byte order comes from
+/// the image's `format.raw`: `'BGRA'` selects BGRA and `'RGBA'` selects RGBA.
+/// camera_desktop 2.x reports `'BGRA'` on every desktop platform, while 1.x
+/// reported `'RGBA'` on Linux and Windows. Any other value, including a missing
+/// `format` or a non-string `raw`, falls back to BGRA on macOS and RGBA
+/// elsewhere. An explicit [isBgra] always wins.
+///
 /// See [prepareCameraFrame] for parameter semantics.
 CameraFrame? prepareCameraFrameFromImage(
   Object cameraImage, {
@@ -237,8 +246,26 @@ CameraFrame? prepareCameraFrameFromImage(
     height: height,
     planes: planes,
     rotation: rotation,
-    isBgra: isBgra ?? (defaultTargetPlatform == TargetPlatform.macOS),
+    isBgra: isBgra ?? _defaultIsBgra(dyn),
   );
+}
+
+/// The desktop byte order [prepareCameraFrameFromImage] assumes when the
+/// caller passes no `isBgra`, read from the image's `format.raw`.
+bool _defaultIsBgra(dynamic cameraImage) {
+  Object? raw;
+  try {
+    // ignore: avoid_dynamic_calls
+    raw = cameraImage.format?.raw;
+  } on NoSuchMethodError {
+    // `format` is optional on a CameraImage-shaped object, so a missing
+    // `format` or `raw` falls through to the platform default.
+  }
+  return switch (raw) {
+    'BGRA' => true,
+    'RGBA' => false,
+    _ => defaultTargetPlatform == TargetPlatform.macOS,
+  };
 }
 
 /// Prepare a [CameraFrame] descriptor from raw camera planes, for use with a
@@ -254,7 +281,8 @@ CameraFrame? prepareCameraFrameFromImage(
 /// Returns null for unsupported shapes (empty planes, missing U plane for
 /// YUV, odd width/height for YUV420).
 ///
-/// [isBgra] selects BGRA (macOS, default) vs. RGBA (Linux) for the desktop
+/// [isBgra] selects BGRA (default; camera_desktop 2.x on every desktop
+/// platform) vs. RGBA (camera_desktop 1.x on Linux and Windows) for the desktop
 /// single-plane path; it is ignored for YUV input.
 ///
 /// Typical usage:
