@@ -1,3 +1,16 @@
+## 3.9.2
+
+* `prepareCameraFrameFromImage` now decides BGRA vs. RGBA from the frame's
+  `format.raw` instead of the platform, so desktop streams decode correctly on
+  camera_desktop 2.0.0, which delivers BGRA on every desktop platform, as well
+  as on 1.x, which delivered RGBA on Linux and Windows. Before this, Linux and
+  Windows frames from camera_desktop 2.0.0 were decoded as RGBA, swapping red
+  and blue. `'BGRA'` selects BGRA and `'RGBA'` selects RGBA. Any other value,
+  or no `format` at all, keeps the previous default (BGRA on macOS, RGBA
+  elsewhere), and an explicit `isBgra` still takes precedence, so callers that
+  pass `isBgra: Platform.isMacOS` should drop it to get the new behavior.
+* The README's desktop streaming setup now uses `camera_desktop: ^2.0.0`.
+
 ## 3.9.1
 
 * Android's CompiledModel runtime is updated from LiteRT Next 2.1.6 to 2.2.0.
