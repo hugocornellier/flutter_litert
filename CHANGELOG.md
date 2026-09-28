@@ -1,3 +1,28 @@
+## 3.9.3
+
+Documentation and example fixes only. No change to the package's code or
+behavior.
+
+* The README's CoreML delegate section suggested
+  `CompiledModel` with `{Accelerator.npu, Accelerator.gpu, Accelerator.cpu}`,
+  which throws on Apple platforms. It now suggests `{npu, cpu}` and notes that
+  Apple cannot combine NPU and GPU.
+* New README section, "Verifying a CompiledModel", covering what
+  `verifyCompiledModel` compares, its 1% default tolerance, and its limits. The
+  migration guide already linked to it, but the section did not exist.
+* The iOS NPU guide and README no longer describe physical-device validation
+  and the SwiftPM Core ML artifact as pending; both shipped in 3.8.0.
+* The Android NPU guide now attributes its device results to LiteRT Next
+  2.1.6 and notes that the package bundles 2.2.0, whose matching JIT runtime
+  current builds need.
+* The README no longer says the main example avoids `flutter_litert_flex`; it
+  depends on it for its model-matrix tests.
+* The web example drops its fp16/fp32 precision setting. LiteRT.js has no
+  precision option, so `CompiledModel` ignores `precision` on the web and the
+  setting had no effect. The API parameter is unchanged.
+* Older investigation notes are marked as historical, and stale internal
+  planning documents are removed.
+
 ## 3.9.2
 
 * `prepareCameraFrameFromImage` now decides BGRA vs. RGBA from the frame's

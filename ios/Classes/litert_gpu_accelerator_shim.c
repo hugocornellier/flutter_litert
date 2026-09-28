@@ -17,14 +17,14 @@
 // This file exports that function. When the runtime calls it, the shim
 // dlopen's the framework-wrapped Metal accelerator from the app bundle's
 // Frameworks directory and registers its accelerator definition through the
-// exported LiteRT C ABI — replicating upstream
+// exported LiteRT C ABI, replicating upstream
 // `litert::internal::RegisterAcceleratorFromDef`.
 //
 // ABI: `LiteRtAcceleratorDefV1` is declared ABI-stable by LiteRT
 // (litert/c/internal/litert_accelerator_def.h, version field +
 // static_asserts). The layout below matches google-ai-edge/LiteRT commit
-// 1adc2475829fbe52d5670873821a45bea8779532 — the same commit the bundled iOS
-// binaries are built from — and is guarded by the same static_asserts plus a
+// 1adc2475829fbe52d5670873821a45bea8779532, the same commit the bundled iOS
+// binaries are built from, and is guarded by the same static_asserts plus a
 // runtime version check.
 //
 // CocoaPods compiles this file via the podspec's Classes/** source glob;

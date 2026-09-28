@@ -12,7 +12,7 @@ import '../compiled_model/compiled_model.dart';
 /// the perfect-square check live in one tested place.
 ///
 /// Output *role* resolution (which output is landmarks vs score vs boxes) stays
-/// in each model — it is genuinely model-specific — but the float-count and
+/// in each model because it is genuinely model-specific; the float-count and
 /// square-side primitives below are shared. They throw [UnsupportedError] on a
 /// mismatch (the same error type the detectors already throw, so the
 /// compiled-engine→Interpreter-engine fallback is preserved).

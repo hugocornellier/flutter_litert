@@ -1,20 +1,24 @@
 # iOS CompiledModel NPU
 
-## Checkpoint status
+## Status
 
-The iOS implementation is complete through simulator validation. The simulator
-suite passes, but this is not yet physical-device validation: an iOS simulator
-has no Apple Neural Engine and Core ML executes the delegated model on CPU.
+Shipped and validated on a physical device. Both distribution channels carry
+the patched Core ML framework with the NPU entry points:
 
-At this checkpoint:
+- SwiftPM pins `TensorFlowLiteCCoreML` to the `coreml-ios-v1.1.0` release;
+- CocoaPods downloads it from `libs-v0.1.9`, and the podspec re-downloads when
+  the NPU symbol is missing rather than trusting a cached file.
 
-- the CocoaPods-vendored `TensorFlowLiteCCoreML.xcframework` contains the
-  patched device and universal simulator slices;
-- SwiftPM still points at the previous released Core ML artifact, which does
-  not contain the NPU entry points. Ordinary SwiftPM builds continue to work,
-  but an NPU request reports unsupported until a replacement artifact is
-  published and its URL and checksum are updated;
-- physical-iPhone correctness and performance validation remain pending.
+Earlier releases pointed both channels at a framework predating the NPU entry
+points, so accelerator registration failed on device with
+`kLiteRtStatusErrorUnsupported`. See the 3.8.0 entry in
+[CHANGELOG.md](../CHANGELOG.md).
+
+Measured on a physical iPhone 15 Pro (iOS 26.5, 2026-08-05), iOS matches macOS
+exactly: strict `{npu}` places a full graph for 1 of 29 published models, and
+`{npu, cpu}` runs 24 of 29 with 12 matching a bare-CPU reference. Raw results
+are in
+[IOS_MODEL_MATRIX_RESULTS.json](../test/benchmark/IOS_MODEL_MATRIX_RESULTS.json).
 
 ## Placement semantics
 
@@ -60,7 +64,9 @@ iPhone 16 simulator running iOS 18.2:
 
 The suite proves framework packaging, symbol retention, accelerator
 registration, delegate ordering, Core ML conversion, inference, and fallback
-diagnostics. It does not prove that any operation ran on ANE hardware.
+diagnostics. It does not prove that any operation ran on ANE hardware; the
+physical-device run under [Status](#status) is what exercised real Neural
+Engine hardware.
 
 ## Reproducible build
 

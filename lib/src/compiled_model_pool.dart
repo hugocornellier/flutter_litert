@@ -20,8 +20,8 @@ class _CompiledSlot {
 /// reading it. Each slot therefore bundles its own model, its own reusable input
 /// [Float32List], and an [AsyncLock] that serializes that slot's calls.
 ///
-/// [withModel] hands work to the next slot round-robin, so concurrent calls —
-/// e.g. one per detected hand/person dispatched via `Future.wait` — land on
+/// [withModel] hands work to the next slot round-robin, so concurrent calls,
+/// such as one per detected hand/person dispatched via `Future.wait`, land on
 /// distinct slots and overlap, while two calls colliding on the same slot run
 /// back-to-back.
 ///
@@ -43,7 +43,7 @@ class CompiledModelPool {
   ///
   /// [create] is called once per slot to produce a fresh [CompiledModel]; each
   /// slot also allocates a reusable input buffer of [inputFloats] float32
-  /// values. [onFirstModel], if given, is called with the first model built —
+  /// values. [onFirstModel], if given, is called with the first model built;
   /// use it to resolve I/O tensor indices once.
   void initialize({
     required int poolSize,

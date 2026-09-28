@@ -111,8 +111,8 @@ abstract class IsolateWorkerBase {
   }
 
   /// Gracefully disposes the worker: sends [workerDisposeOp] to the isolate as a
-  /// request and awaits its acknowledgement — giving the isolate a chance to
-  /// free native resources — before force-killing it via [dispose].
+  /// request and awaits its acknowledgement, giving the isolate a chance to
+  /// free native resources before [dispose] force-kills it.
   ///
   /// [dispose] alone kills the isolate synchronously with
   /// `Isolate.kill(priority: immediate)`, which races past any queued dispose

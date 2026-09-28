@@ -58,8 +58,8 @@ jobs:
       # proving the production load path end to end: the podspec ships
       # libLiteRt.dylib as a resource and the loader resolves it from inside
       # the .app rather than from the package checkout. Unlike every other job,
-      # the runner has a working GPU here — macOS runners are Apple silicon and
-      # Metal compute needs no display — so this is the one place in CI where
+      # the runner has a working GPU here; macOS runners are Apple silicon and
+      # Metal compute needs no display, so this is the one place in CI where
       # the strict-GPU and GPU-fallback tests execute for real instead of
       # skipping.
       - name: Run CompiledModel integration tests (macOS desktop)
@@ -139,7 +139,7 @@ jobs:
           key: flex-delegate-linux-v1.0.0
 
       # CompiledModel tests load the bundled linux/lib/libLiteRt.so via the
-      # loader's package-path fallback — the same binary end users get.
+      # loader's package-path fallback, the same binary end users get.
       - name: Run tests
         run: flutter test
 
@@ -202,8 +202,8 @@ jobs:
           test/util/cover_fit_transform_test.dart
 
       # Builds the example app and runs real CompiledModel inference inside
-      # it — the only place windows/CMakeLists.txt is configured in CI —
-      # proving the production load path end to end: CMake bundles
+      # it, configuring windows/CMakeLists.txt in CI and proving the production
+      # load path end to end: CMake bundles
       # libLiteRt.dll next to the executable and the loader resolves it from
       # execDir. GPU tests skip (the bundled WebGPU accelerator finds no
       # adapter on headless runners).

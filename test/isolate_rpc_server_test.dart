@@ -53,8 +53,8 @@ void main() {
     () async {
       final w = _Worker();
       await w.start();
-      // The wire error must be exactly the prefix string — no "Bad state:" and no
-      // stack — so a main-side startsWith() contract survives.
+      // The wire error must be exactly the prefix string, without "Bad state:"
+      // or a stack, so a main-side startsWith() contract survives.
       await expectLater(
         w.sendRequest<dynamic>('exact', const {'detail': 'hi'}),
         throwsA(

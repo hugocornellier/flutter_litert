@@ -43,11 +43,11 @@ that the ANE cannot execute.
   order.
 
 `CompiledModel.isFullyAccelerated` means all graph nodes were claimed by some
-selected delegate. In mixed mode, Core ML plus XNNPACK—or XNNPACK alone in an
-unprotected implementation—can therefore make it `true`. It does not identify
-the ANE. The zero-node native guard proves Core ML claimed work; a fixed-input
-output comparison with `verifyCompiledModel` is still required to validate the
-result numerically.
+selected delegate. In mixed mode, either Core ML plus XNNPACK or XNNPACK alone
+in an unprotected implementation can therefore make it `true`. It does not
+identify the ANE. The zero-node native guard proves Core ML claimed work; a
+fixed-input output comparison with `verifyCompiledModel` is still required to
+validate the result numerically.
 
 ## Delegate fixes and options
 

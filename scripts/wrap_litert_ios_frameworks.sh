@@ -34,7 +34,7 @@ make_framework() { # dylib name out_dir [universal_sim]
   if [ -n "$universal_sim" ]; then
     # Google ships no x86_64 iOS-simulator binaries. CocoaPods' xcframework
     # slice selection matches the build's full ARCHS list ("arm64 x86_64" on
-    # simulator), so an arm64-only simulator slice is skipped — and a
+    # simulator), so an arm64-only simulator slice is skipped; a
     # CocoaPods script bug then reuses the previous pod's slice id, breaking
     # the build. Lipo in an empty x86_64 stub so the slice matches and
     # links; CompiledModel is simply unavailable in x86_64 simulators.

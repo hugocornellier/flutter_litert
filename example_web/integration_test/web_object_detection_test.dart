@@ -8,8 +8,7 @@ import 'webgpu_probe.dart';
 
 /// End-to-end object detection through the full web engine matrix in a real
 /// browser: bundled assets, dart:ui letterboxing, and YOLOv8 post-processing
-/// over CompiledModel (LiteRT.js WASM, WebGPU+WASM at fp16 and fp32, and
-/// strict WebGPU), LiteRtInterpreter (LiteRT.js WASM and WebGPU), and
+/// over CompiledModel (LiteRT.js WASM, WebGPU+WASM, and strict WebGPU), LiteRtInterpreter (LiteRT.js WASM and WebGPU), and
 /// Interpreter (tflite-js), plus a sweep over every bundled sample image.
 ///
 /// GPU-flavored tests key off the [hasWebGpu] capability probe: with WebGPU
@@ -149,25 +148,6 @@ void main() {
         throwsStateError,
       );
     }
-  }, timeout: timeout);
-
-  testWidgets('CompiledModel GPU request at fp32 detects the cats', (
-    tester,
-  ) async {
-    // The web CompiledModel accepts precision for API parity (LiteRT.js has
-    // no precision knob), so both settings must yield a working model; the
-    // fp16 default is covered by the test above.
-    final expectedBackend = await hasWebGpu() ? 'WebGPU' : 'WASM';
-    final detector = await Detector.create(
-      config: const WebEngineConfig(
-        kind: WebEngineKind.compiledModel,
-        accelerators: {Accelerator.gpu, Accelerator.cpu},
-        precision: Precision.fp32,
-      ),
-    );
-    addTearDown(detector.close);
-    expect(detector.backend, expectedBackend);
-    expectDetectsTheCats(await detector.detectAsset('assets/cat.jpg'));
   }, timeout: timeout);
 
   testWidgets('LiteRtInterpreter on WASM detects the cats', (tester) async {

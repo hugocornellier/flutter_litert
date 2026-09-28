@@ -110,25 +110,21 @@ class WebEngineConfig {
 
   // CompiledModel path.
   final Set<Accelerator> accelerators;
-  final Precision precision;
 
   const WebEngineConfig({
     this.kind = WebEngineKind.compiledModel,
     this.runtime = WebInterpreterRuntime.liteRtWasm,
     this.accelerators = const {Accelerator.gpu, Accelerator.cpu},
-    this.precision = Precision.fp16,
   });
 
   WebEngineConfig copyWith({
     WebEngineKind? kind,
     WebInterpreterRuntime? runtime,
     Set<Accelerator>? accelerators,
-    Precision? precision,
   }) => WebEngineConfig(
     kind: kind ?? this.kind,
     runtime: runtime ?? this.runtime,
     accelerators: accelerators ?? this.accelerators,
-    precision: precision ?? this.precision,
   );
 
   String get label {
@@ -138,9 +134,7 @@ class WebEngineConfig {
     final bool gpu = accelerators.contains(Accelerator.gpu);
     final bool cpu = accelerators.contains(Accelerator.cpu);
     final String acc = gpu ? (cpu ? 'WebGPU+WASM' : 'WebGPU') : 'WASM';
-    final parts = <String>['CompiledModel', acc];
-    if (gpu) parts.add(precision == Precision.fp16 ? 'fp16' : 'fp32');
-    return parts.join(' · ');
+    return 'CompiledModel · $acc';
   }
 }
 
@@ -213,7 +207,6 @@ class Detector {
         final model = await CompiledModel.fromBufferAsync(
           bytes,
           accelerators: config.accelerators,
-          precision: config.precision,
         );
         return Detector._(
           (input) async => (await model.runAsync([input]))[0],

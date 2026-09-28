@@ -1,8 +1,16 @@
 # Delegate verification: two silent-failure bugs
 
-Status: investigated, not yet fixed. Detection mechanism **resolved** for GPU (see
-[Spike result](#spike-result-resolved)). Independently reviewed and revised; see
-[Merged review](#merged-review-independent-adversarial-analysis) at the end, which
+> **Historical investigation, written before 3.7.0.** It is kept because code comments
+> link to its evidence, not as a description of current behaviour. File and line
+> references, "not yet bound" claims, and proposed fixes reflect the tree at the time.
+> What shipped from it in 3.7.0: `verifyCompiledModel`, `CompiledModel.isFullyAccelerated`,
+> named `LiteRtStatus` values, the `CoreMlDelegate` and `InterpreterPool` leak fixes, and
+> the un-deprecation of the Interpreter delegates. See [CHANGELOG.md](../CHANGELOG.md)
+> for what the package does now.
+
+Status at the time of writing: investigated, not yet fixed. Detection mechanism
+**resolved** for GPU (see [Spike result](#spike-result-resolved)). Reviewed and revised;
+see [Merged review](#merged-review-independent-adversarial-analysis) at the end, which
 supersedes earlier sections where marked.
 
 A third pass re-verified every code and symbol claim against the tree. It corrected the
@@ -508,7 +516,7 @@ Neither model contains a `TRANSPOSE_CONV`, which independently rules out the dec
 mechanism as its cause.
 
 This is also a concrete argument for binding
-`LiteRtCompiledModelIsFullyAccelerated` (already on the to-do list, credited to Codex): it is
+`LiteRtCompiledModelIsFullyAccelerated` (since bound as `CompiledModel.isFullyAccelerated`): it is
 the CompiledModel-side equivalent of the bug 1 detector, and it is exactly what distinguished
 "ran on GPU" from "silently fell back" here.
 
@@ -567,18 +575,9 @@ Two harnesses, both CPU-only, both independent of Flutter:
   `pip install ai-edge-litert==2.1.6 tensorflow numpy`. Builds four synthetic graphs and exits
   non-zero when CompiledModel disagrees with the Interpreter. This is the one to attach
   upstream: no proprietary model, no local dylib.
-- `build/codex-tmp/repro_native.c` (untracked) drives the shipped dylib directly in C, with the
-  sentinel prefill that proves the output is never written. Build:
-
-  ```sh
-  clang -std=c11 -Wall -Wextra build/codex-tmp/repro_native.c \
-    macos/flutter_litert/Sources/flutter_litert/Resources/libLiteRt.dylib \
-    -Wl,-rpath,$PWD/macos/flutter_litert/Sources/flutter_litert/Resources \
-    -o build/codex-tmp/repro_native
-  build/codex-tmp/repro_native <path-to>/cat_face_landmarks_full.tflite managed
-  ```
-
-  Reproduces with both `managed` and host buffers. Model SHA-256
+- A C harness (not committed) drove the shipped `libLiteRt.dylib` directly, prefilling the
+  output buffer with a sentinel to prove the output is never written. It reproduced with
+  both `managed` and host buffers. Model SHA-256
   `b44c94955e9f92ef210bbfdfada7247a3c19c766c66b97d2be82cb0c197d917c`; LiteRT source revision
   `1adc2475829fbe52d5670873821a45bea8779532`; input `input[i] = (i % 251) / 251.0f`.
 
@@ -916,21 +915,21 @@ Worth committing as a regression test once the fixes land.
 
 # Merged review: independent adversarial analysis
 
-A second analyst (Codex) reviewed this document with instructions to attack it. Its findings
+A second reviewer went through this document with instructions to attack it. Its findings
 are merged below. Everything it raised was independently verified before being accepted;
 disputed items are recorded with the disproof and excluded from recommendations.
 
 ## Confirmed by both, independently
 
 - `fromBufferWithGpuFallback` cannot detect a successful `run()` returning bad values.
-  Codex adds a precision: it catches errors during compilation **and buffer/signature
+  The reviewer adds a precision: it catches errors during compilation **and buffer/signature
   setup**, not compilation alone. It cannot catch `run()` errors because no inference
   happens during construction.
 - Android is entirely untested; physical iOS is untested.
 - XNNPACK could itself silently accept zero nodes, so falling back to it is not a guarantee
   of acceleration.
 
-## Accepted from Codex (verified)
+## Accepted from the review (verified)
 
 | # | Finding | Verification |
 |---|---|---|
@@ -947,7 +946,7 @@ disputed items are recorded with the disproof and excluded from recommendations.
 
 ## Disputed (tested and disproved, excluded from recommendations)
 
-| # | Codex claim | Disproof |
+| # | Review claim | Disproof |
 |---|---|---|
 | A | The CoreML result is **allocation-confounded**: `Interpreter._` auto-allocates (`interpreter.dart:82-84`), so the A/B compared pre- vs post-allocation, not create-time vs post-creation. | The confound is **real and well spotted**, but the conclusion survives. Rebuilt the test natively (`TfLiteInterpreterCreate` -> `ModifyGraphWithDelegate` -> `AllocateTensors`), applying the delegate **before** allocation: CoreML still returns **status=2** on both MediaPipe models where it engages via options. GPU still returns 0 / 3 as before. So allocation order is not the variable; the application *mechanism* is. The claim is retained with a corrected rationale. |
 | B | RTMPose's deviation may be an **output-ordering** artifact; it has two same-shaped `[1,39,512]` outputs. | Ran a best-match permutation search: every CM output matches its **own** index best. `cm:cpu` is index-aligned at 3.3e-6 / 3.9e-6 (correct), `cm:gpu+cpu` at 2.7e-1 / 2.5e-1 with no better permutation. Ordering does not explain it. |
@@ -956,7 +955,7 @@ disputed items are recorded with the disproof and excluded from recommendations.
 
 ## Net effect on recommendations
 
-Codex's strongest contributions are #1, #3, #9 and #10. Together they mean:
+The review's strongest contributions are #1, #3, #9 and #10. Together they mean:
 
 - The fix cannot be described as "always-on for all delegates" (#1) and cannot live in
   `InterpreterFactory.create` (#3).

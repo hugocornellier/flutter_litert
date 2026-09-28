@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_litert/flutter_litert.dart' show Precision;
 import 'package:flutter_litert/src/compiled_model/compiled_model_web.dart'
     as cm_web;
 import 'package:flutter_litert_example_web/main.dart' as app;
@@ -191,10 +190,10 @@ void main() {
   ) async {
     final status = await bootApp(tester);
 
-    // Default engine is CompiledModel {gpu, cpu} fp16 on the Cat sample; the
+    // Default engine is CompiledModel {gpu, cpu} on the Cat sample; the
     // backend in the status line must match the WebGPU capability probe.
     expect(backendOf(status), await hasWebGpu() ? 'WebGPU' : 'WASM');
-    expect(find.text('CompiledModel · WebGPU+WASM · fp16'), findsOneWidget);
+    expect(find.text('CompiledModel · WebGPU+WASM'), findsOneWidget);
 
     // The confidence slider boots at the 55% default.
     expect(find.byType(Slider), findsOneWidget);
@@ -275,18 +274,16 @@ void main() {
     }
   }, timeout: timeout);
 
-  testWidgets('settings dialog covers CompiledModel accelerators and '
-      'precision', (tester) async {
+  testWidgets('settings dialog covers CompiledModel accelerators', (
+    tester,
+  ) async {
     var previous = await bootApp(tester);
 
-    // WASM (CPU): the precision tiles gray out, and the engine lands on the
-    // WASM backend. The async-dispatch switch is informational and pinned on.
+    // WASM (CPU): the engine lands on the WASM backend. The async-dispatch
+    // switch is informational and pinned on. There is no precision choice,
+    // because LiteRT.js has no precision option.
     await openSettings(tester);
-    RadioListTile<Precision> fp16Tile() =>
-        tester.widget<RadioListTile<Precision>>(
-          find.widgetWithText(RadioListTile<Precision>, 'fp16 (faster)'),
-        );
-    expect(fp16Tile().enabled, isTrue);
+    expect(find.textContaining('Precision'), findsNothing);
     final dispatchSwitch = tester.widget<SwitchListTile>(
       find.byType(SwitchListTile),
     );
@@ -294,21 +291,19 @@ void main() {
     expect(dispatchSwitch.onChanged, isNull);
 
     await tapInDialog(tester, 'WASM (CPU)');
-    expect(fp16Tile().enabled, isFalse);
     var status = await applyAndWait(tester, previous);
     expect(status, isNotNull, reason: errorLine(tester));
     expect(backendOf(status!), 'WASM');
     expect(find.text('CompiledModel · WASM'), findsOneWidget);
     previous = status;
 
-    // WebGPU + WASM fallback at fp32: works everywhere, backend per probe.
+    // WebGPU + WASM fallback: works everywhere, backend per probe.
     await openSettings(tester);
     await tapInDialog(tester, 'WebGPU + WASM fallback');
-    await tapInDialog(tester, 'fp32 (accurate)');
     status = await applyAndWait(tester, previous);
     expect(status, isNotNull, reason: errorLine(tester));
     expect(backendOf(status!), await hasWebGpu() ? 'WebGPU' : 'WASM');
-    expect(find.text('CompiledModel · WebGPU+WASM · fp32'), findsOneWidget);
+    expect(find.text('CompiledModel · WebGPU+WASM'), findsOneWidget);
     previous = status;
 
     // WebGPU only: real GPU where the probe says so, a surfaced engine
@@ -363,7 +358,7 @@ void main() {
 
   testWidgets('dialog cancel leaves the engine unchanged', (tester) async {
     final status = await bootApp(tester);
-    const defaultLabel = 'CompiledModel · WebGPU+WASM · fp16';
+    const defaultLabel = 'CompiledModel · WebGPU+WASM';
     expect(find.text(defaultLabel), findsOneWidget);
 
     await openSettings(tester);

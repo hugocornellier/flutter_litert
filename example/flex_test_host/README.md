@@ -2,9 +2,11 @@
 
 Dedicated integration test host for the optional `flutter_litert_flex` addon.
 
-The main `example/` app keeps a minimal dependency list. This package adds
-`flutter_litert_flex` separately so CI can prove the addon is installed,
-bundled, and usable without making Flex a dependency of the primary example.
+This package depends on `flutter_litert` and `flutter_litert_flex` alone, so
+CI can prove the addon installs, bundles, and runs on its own. The main
+`example/` app also depends on `flutter_litert_flex`, because its model-matrix
+tests include a Flex delegate configuration; this host is what isolates the
+addon from the example's other dependencies.
 
 Run from this directory:
 

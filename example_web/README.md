@@ -10,7 +10,8 @@ microsecond timing readout.
 The engine dialog covers all three web inference stacks:
 
 - `CompiledModel` (LiteRT.js): WASM, WebGPU + WASM fallback, or WebGPU
-  only, with fp16/fp32 precision on WebGPU
+  only. There is no precision choice: LiteRT.js has no precision option, so
+  `CompiledModel` ignores `precision` on the web.
 - `LiteRtInterpreter` (LiteRT.js): WASM or WebGPU with automatic fallback
 - `Interpreter` (tflite-js): WASM
 

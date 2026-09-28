@@ -1,9 +1,9 @@
 /// Thrown by an isolate RPC handler to send an EXACT error string to the
 /// client, bypassing [serveIsolateRpc]'s default `'$e\n$st'` stringification.
 ///
-/// Use this to preserve a wire-format error contract — e.g. a prefix the main
-/// side string-matches via `startsWith` — where the generic
-/// `Bad state: ...\n<stack>` wrapping would break the match.
+/// Use this to preserve a wire-format error contract; for example, the generic
+/// `Bad state: ...\n<stack>` wrapping would break a prefix the main side
+/// string-matches via `startsWith`.
 ///
 /// Lives in its own `dart:isolate`-free library so web/WASM consumers (e.g.
 /// `throwDecodeFailure`) can reference it without pulling in the isolate

@@ -1,16 +1,17 @@
 # The 3x macOS/iOS gap: TRANSPOSE_CONV does not parallelise on macOS
 
-Status: **ROOT CAUSE FOUND AND FIX VERIFIED.**
+Status: **FIXED AND SHIPPED in 3.7.0.**
 
 ruy multithreading is dead in the CMake-built macOS dylib. A bazel build of the same TF
 2.20.0 source fixes it completely and brings macOS to parity with iOS. Built by
 `.github/workflows/build-tflite-c-macos.yml` and measured (see
 [Verified result](#verified-result-the-fix-works)).
 
-Remaining work before shipping: the x86_64 slice does not cross-compile on an arm64 runner
-(`'NEON_2_SSE.h' file not found`), so only an arm64 dylib exists. The shipped artifact must
-stay universal, so that cross-compile has to be resolved, or the x86_64 slice built on an
-Intel runner.
+The bazel x86_64 slice does not cross-compile on an arm64 runner
+(`'NEON_2_SSE.h' file not found`). The shipped dylib stays universal by pairing the bazel
+arm64 slice with the existing CMake x86_64 slice, so Intel Macs are unchanged (see the 3.7.0
+entry in [CHANGELOG.md](../CHANGELOG.md)). The rest of this document is the investigation
+as written before the fix shipped.
 
 ## Summary
 

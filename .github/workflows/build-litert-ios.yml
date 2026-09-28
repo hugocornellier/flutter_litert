@@ -5,8 +5,8 @@ name: Build LiteRT Next iOS xcframeworks
 # the plugin ships:
 #
 # - SwiftPM: library-type (bare dylib) xcframeworks. Xcode embeds the dylibs
-#   under their original file names, so LiteRT's GPU-plugin discovery — a
-#   dlopen of `libLiteRtMetalAccelerator.dylib` from the RuntimeLibraryDir —
+#   under their original file names, so LiteRT's GPU-plugin discovery, a
+#   dlopen of `libLiteRtMetalAccelerator.dylib` from the RuntimeLibraryDir,
 #   works as designed.
 # - CocoaPods: conventional framework-wrapped xcframeworks (CocoaPods rejects
 #   vendored bare-dylib xcframeworks). The framework rename breaks the

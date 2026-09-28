@@ -11,12 +11,12 @@ typedef IsolateRpcHandler =
     Future<Object?> Function(Map<dynamic, dynamic> message);
 
 /// Serves the standard `{id, op, ...}` request / `{id, result|error}` response
-/// RPC protocol on [receivePort] — the isolate-side counterpart to
+/// RPC protocol on [receivePort], the isolate-side counterpart to
 /// `IsolateRpcClient`.
 ///
 /// For each incoming message it extracts `id` and `op`, dispatches to the
 /// matching entry in [handlers], and replies `{id, result}` with the handler's
-/// return value — or `{id, error}` with the stringified error and stack if the
+/// return value, or `{id, error}` with the stringified error and stack if the
 /// handler throws. Messages that are not maps, or that lack `id`/`op`, are
 /// ignored (matching the existing detector isolates).
 ///

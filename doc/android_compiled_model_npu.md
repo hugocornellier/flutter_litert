@@ -14,7 +14,13 @@ own physical-device correctness matrix.
 | Samsung Galaxy S24 Ultra | `e3q` | Snapdragon 8 Gen 3 / SM8650 | v75 | API 34 |
 | Samsung Galaxy S25 Ultra | `pa3q` | Snapdragon 8 Elite / SM8750 | v79 | API 35 |
 
-All targets use LiteRT Next 2.1.6 and QAIRT 2.47.0.260601 JIT libraries.
+The physical validation below (July 30 and August 1, 2026) ran LiteRT Next
+2.1.6 with QAIRT 2.47.0.260601 JIT libraries, and its figures are attributed to
+that version. The package now bundles LiteRT Next 2.2.0
+(`litertNextVersion` in `android/build.gradle.kts`). The vendor JIT runtime must
+match the bundled version, so current builds need the 2.2.0
+`litert_npu_runtime_libraries_jit.zip`. It keeps the same library names and the
+same QAIRT pin; the device results below predate it.
 
 The ordinary package retains Flutter's minimum SDK and remains multi-ABI. The
 device-targeted NPU bundle opts into minSdk 31 and arm64 because the official

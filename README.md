@@ -53,7 +53,7 @@ It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutt
 ## Features
 
 - `CompiledModel` (LiteRT Next), the recommended path. Use an explicit
-  accelerator policy—including GPU-first Auto with a complete CPU retry—or
+  accelerator policy, including GPU-first Auto with a complete CPU retry, or
   request an exact accelerator set. See
   [CompiledModel (LiteRT Next)](#compiledmodel-litert-next).
 - The classic `Interpreter` API remains fully supported when needed.
@@ -113,7 +113,7 @@ flutter run
 
 For web, see [Web support](#web-support).
 
-The optional `flutter_litert_flex` addon is tested separately in `example/flex_test_host` so the main example stays dependency-light.
+The optional `flutter_litert_flex` addon has a dedicated integration host in `example/flex_test_host` that proves it installs and runs on its own. The main example also depends on it, because its model-matrix tests include a Flex delegate configuration.
 
 ### Demos
 
@@ -242,7 +242,7 @@ print(model.isFullyAccelerated);     // whole-graph placement diagnostic
 
 `didFallback` does not report operation-level CPU placement inside a successful
 mixed graph. It reports a complete retry, an unavailable mixed NPU request that
-was narrowed, or—on web—a WebGPU request that resolved to WASM.
+was narrowed, or a WebGPU request on web that resolved to WASM.
 
 The synchronous `fromFileWithConfig` and `fromBufferWithConfig` factories work
 on native platforms. Use `fromBufferWithConfigAsync` for portable native/web
@@ -299,6 +299,39 @@ the portable async API. Existing callers retain their previous behavior.
 
 Android emulators are a common case: the accelerator library can register, but emulators do not provide working OpenCL, so direct `{gpu, cpu}` compilation returns an error. The fallback factories catch that error and return a CPU model.
 
+### Verifying a CompiledModel
+
+A backend can compile, report `kLiteRtStatusOk`, and still return wrong
+numbers. `verifyCompiledModel` catches that by running one deterministic input
+through the `CompiledModel` and through a plain-CPU `Interpreter` built from the
+same bytes (`PerformanceConfig.disabled`, so no delegate is involved), then
+comparing the outputs:
+
+```dart
+final model = CompiledModel.fromBuffer(
+  bytes,
+  accelerators: {Accelerator.gpu, Accelerator.cpu},
+);
+final check = verifyCompiledModel(bytes, model);
+if (!check.agrees) {
+  print(check); // deviation as a % of the output range, or why it was skipped
+  model.close();
+  // fall back to a CPU model, or do not offer this backend
+}
+```
+
+- The comparison is relative: the largest absolute difference divided by the
+  reference output's range. The default tolerance,
+  `kDefaultBackendTolerance`, is 1%. Across five models on macOS, healthy
+  configurations deviated by at most 0.068% and known-corrupt ones by 42% or
+  more.
+- It consumes one inference on the model. Run it once at initialization, and
+  discard a model that fails rather than reusing it.
+- Only single-input float32 models are checked. Anything else returns
+  `skipped` with `agrees == false`, so an unchecked model is never reported as
+  verified.
+- It is available on native platforms only; the web build does not export it.
+
 ### NPU support status
 
 NPU maturity differs sharply by platform. Treat this table as the contract:
@@ -308,9 +341,9 @@ NPU maturity differs sharply by platform. Treat this table as the contract:
 | **macOS** | **Works; accuracy is model-specific** | Core ML, Apple Neural Engine | Apple Silicon, macOS 13+. Strict `{npu}` places a full graph for 1 of 29 published models; `{npu, cpu}` runs 24 of 29 with 12 matching a CPU reference. Working does not mean safe to enable blindly: validate each model. |
 | **iOS** | **Works; accuracy is model-specific** | Core ML, Apple Neural Engine | iOS 13+, from `coreml-ios-v1.1.0`. Earlier releases shipped a Core ML framework predating the NPU entry points, so registration failed on device with `kLiteRtStatusErrorUnsupported`. Measured on a physical iPhone 15 Pro: strict `{npu}` places a full graph for 1 of 29 published models, and `{npu, cpu}` runs 24 of 29 with 12 matching a CPU reference. Identical to macOS on both counts. |
 | **Android** | **Qualcomm only** | Qualcomm HTP | Qualcomm Hexagon is the one vendor implemented so far. LiteRT also documents MediaTek, Google Tensor, and Samsung Exynos NPUs; those are not wired up here yet. The vendor runtime is app-provided and never bundled, so a default build packages no NPU libraries and a request without one fails with an actionable error. Validated on SM8550/v73, SM8650/v75, and SM8750/v79: strict `{npu}` places 21 of 29 published models entirely on the NPU, 11 of which match a CPU reference. |
-| **Windows** | **Not implemented** | — | LiteRT supports Intel NPUs through an [OpenVINO backend](https://developers.google.com/edge/litert/next/intel), which covers Intel Core Ultra. flutter_litert has no bindings for it yet. Qualcomm Snapdragon X and AMD XDNA have no LiteRT path at all. |
-| **Linux** | **Not implemented** | — | Same Intel OpenVINO path as Windows, same absence of bindings. |
-| **Web** | **Not applicable** | — | `Accelerator.npu` throws. Use WebGPU through `Accelerator.gpu`. |
+| **Windows** | **Not implemented** | - | LiteRT supports Intel NPUs through an [OpenVINO backend](https://developers.google.com/edge/litert/next/intel), which covers Intel Core Ultra. flutter_litert has no bindings for it yet. Qualcomm Snapdragon X and AMD XDNA have no LiteRT path at all. |
+| **Linux** | **Not implemented** | - | Same Intel OpenVINO path as Windows, same absence of bindings. |
+| **Web** | **Not applicable** | - | `Accelerator.npu` throws. Use WebGPU through `Accelerator.gpu`. |
 
 ### Deciding at runtime whether to offer NPU
 
@@ -463,7 +496,8 @@ Core ML claims zero nodes, instead of silently returning a CPU-only model.
 `{npu, gpu}` is not supported on Apple platforms in this implementation because
 LiteRT delegate ordering would make the selected backend ambiguous.
 
-Always validate a production model with `verifyCompiledModel`: ANE arithmetic
+Always validate a production model with
+[`verifyCompiledModel`](#verifying-a-compiledmodel): ANE arithmetic
 can change outputs, and some model architectures exceed the default 1%
 tolerance even though Core ML successfully delegates nodes.
 `isFullyAccelerated` is not an NPU-engagement detector in mixed mode because
@@ -471,8 +505,8 @@ XNNPACK can delegate the remainder. The tested model matrix, known incompatible
 models, build details, and exact semantics are in
 [macOS CompiledModel NPU](doc/macos_compiled_model_npu.md) and
 [iOS CompiledModel NPU](doc/ios_compiled_model_npu.md). The iOS simulator
-validates integration but has no Neural Engine; physical-device validation is
-required before treating the iOS backend as hardware-verified.
+validates integration only, because it has no Neural Engine; the iOS figures in
+[NPU support status](#npu-support-status) come from a physical iPhone 15 Pro.
 
 ### CompiledModel NPU on Android
 
@@ -862,7 +896,7 @@ Metal delegate options:
 <details>
 <summary><strong>CoreML delegate (iOS and macOS)</strong></summary>
 
-> Prefer [`PerformanceConfig`](#performanceconfig) unless you need this level of control. [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.npu, Accelerator.gpu, Accelerator.cpu}` is an alternative, but verify it with `verifyCompiledModel` first.
+> Prefer [`PerformanceConfig`](#performanceconfig) unless you need this level of control. [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.npu, Accelerator.cpu}` is an alternative, but verify it with `verifyCompiledModel` first. Apple platforms cannot combine `Accelerator.npu` with `Accelerator.gpu`; that request throws.
 
 The CoreML delegate uses Apple's CoreML framework, which can dispatch to the Neural Engine, GPU, or CPU depending on the model and device. The native library is bundled automatically on both platforms.
 

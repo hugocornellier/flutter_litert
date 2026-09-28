@@ -236,7 +236,8 @@ class _DetectionDemoState extends State<_DetectionDemo> {
 
 /// Engine settings dialog mirroring the native example's, with web knobs:
 /// the Interpreter engine picks a runtime, the CompiledModel engine picks
-/// WASM/WebGPU accelerators and (on WebGPU) precision.
+/// WASM/WebGPU accelerators. There is no precision choice: LiteRT.js has no
+/// precision option, so CompiledModel ignores it on the web.
 class _EngineSettingsDialog extends StatefulWidget {
   const _EngineSettingsDialog({required this.initial});
 
@@ -264,7 +265,6 @@ class _EngineSettingsDialogState extends State<_EngineSettingsDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final bool gpuOn = _cfg.accelerators.contains(Accelerator.gpu);
     return AlertDialog(
       title: const Text('Inference engine'),
       content: SizedBox(
@@ -293,7 +293,7 @@ class _EngineSettingsDialogState extends State<_EngineSettingsDialog> {
               if (_cfg.kind == WebEngineKind.interpreter)
                 ..._interpreterOptions()
               else
-                ..._compiledModelOptions(gpuOn),
+                ..._compiledModelOptions(),
             ],
           ),
         ),
@@ -338,7 +338,7 @@ class _EngineSettingsDialogState extends State<_EngineSettingsDialog> {
     ),
   ];
 
-  List<Widget> _compiledModelOptions(bool gpuOn) {
+  List<Widget> _compiledModelOptions() {
     final String curKey = _accelKey(_cfg.accelerators);
 
     Widget accel(String label, Set<Accelerator> value, {String? subtitle}) =>
@@ -381,30 +381,6 @@ class _EngineSettingsDialogState extends State<_EngineSettingsDialog> {
         ),
       ),
       const Divider(height: 16),
-      _heading('Precision (WebGPU only)'),
-      RadioGroup<Precision>(
-        groupValue: _cfg.precision,
-        onChanged: (v) {
-          if (v != null) setState(() => _cfg = _cfg.copyWith(precision: v));
-        },
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RadioListTile<Precision>(
-              dense: true,
-              value: Precision.fp16,
-              enabled: gpuOn,
-              title: const Text('fp16 (faster)'),
-            ),
-            RadioListTile<Precision>(
-              dense: true,
-              value: Precision.fp32,
-              enabled: gpuOn,
-              title: const Text('fp32 (accurate)'),
-            ),
-          ],
-        ),
-      ),
       const SwitchListTile(
         dense: true,
         value: true,
