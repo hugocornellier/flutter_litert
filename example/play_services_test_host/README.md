@@ -12,7 +12,8 @@ needs the bundled runtime, so this host depends on `flutter_litert` alone.
 with a clear error before `initializeAndroidRuntime()`, then runs the
 Interpreter and CompiledModel APIs on the Play services runtime, in helper
 isolates, and side by side. The GPU test runs only when Play services provides
-its GPU accelerator, which it does on supported physical devices only.
+its GPU accelerator. It never does on emulators and not on every physical
+device either, so the test skips on both CI devices and reports why.
 
 Run on a device or emulator image with Google Play services (the runtime
 module is downloaded on first use):

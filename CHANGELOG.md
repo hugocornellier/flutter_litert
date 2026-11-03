@@ -6,7 +6,8 @@
   `android/gradle.properties` builds against `play-services-litert` 17.0.0
   instead of packaging LiteRT in the APK. `Interpreter` and `CompiledModel`
   both run on it after a one-time `await initializeAndroidRuntime()`, and
-  `CompiledModel` can use the Play services GPU accelerator. Delegates,
+  `CompiledModel` can use the Play services GPU accelerator on devices where
+  Play services provides one (`status.gpuAvailable` says so). Delegates,
   custom ops, NPU, and `flutter_litert_flex` are not available in this mode
   and fail with a clear error. The default bundled runtime is unchanged. See
   [LiteRT from Google Play services](README.md#litert-from-google-play-services-android).

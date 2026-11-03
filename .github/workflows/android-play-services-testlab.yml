@@ -2,9 +2,9 @@ name: Android Play services runtime (Firebase Test Lab)
 
 # Runs example/play_services_test_host, which is built with
 # flutterLitert.runtime=playServices, on a physical phone with Google Play
-# services. That is the only place the Play services runtime module is real:
-# it is downloaded on first use, and its GPU accelerator only exists on
-# physical devices.
+# services, the closest CI gets to what users run: the runtime module is
+# downloaded on first use. Play services gives the default panther (Pixel 7,
+# API 33) no GPU accelerator, so the GPU test skips there as on the emulator.
 on:
   workflow_dispatch:
     inputs:

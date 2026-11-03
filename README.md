@@ -645,12 +645,12 @@ if (!status.isReady) {
 
 `initializeAndroidRuntime()` returns `LiteRtRuntimeStatus` immediately on every other platform and with the bundled runtime, so the call can stay in cross-platform code. It throws `LiteRtRuntimeUnavailableException` when neither runtime could be initialized, for example on a device without Google Play services. Isolates spawned after it completes, including `IsolateInterpreter`, need no further setup. `androidRuntime` reports which runtime the app was built with.
 
-- **GPU.** `enableGpu: true` asks Play services for its GPU accelerator, used by `CompiledModel` with `Accelerator.gpu`. `status.gpuAvailable` says whether it was provided, and `status.gpuError` why not. If it is not, CompiledModel still initializes for the CPU. Play services provides the accelerator only on supported physical devices.
+- **GPU.** `enableGpu: true` asks Play services for its GPU accelerator, used by `CompiledModel` with `Accelerator.gpu`. `status.gpuAvailable` says whether it was provided, and `status.gpuError` why not. If it is not, CompiledModel still initializes for the CPU. Play services never provides the accelerator on emulators and does not provide it on every physical device either (a Pixel 7 on Android 13 in Firebase Test Lab gets none), so check `status.gpuAvailable` rather than assuming it.
 - **Download.** Play services downloads the runtime module on first use. Pass `enableAutomaticDownload: false` to fail instead.
 - **Not available in this mode.** These throw `UnsupportedError`: the classic Interpreter delegates (`XNNPackDelegate`, `GpuDelegateV2`; Play services applies XNNPACK itself, and `PerformanceMode.auto` uses no delegate), custom ops (including `addMediaPipeCustomOps`), `Accelerator.npu`, and Interpreter functions the Play services runtime does not export. The `flutter_litert_flex` addon and the `flutterLitert.bundleGpuAccelerator` and `flutterLitert.qualcommNpuRuntimeDir` properties are rejected at build time.
 - **Build requirements.** `minSdk` 24. `play-services-litert` 17.0.0 depends on Kotlin 2.4 libraries, so the app needs Kotlin Gradle plugin 2.3 or newer; the project template of current Flutter releases qualifies.
 
-[`example/play_services_test_host`](example/play_services_test_host) is a minimal app built this way. CI runs its integration tests on an emulator, and on a physical phone in Firebase Test Lab for the GPU path.
+[`example/play_services_test_host`](example/play_services_test_host) is a minimal app built this way. CI runs its integration tests on an emulator and on a physical phone in Firebase Test Lab. Its GPU test runs only where Play services provides the accelerator and skips elsewhere, which includes both CI devices.
 
 ### CompiledModel on the web
 
