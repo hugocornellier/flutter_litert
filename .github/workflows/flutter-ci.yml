@@ -448,10 +448,12 @@ jobs:
           # initialization on a fresh emulator waits for Play services to
           # download the runtime module and can stall, which is why a failed
           # attempt dumps the LiteRT and Play services logcat before the retry.
+          # --timeout is enforced inside the app, so it cannot end an attempt
+          # that stalls there; timeout ends it after 25 minutes instead.
           script: >-
             bash -c 'set +e; rc=1; for attempt in 1 2; do
             adb -s emulator-5554 logcat -c;
-            flutter test integration_test/play_services_runtime_test.dart -d emulator-5554 --timeout 900s; rc=$?;
+            timeout 1500 flutter test integration_test/play_services_runtime_test.dart -d emulator-5554 --timeout 900s; rc=$?;
             [ "$rc" -eq 0 ] && break;
             echo "::warning::Play services integration tests attempt $attempt failed (rc=$rc)";
             echo "::group::logcat after attempt $attempt";
