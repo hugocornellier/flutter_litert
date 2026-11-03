@@ -58,6 +58,7 @@ It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutt
   [CompiledModel (LiteRT Next)](#compiledmodel-litert-next).
 - The classic `Interpreter` API remains fully supported when needed.
 - Auto-bundled native libraries. No hand-built `.so`, `.dll`, or `.dylib` files: just add the dependency and it works on Android, iOS, macOS, Windows, and Linux (plus web via `initializeWeb()`). See [Platform support](#platform-support).
+- LiteRT from Google Play services on Android (opt-in). Set one Gradle property and the APK ships without its own LiteRT runtime. See [LiteRT from Google Play services](#litert-from-google-play-services-android).
 - Interpreter delegates. XNNPACK (CPU) on all native platforms, plus GPU, Metal, and CoreML. None are deprecated: `CompiledModel` is the newer API but currently miscomputes some models, so delegate-backed `Interpreter` inference stays a first-class path. See [Delegates](#delegates).
 - On-device training with weight persistence and [variable tensor inspection](#inspecting-variable-tensors). See [On-device training](#on-device-training).
 - Custom ops. MediaPipe's `Convolution2DTransposeBias` is included on native platforms, and you can register your own. See [Custom ops](#custom-ops).
