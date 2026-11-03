@@ -53,6 +53,31 @@ if (shouldApplyKotlinAndroidPlugin) {
     apply(plugin = "org.jetbrains.kotlin.android")
 }
 
+// Which LiteRT runtime the plugin ships, set by the consuming app in
+// android/gradle.properties:
+//
+// flutterLitert.runtime=bundled       (default) LiteRT is packaged in the APK.
+// flutterLitert.runtime=playServices  LiteRT comes from Google Play services
+//                                     (play-services-litert), so no LiteRT
+//                                     native library is packaged. The app must
+//                                     call initializeAndroidRuntime() first.
+//
+// The choice is made at build time because the two runtimes cannot share an
+// APK: the native libraries the Dart bindings open differ, and the Play
+// services client replaces the bundled Java and native artifacts.
+val litertRuntime =
+    providers.gradleProperty("flutterLitert.runtime").orNull?.let { value ->
+        when (value) {
+            "bundled", "playServices" -> value
+            else -> throw GradleException(
+                "[flutter_litert] flutterLitert.runtime must be bundled or " +
+                    "playServices, not '$value'"
+            )
+        }
+    } ?: "bundled"
+val usePlayServicesRuntime = litertRuntime == "playServices"
+val playServicesLitertVersion = "17.0.0"
+
 android {
     compileSdk = 36
     namespace = "com.hugocornellier.flutter_litert"
@@ -63,13 +88,35 @@ android {
         }
     }
 
+    if (usePlayServicesRuntime) {
+        // libflutter_litert_runtime.so links the C client that
+        // play-services-litert ships as a prefab package.
+        buildFeatures {
+            prefab = true
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            java.srcDir(
+                file(if (usePlayServicesRuntime) "src/playServices/java" else "src/bundled/java")
+            )
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 
     defaultConfig {
-        minSdk = 21
+        // play-services-litert requires API 24.
+        minSdk = if (usePlayServicesRuntime) 24 else 21
+        externalNativeBuild {
+            cmake {
+                arguments += "-DFLUTTER_LITERT_RUNTIME=$litertRuntime"
+            }
+        }
     }
 }
 
@@ -84,9 +131,16 @@ extensions.findByType<KotlinAndroidProjectExtension>()?.apply {
 }
 
 dependencies {
-    val litert = "1.4.2"
-    add("implementation", "com.google.ai.edge.litert:litert:$litert")
-    add("implementation", "com.google.ai.edge.litert:litert-gpu:$litert")
+    if (usePlayServicesRuntime) {
+        add(
+            "implementation",
+            "com.google.android.gms:play-services-litert:$playServicesLitertVersion"
+        )
+    } else {
+        val litert = "1.4.2"
+        add("implementation", "com.google.ai.edge.litert:litert:$litert")
+        add("implementation", "com.google.ai.edge.litert:litert-gpu:$litert")
+    }
 }
 
 // LiteRT Next native libraries (CompiledModel API), sourced directly from
@@ -333,19 +387,45 @@ abstract class DownloadLitertJniTask : DefaultTask() {
     }
 }
 
-val downloadLitertJni = tasks.register<DownloadLitertJniTask>("downloadLitertJni") {
-    litertVersion.set(litertNextVersion)
-    bundleGpuAccelerator.set(shouldBundleGpuAccelerator)
-    if (qualcommNpuRuntimeDirectory != null) {
-        qualcommNpuRuntimeDir.fileValue(qualcommNpuRuntimeDirectory)
+if (usePlayServicesRuntime) {
+    // These options configure the bundled runtime's native libraries, which
+    // the Play services runtime does not package. Reject them rather than
+    // silently ignoring an explicit setting.
+    val bundledOnlyProperties = listOf(
+        "flutterLitert.bundleGpuAccelerator",
+        "flutterLitert.qualcommNpuRuntimeDir"
+    ).filter { providers.gradleProperty(it).isPresent }
+    if (bundledOnlyProperties.isNotEmpty()) {
+        throw GradleException(
+            "[flutter_litert] ${bundledOnlyProperties.joinToString()} only " +
+                "apply to flutterLitert.runtime=bundled. Remove them to use the " +
+                "Google Play services runtime."
+        )
     }
-}
-
-androidComponents {
-    onVariants { variant ->
-        val jniLibs = checkNotNull(variant.sources.jniLibs) {
-            "[flutter_litert] AGP did not expose jniLibs sources for variant ${variant.name}"
+    // flutter_litert_flex links libtensorflowlite_jni.so, which only the
+    // bundled runtime packages.
+    if (rootProject.findProject(":flutter_litert_flex") != null) {
+        throw GradleException(
+            "[flutter_litert] flutter_litert_flex is not supported with " +
+                "flutterLitert.runtime=playServices: the Select TF ops runtime " +
+                "needs the bundled LiteRT runtime."
+        )
+    }
+} else {
+    val downloadLitertJni = tasks.register<DownloadLitertJniTask>("downloadLitertJni") {
+        litertVersion.set(litertNextVersion)
+        bundleGpuAccelerator.set(shouldBundleGpuAccelerator)
+        if (qualcommNpuRuntimeDirectory != null) {
+            qualcommNpuRuntimeDir.fileValue(qualcommNpuRuntimeDirectory)
         }
-        jniLibs.addGeneratedSourceDirectory(downloadLitertJni) { it.outputDir }
+    }
+
+    androidComponents {
+        onVariants { variant ->
+            val jniLibs = checkNotNull(variant.sources.jniLibs) {
+                "[flutter_litert] AGP did not expose jniLibs sources for variant ${variant.name}"
+            }
+            jniLibs.addGeneratedSourceDirectory(downloadLitertJni) { it.outputDir }
+        }
     }
 }

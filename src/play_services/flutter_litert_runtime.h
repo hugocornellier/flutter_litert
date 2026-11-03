@@ -1,0 +1,47 @@
+// Exports of libflutter_litert_runtime.so (see flutter_litert_runtime.c).
+// lib/src/bindings/android_runtime_shim.dart binds these by name.
+#ifndef FLUTTER_LITERT_RUNTIME_H_
+#define FLUTTER_LITERT_RUNTIME_H_
+
+#include <jni.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define FLUTTER_LITERT_EXPORT __attribute__((visibility("default")))
+
+// 0: bundled runtime, 1: Google Play services runtime.
+FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeMode(void);
+
+// 0: not initialized, 1: ready, 2: initialization failed.
+FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeInterpreterState(void);
+FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeCompiledModelState(void);
+
+// Empty unless the matching state is 2.
+FLUTTER_LITERT_EXPORT const char* FlutterLiteRtRuntimeInterpreterError(void);
+FLUTTER_LITERT_EXPORT const char* FlutterLiteRtRuntimeCompiledModelError(void);
+
+// Play services values for LiteRtEnvOption tags 23, 30 and 28. All null until
+// the CompiledModel runtime is ready, and always null in the bundled mode.
+FLUTTER_LITERT_EXPORT const void* FlutterLiteRtRuntimeApi(void);
+FLUTTER_LITERT_EXPORT const void* FlutterLiteRtRuntimeGpuAccelerator(void);
+FLUTTER_LITERT_EXPORT const void* FlutterLiteRtRuntimeContext(void);
+
+// Called by com.hugocornellier.flutter_litert.PlayServicesRuntime.
+JNIEXPORT void JNICALL
+Java_com_hugocornellier_flutter_1litert_PlayServicesRuntime_nativeSetInterpreterState(
+    JNIEnv* env, jclass clazz, jint state, jstring error);
+JNIEXPORT jstring JNICALL
+Java_com_hugocornellier_flutter_1litert_PlayServicesRuntime_nativeAttachCompiledModel(
+    JNIEnv* env, jclass clazz, jobject handle);
+JNIEXPORT void JNICALL
+Java_com_hugocornellier_flutter_1litert_PlayServicesRuntime_nativeSetCompiledModelFailure(
+    JNIEnv* env, jclass clazz, jstring error);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif  // FLUTTER_LITERT_RUNTIME_H_

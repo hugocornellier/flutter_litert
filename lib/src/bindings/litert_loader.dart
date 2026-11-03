@@ -18,6 +18,7 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 
+import 'package:flutter_litert/src/bindings/android_runtime_shim.dart';
 import 'package:flutter_litert/src/delegates/delegate_library_loader.dart';
 
 String? _litertRuntimeDir;
@@ -153,6 +154,16 @@ final DynamicLibrary litertDynamicLibrary = () {
 }();
 
 DynamicLibrary _loadAndroidLibrary() {
+  if (usesPlayServicesRuntime) {
+    // The shim exports the LiteRt C API and forwards it to the Play services
+    // runtime's function table. There are no extracted runtime or NPU library
+    // directories to report.
+    ensurePlayServicesCompiledModelReady();
+    _litertRuntimeDir = null;
+    _androidNativeLibraryDir = null;
+    return androidRuntimeShim!.library;
+  }
+
   final library = DynamicLibrary.open('libLiteRt.so');
 
   // LiteRT Next native libraries are bundled as jniLibs by

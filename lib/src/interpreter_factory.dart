@@ -13,6 +13,7 @@
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'bindings/android_runtime_shim.dart';
 import 'native/interpreter.dart';
 import 'native/interpreter_options.dart';
 import 'native/delegate.dart';
@@ -92,6 +93,11 @@ class InterpreterFactory {
   ) {
     if (Platform.isIOS) {
       return _createGpu(options);
+    }
+    // The Play services runtime exports no XNNPACK delegate API and applies
+    // XNNPACK itself by default.
+    if (usesPlayServicesRuntime) {
+      return (options, null);
     }
     // Android, macOS, Linux, Windows, all use XNNPACK.
     return _createXnnpack(options, threadCount);

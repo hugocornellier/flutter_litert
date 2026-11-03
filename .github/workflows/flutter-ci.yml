@@ -383,6 +383,75 @@ jobs:
             [ "$attempt" -lt 3 ] && rm -rf "$ANDROID_HOME"/ndk/* "$ANDROID_HOME"/.temp;
             done; exit "$rc"'
 
+      # The default runtime must keep packaging LiteRT itself and never pull
+      # in the Play services clients that flutterLitert.runtime=playServices
+      # uses.
+      - name: Check the APK packages the bundled runtime only
+        run: >-
+          python3 -I scripts/check_android_runtime_apk.py --runtime bundled
+          example/build/app/outputs/flutter-apk/app-debug.apk
+
+  # flutterLitert.runtime=playServices (issue #23): LiteRT comes from Google
+  # Play services instead of the APK. example/play_services_test_host is built
+  # with that property, since the main example depends on flutter_litert_flex,
+  # which Play services mode rejects. The APK check runs on every push; the
+  # integration test then runs on an emulator image with the Play Store, where
+  # Play services downloads its LiteRT module on first use. Emulators have no
+  # Play services GPU accelerator, so the GPU test skips here and runs in
+  # android-play-services-testlab.yml on a physical phone.
+  build-android-play-services:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install host dependencies
+        working-directory: example/play_services_test_host
+        run: flutter pub get
+
+      - name: Analyze the host
+        working-directory: example/play_services_test_host
+        run: flutter analyze
+
+      - name: Build the Play services host APK
+        working-directory: example/play_services_test_host
+        run: flutter build apk --debug
+
+      - name: Check the APK packages the Play services runtime only
+        run: >-
+          python3 -I scripts/check_android_runtime_apk.py --runtime playServices
+          example/play_services_test_host/build/app/outputs/flutter-apk/app-debug.apk
+
+      - name: Enable KVM for hardware-accelerated emulation
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run Play services runtime integration tests (Android emulator)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis_playstore
+          arch: x86_64
+          profile: pixel_6
+          working-directory: example/play_services_test_host
+          # One line on purpose, as in build-android.
+          script: >-
+            bash -c 'set +e; rc=1; for attempt in 1 2; do
+            flutter test integration_test/play_services_runtime_test.dart -d emulator-5554 --timeout 900s; rc=$?;
+            [ "$rc" -eq 0 ] && break;
+            echo "::warning::Play services integration tests attempt $attempt failed (rc=$rc)";
+            done; exit "$rc"'
+
   # Forward-compatibility guard for newer Android Gradle Plugin (AGP 9.x).
   # The example app pins AGP 8.11.1, so the build-android job above only ever
   # exercises AGP 8. AGP 9 flips android.sourceset.disallowProvider to true and

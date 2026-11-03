@@ -36,6 +36,8 @@ flutter:
   plugin:
     platforms:
       android:
+        package: com.hugocornellier.flutter_litert
+        pluginClass: FlutterLitertPlugin
         ffiPlugin: true
       ios:
         pluginClass: FlutterLitertPlugin

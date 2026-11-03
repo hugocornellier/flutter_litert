@@ -1,0 +1,137 @@
+name: Android Play services runtime (Firebase Test Lab)
+
+# Runs example/play_services_test_host, which is built with
+# flutterLitert.runtime=playServices, on a physical phone with Google Play
+# services. That is the only place the Play services runtime module is real:
+# it is downloaded on first use, and its GPU accelerator only exists on
+# physical devices.
+on:
+  workflow_dispatch:
+    inputs:
+      device_model:
+        description: Firebase Test Lab physical-device model ID
+        required: true
+        default: panther
+        type: string
+      android_version:
+        description: Android API/version ID supported by the selected device
+        required: true
+        default: '33'
+        type: string
+  pull_request:
+    paths:
+      - android/**
+      - lib/**
+      - src/**
+      - scripts/check_android_runtime_apk.py
+      - example/play_services_test_host/**
+      - .github/workflows/android-play-services-testlab.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-play-services-testlab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  play-services-runtime:
+    name: Play services runtime on physical Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # Fork pull requests get no secrets, so they cannot reach Test Lab.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      FIREBASE_PROJECT_ID: flutter-litert
+      DEVICE_MODEL: ${{ inputs.device_model || 'panther' }}
+      ANDROID_VERSION: ${{ inputs.android_version || '33' }}
+      HOST: example/play_services_test_host
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install host dependencies
+        working-directory: ${{ env.HOST }}
+        run: flutter pub get
+
+      # A debug build is required: release builds omit package:integration_test.
+      - name: Build app and instrumentation APKs
+        working-directory: ${{ env.HOST }}
+        run: |
+          flutter build apk --config-only --debug
+          cd android
+          ./gradlew app:assembleAndroidTest \
+            -PflutterLitert.testLabAbi=arm64-v8a \
+            --stacktrace
+          ./gradlew app:assembleDebug \
+            -Ptarget="$GITHUB_WORKSPACE/$HOST/integration_test/play_services_runtime_test.dart" \
+            -PflutterLitert.testLabAbi=arm64-v8a \
+            --stacktrace
+
+      - name: Check the APK packages the Play services runtime only
+        run: >-
+          python3 -I scripts/check_android_runtime_apk.py --runtime playServices
+          "$HOST/build/app/outputs/apk/debug/app-debug.apk"
+
+      - name: Authenticate to Firebase Test Lab
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.FIREBASE_TEST_LAB_CREDENTIALS }}
+
+      - name: Install Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.FIREBASE_PROJECT_ID }}
+
+      - name: Reject virtual or incompatible device selections
+        shell: bash
+        run: |
+          DEVICE_FORM="$(gcloud firebase test android models describe "$DEVICE_MODEL" \
+            --project "$FIREBASE_PROJECT_ID" --format='value(form)')"
+          if [[ "${DEVICE_FORM^^}" != "PHYSICAL" ]]; then
+            echo "::error::Test Lab model $DEVICE_MODEL is $DEVICE_FORM, not PHYSICAL"
+            exit 1
+          fi
+          gcloud firebase test android models describe "$DEVICE_MODEL" \
+            --project "$FIREBASE_PROJECT_ID"
+
+      - name: Run the Play services runtime test on physical hardware
+        run: |
+          set -o pipefail
+          gcloud firebase test android run \
+            --project "$FIREBASE_PROJECT_ID" \
+            --type instrumentation \
+            --app "$HOST/build/app/outputs/apk/debug/app-debug.apk" \
+            --test "$HOST/build/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk" \
+            --device "model=$DEVICE_MODEL,version=$ANDROID_VERSION,locale=en,orientation=portrait" \
+            --timeout 15m \
+            --results-history-name flutter-litert-android-play-services \
+            2>&1 | tee testlab.log
+
+      # The status line the test prints says whether Play services provided a
+      # GPU accelerator, which decides whether the GPU test ran or skipped.
+      # Failure details live in the results bucket, not in gcloud's summary.
+      - name: Dump Test Lab artifacts
+        if: always()
+        run: |
+          RESULTS_PATH="$(grep -oE 'storage/browser/[^]]+' testlab.log | head -1 \
+            | sed -e 's#storage/browser/##' -e 's#/$##')"
+          if [ -z "$RESULTS_PATH" ]; then
+            echo "No results path found in gcloud output; nothing to dump."
+            exit 0
+          fi
+          echo "===== instrumentation results"
+          gsutil cat "gs://$RESULTS_PATH/*/instrumentation.results" || true
+          echo "===== logcat (flutter_litert, LiteRT, TFLite lines)"
+          gsutil cat "gs://$RESULTS_PATH/*/logcat" \
+            | grep -iE 'flutter_litert|litert|tflite|accelerator|dynamite' | tail -300 || true

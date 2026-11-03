@@ -23,11 +23,15 @@ import 'litert_loader.dart';
 
 const int kLiteRtAnyTypeInt = 2;
 const int kLiteRtAnyTypeString = 8;
+const int kLiteRtAnyTypeVoidPtr = 9;
 const int kLiteRtEnvOptionTagCompilerPluginLibraryDir = 0;
 const int kLiteRtEnvOptionTagDispatchLibraryDir = 1;
 const int kLiteRtEnvOptionTagCompilerCacheDir = 18;
 const int kLiteRtEnvOptionTagRuntimeLibraryDir = 22;
+const int kLiteRtEnvOptionTagSystemRuntimeHandle = 23;
 const int kLiteRtEnvOptionTagAutoRegisterAccelerators = 24;
+const int kLiteRtEnvOptionTagContext = 28;
+const int kLiteRtEnvOptionTagSystemGpuAcceleratorHandle = 30;
 
 /// LiteRtLayout:
 /// { uint rank:7; bool has_strides:1; int32 dims[8]; uint32 strides[8]; }
