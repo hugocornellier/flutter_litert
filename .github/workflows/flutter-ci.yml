@@ -444,12 +444,19 @@ jobs:
           arch: x86_64
           profile: pixel_6
           working-directory: example/play_services_test_host
-          # One line on purpose, as in build-android.
+          # One line on purpose, as in build-android. The first LiteRT
+          # initialization on a fresh emulator waits for Play services to
+          # download the runtime module and can stall, which is why a failed
+          # attempt dumps the LiteRT and Play services logcat before the retry.
           script: >-
             bash -c 'set +e; rc=1; for attempt in 1 2; do
+            adb -s emulator-5554 logcat -c;
             flutter test integration_test/play_services_runtime_test.dart -d emulator-5554 --timeout 900s; rc=$?;
             [ "$rc" -eq 0 ] && break;
             echo "::warning::Play services integration tests attempt $attempt failed (rc=$rc)";
+            echo "::group::logcat after attempt $attempt";
+            adb -s emulator-5554 logcat -d | grep -E "flutter|LiteRt|litert|TfLite|tflite|Dynamite|Chimera|AndroidRuntime|FATAL" | tail -n 300;
+            echo "::endgroup::";
             done; exit "$rc"'
 
   # Forward-compatibility guard for newer Android Gradle Plugin (AGP 9.x).
