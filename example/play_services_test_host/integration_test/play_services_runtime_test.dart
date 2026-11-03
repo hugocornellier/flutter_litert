@@ -7,6 +7,8 @@ import 'package:flutter_litert/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
+import 'real_models.dart';
+
 /// On-device coverage for flutterLitert.runtime=playServices.
 ///
 /// This host app is built with that property (android/gradle.properties), so
@@ -16,7 +18,8 @@ import 'package:integration_test/integration_test.dart';
 /// The tests run in order and share one process: the first group runs before
 /// initialization on purpose.
 ///
-/// simple_model is y = 2*x + 1, so results are exact.
+/// simple_model is y = 2*x + 1, so results are exact. The real-model group
+/// (real_models.dart) checks two real networks against reference outputs.
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -286,4 +289,6 @@ void main() {
       }
     });
   });
+
+  group('real models', () => defineRealModelTests(() => status));
 }
