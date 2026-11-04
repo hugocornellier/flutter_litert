@@ -123,10 +123,15 @@ void main() {
     });
 
     testWidgets('returns at once when already initialized', (tester) async {
-      final again = await initializeAndroidRuntime();
+      final again = await initializeAndroidRuntime(enableGpu: true);
       expect(again.isReady, isTrue);
       expect(again.gpuAvailable, status.gpuAvailable);
       expect(again.gpuError, status.gpuError);
+      // A call that does not ask for the GPU has no GPU error to report.
+      final cpu = await initializeAndroidRuntime();
+      expect(cpu.isReady, isTrue);
+      expect(cpu.gpuAvailable, status.gpuAvailable);
+      expect(cpu.gpuError, isNull);
     });
   });
 
@@ -182,6 +187,25 @@ void main() {
       final interpreter = Interpreter.fromBuffer(modelBytes, options: options);
       addTearDown(interpreter.close);
       expect(runInterpreter(interpreter, 1.0), closeTo(3.0, 1e-3));
+    });
+
+    testWidgets('PerformanceMode.xnnpack and .gpu run without a delegate', (
+      tester,
+    ) async {
+      // Play services applies XNNPACK itself and has no Interpreter GPU
+      // delegate, so both modes fall back to its default CPU path.
+      for (final mode in [PerformanceMode.xnnpack, PerformanceMode.gpu]) {
+        final (options, delegate) = InterpreterFactory.create(
+          PerformanceConfig(mode: mode),
+        );
+        expect(delegate, isNull, reason: '$mode');
+        final interpreter = Interpreter.fromBuffer(
+          modelBytes,
+          options: options,
+        );
+        addTearDown(interpreter.close);
+        expect(runInterpreter(interpreter, 1.0), closeTo(3.0, 1e-3));
+      }
     });
 
     testWidgets('features Play services lacks throw UnsupportedError', (

@@ -99,16 +99,22 @@ final class AndroidRuntimeShim {
 
 /// The Android runtime shim, or null off Android.
 ///
-/// An APK without the shim cannot come from this plugin version, but treat it
-/// as the bundled runtime rather than failing, since that is what such an APK
-/// would contain.
+/// Every Android build of this plugin packages the shim, in both runtime
+/// modes, so failing to load it means a broken build. The loader's error is
+/// reported rather than guessing which runtime the app has.
 final AndroidRuntimeShim? androidRuntimeShim = () {
   if (!Platform.isAndroid) return null;
+  final DynamicLibrary library;
   try {
-    return AndroidRuntimeShim._(DynamicLibrary.open(androidRuntimeShimLibrary));
-  } on ArgumentError {
-    return null;
+    library = DynamicLibrary.open(androidRuntimeShimLibrary);
+  } on ArgumentError catch (error) {
+    throw StateError(
+      'flutter_litert: could not load $androidRuntimeShimLibrary, which every '
+      'Android build of this plugin packages: ${error.message}. Rebuild the '
+      'app, and check that its native libraries are not stripped or filtered.',
+    );
   }
+  return AndroidRuntimeShim._(library);
 }();
 
 /// Whether the app was built with flutterLitert.runtime=playServices.
@@ -158,6 +164,41 @@ void ensurePlayServicesCompiledModelReady() {
     state: shim.compiledModelState,
     error: () => shim.compiledModelError,
   );
+}
+
+/// Why a CompiledModel runtime has no GPU accelerator, as decided by the
+/// initialization that attached it.
+///
+/// [pluginGpuError] is the plugin's reason when the GPU request failed.
+String gpuUnavailableReason({
+  required bool gpuRequested,
+  required String? pluginGpuError,
+}) {
+  if (pluginGpuError != null) return pluginGpuError;
+  return gpuRequested
+      ? 'Google Play services initialized LiteRT without a GPU accelerator on '
+            'this device'
+      : 'the CompiledModel runtime was initialized without GPU support '
+            '(enableGpu: false), which cannot be added later in this process';
+}
+
+/// [LiteRtRuntimeStatus.gpuError] for one initializeAndroidRuntime() call.
+///
+/// Computed per call, so that a call asking for the GPU always learns why it
+/// has none, even when an earlier call decided that. [reason] comes from
+/// [gpuUnavailableReason] at that earlier call; [pluginGpuError] is this
+/// call's GPU failure, reported while the CompiledModel runtime is not ready.
+String? gpuErrorForCall({
+  required bool enableGpu,
+  required bool compiledModelReady,
+  required bool hasGpuAccelerator,
+  required String? reason,
+  required String? pluginGpuError,
+}) {
+  if (!enableGpu) return null;
+  if (!compiledModelReady) return pluginGpuError;
+  if (hasGpuAccelerator) return null;
+  return reason ?? 'the CompiledModel runtime has no GPU accelerator';
 }
 
 /// Error for a feature that the Play services runtime does not provide.

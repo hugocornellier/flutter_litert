@@ -33,10 +33,26 @@ class FlutterLitertPlugin: FlutterPlugin, MethodCallHandler {
       "initializeRuntime" -> {
         val enableGpu = call.argument<Boolean>("enableGpu") ?: false
         val enableAutomaticDownload = call.argument<Boolean>("enableAutomaticDownload") ?: true
+        val timeoutMillis = call.argument<Number>("timeoutMillis")?.toLong() ?: 300_000L
         // Completes on a background thread; MethodChannel replies must be sent
         // from the platform thread.
-        PlayServicesRuntime.initialize(context, enableGpu, enableAutomaticDownload) { status ->
-          mainHandler.post { result.success(status) }
+        val callback = object : PlayServicesRuntime.Callback {
+          override fun onComplete(status: Map<String, Any?>) {
+            mainHandler.post { result.success(status) }
+          }
+
+          override fun onError(error: String) {
+            mainHandler.post { result.error("initializeRuntime", error, null) }
+          }
+        }
+        // Loading the class loads libflutter_litert_runtime.so, which throws an
+        // Error rather than an Exception when it fails. Reply either way, so the
+        // Dart call never waits forever.
+        try {
+          PlayServicesRuntime.initialize(
+            context, enableGpu, enableAutomaticDownload, timeoutMillis, callback)
+        } catch (t: Throwable) {
+          result.error("initializeRuntime", t.toString(), null)
         }
       }
       else -> result.notImplemented()

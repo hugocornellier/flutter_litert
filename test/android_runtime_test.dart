@@ -121,6 +121,62 @@ void main() {
     });
   });
 
+  group('gpuError', () {
+    String? errorFor({
+      bool enableGpu = true,
+      bool compiledModelReady = true,
+      bool hasGpuAccelerator = false,
+      String? reason,
+      String? pluginGpuError,
+    }) => gpuErrorForCall(
+      enableGpu: enableGpu,
+      compiledModelReady: compiledModelReady,
+      hasGpuAccelerator: hasGpuAccelerator,
+      reason: reason,
+      pluginGpuError: pluginGpuError,
+    );
+
+    test('is null for a call that did not ask for the GPU', () {
+      expect(errorFor(enableGpu: false, reason: 'r'), isNull);
+    });
+
+    test('is null when the GPU accelerator is there', () {
+      expect(errorFor(hasGpuAccelerator: true, reason: 'r'), isNull);
+    });
+
+    test('reports the reason recorded when the runtime was attached', () {
+      expect(errorFor(reason: 'r', pluginGpuError: 'later'), 'r');
+    });
+
+    test('reports this call\'s GPU failure while the runtime is not ready', () {
+      expect(
+        errorFor(compiledModelReady: false, reason: 'r', pluginGpuError: 'p'),
+        'p',
+      );
+    });
+
+    test('a later GPU request learns the runtime was attached without it', () {
+      final reason = gpuUnavailableReason(
+        gpuRequested: false,
+        pluginGpuError: null,
+      );
+      expect(reason, contains('enableGpu: false'));
+      expect(reason, contains('cannot be added later'));
+      expect(errorFor(reason: reason), reason);
+    });
+
+    test('the attach reason prefers the plugin\'s GPU failure', () {
+      expect(
+        gpuUnavailableReason(gpuRequested: true, pluginGpuError: 'p'),
+        'p',
+      );
+      expect(
+        gpuUnavailableReason(gpuRequested: true, pluginGpuError: null),
+        contains('without a GPU accelerator'),
+      );
+    });
+  });
+
   test('unsupported features name the Play services runtime', () {
     final error = playServicesUnsupported('Accelerator.npu', 'Use the GPU.');
     expect(

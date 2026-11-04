@@ -7,6 +7,7 @@ LiteRtRuntime get androidRuntime => LiteRtRuntime.bundled;
 Future<LiteRtRuntimeStatus> initializeAndroidRuntime({
   bool enableGpu = false,
   bool enableAutomaticDownload = true,
+  Duration timeout = const Duration(minutes: 5),
 }) async {
   return const LiteRtRuntimeStatus.bundled();
 }

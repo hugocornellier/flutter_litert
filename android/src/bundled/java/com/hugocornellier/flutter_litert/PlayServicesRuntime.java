@@ -15,6 +15,8 @@ final class PlayServicesRuntime {
 
   interface Callback {
     void onComplete(@NonNull Map<String, Object> status);
+
+    void onError(@NonNull String error);
   }
 
   private PlayServicesRuntime() {}
@@ -23,6 +25,7 @@ final class PlayServicesRuntime {
       @NonNull Context context,
       boolean enableGpu,
       boolean enableAutomaticDownload,
+      long timeoutMillis,
       @NonNull Callback callback) {
     Map<String, Object> status = new HashMap<>();
     status.put("mode", MODE);
@@ -31,6 +34,7 @@ final class PlayServicesRuntime {
     status.put("gpuError", null);
     status.put("interpreterError", null);
     status.put("compiledModelError", null);
+    status.put("compiledModelAttached", false);
     callback.onComplete(status);
   }
 }

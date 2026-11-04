@@ -94,11 +94,6 @@ class InterpreterFactory {
     if (Platform.isIOS) {
       return _createGpu(options);
     }
-    // The Play services runtime exports no XNNPACK delegate API and applies
-    // XNNPACK itself by default.
-    if (usesPlayServicesRuntime) {
-      return (options, null);
-    }
     // Android, macOS, Linux, Windows, all use XNNPACK.
     return _createXnnpack(options, threadCount);
   }
@@ -112,6 +107,11 @@ class InterpreterFactory {
         !Platform.isMacOS &&
         !Platform.isLinux &&
         !Platform.isWindows) {
+      return (options, null);
+    }
+    // The Play services runtime exports no XNNPACK delegate API and applies
+    // XNNPACK itself by default, so the request is already met.
+    if (usesPlayServicesRuntime) {
       return (options, null);
     }
     try {
@@ -133,6 +133,19 @@ class InterpreterFactory {
     InterpreterOptions options,
   ) {
     if (!Platform.isIOS && !Platform.isMacOS && !Platform.isAndroid) {
+      return (options, null);
+    }
+    // The Play services runtime has no Interpreter GPU delegate. Keep the
+    // CPU fallback every other delegate failure gets, but say why and where
+    // its GPU is.
+    if (usesPlayServicesRuntime) {
+      _warnDelegateFallback(
+        'GPU',
+        playServicesUnsupported(
+          'The Interpreter GPU delegate',
+          'Use CompiledModel with Accelerator.gpu for the Play services GPU.',
+        ),
+      );
       return (options, null);
     }
     try {
