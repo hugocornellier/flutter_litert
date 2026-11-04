@@ -1,4 +1,4 @@
-## Unreleased
+## 3.10.0
 
 * **Opt-in LiteRT runtime from Google Play services on Android**
   ([issue #23](https://github.com/hugocornellier/flutter_litert/issues/23)).
@@ -18,6 +18,10 @@
   also ship outside Google Play. The default bundled runtime is unchanged. See
   [LiteRT from Google Play services](README.md#litert-from-google-play-services-android).
   Thanks to Sasha Denisov for the proposal.
+* **iOS docs:** Corrected the `opencv_dart`/`dartcv4` setup. Don't set
+  `dartcv4`'s iOS `deployment_target` above Flutter's 15.0, because App Store
+  Connect rejects the build with ITMS-90208. On Flutter 3.47.5 or newer with
+  `dartcv4` 2.3.1, no setting is needed, and the example no longer sets it.
 
 ## 3.9.4
 
