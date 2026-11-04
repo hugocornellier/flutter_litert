@@ -429,6 +429,18 @@ jobs:
           python3 -I scripts/check_android_runtime_apk.py --runtime playServices
           example/play_services_test_host/build/app/outputs/flutter-apk/app-debug.apk
 
+      # Release builds shrink the plugin's Java and Kotlin with R8, which the
+      # debug integration tests never see. lib/release_smoke.dart runs both
+      # runtimes once; it is launched on the emulator after the tests pass.
+      - name: Build the Play services release smoke APK (R8)
+        working-directory: example/play_services_test_host
+        run: flutter build apk --release -t lib/release_smoke.dart
+
+      - name: Check the release APK packages the Play services runtime only
+        run: >-
+          python3 -I scripts/check_android_runtime_apk.py --runtime playServices
+          example/play_services_test_host/build/app/outputs/flutter-apk/app-release.apk
+
       - name: Enable KVM for hardware-accelerated emulation
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -449,7 +461,8 @@ jobs:
           # download the runtime module and can stall, which is why a failed
           # attempt dumps the LiteRT and Play services logcat before the retry.
           # --timeout is enforced inside the app, so it cannot end an attempt
-          # that stalls there; timeout ends it after 25 minutes instead.
+          # that stalls there; timeout ends it after 25 minutes instead. Once
+          # the tests pass, the release smoke APK runs on the same emulator.
           script: >-
             bash -c 'set +e; rc=1; for attempt in 1 2; do
             adb -s emulator-5554 logcat -c;
@@ -459,7 +472,8 @@ jobs:
             echo "::group::logcat after attempt $attempt";
             adb -s emulator-5554 logcat -d | grep -E "flutter|LiteRt|litert|TfLite|tflite|Dynamite|Chimera|AndroidRuntime|FATAL" | tail -n 300;
             echo "::endgroup::";
-            done; exit "$rc"'
+            done; [ "$rc" -eq 0 ] || exit "$rc";
+            bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600'
 
   # The same host on an emulator image without Google Play services:
   # initializeAndroidRuntime() must fail promptly with both reasons instead of

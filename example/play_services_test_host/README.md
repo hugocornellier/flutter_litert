@@ -46,6 +46,17 @@ python3 -I ../../scripts/check_android_runtime_apk.py --runtime playServices \
   build/app/outputs/flutter-apk/app-debug.apk
 ```
 
+Release builds shrink the plugin's Java and Kotlin with R8, and leave out
+package:integration_test. `lib/release_smoke.dart` checks a release build
+instead: it initializes the runtime, runs both runtimes once, and prints
+`flutter_litert release smoke: PASS` (or `FAIL`) to logcat.
+
+```bash
+flutter build apk --release -t lib/release_smoke.dart
+bash ../../scripts/android_release_smoke.sh \
+  build/app/outputs/flutter-apk/app-release.apk <device>
+```
+
 CI runs these in `.github/workflows/flutter-ci.yml` (emulators with and
 without Play services) and
 `.github/workflows/android-play-services-testlab.yml` (physical phone in

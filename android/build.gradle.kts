@@ -112,6 +112,11 @@ android {
     defaultConfig {
         // play-services-litert requires API 24.
         minSdk = if (usePlayServicesRuntime) 24 else 21
+        if (usePlayServicesRuntime) {
+            // Keeps release builds of apps that use the runtime from crashing
+            // at launch; see the file.
+            consumerProguardFiles("proguard-play-services.pro")
+        }
         externalNativeBuild {
             cmake {
                 arguments += "-DFLUTTER_LITERT_RUNTIME=$litertRuntime"
