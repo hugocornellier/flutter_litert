@@ -97,11 +97,25 @@ void main() {
 
   group('initializeAndroidRuntime', () {
     testWidgets('initializes both runtimes', (tester) async {
-      // Concurrent callers share one initialization.
-      final results = await Future.wait([
+      // Concurrent callers share one initialization, and each stays within
+      // its own timeout. The first runs out of time at once, the next two
+      // outlast it and initialize again, and the fourth gives up on them.
+      const noTime = Duration(milliseconds: 1);
+      final unavailable = throwsA(isA<LiteRtRuntimeUnavailableException>());
+      final first = expectLater(
+        initializeAndroidRuntime(enableGpu: true, timeout: noTime),
+        unavailable,
+      );
+      final initialized = Future.wait([
         initializeAndroidRuntime(enableGpu: true),
         initializeAndroidRuntime(enableGpu: true),
       ]);
+      await first;
+      await expectLater(
+        initializeAndroidRuntime(enableGpu: true, timeout: noTime),
+        unavailable,
+      );
+      final results = await initialized;
       status = results[0];
       debugPrint('flutter_litert Play services status: $status');
 

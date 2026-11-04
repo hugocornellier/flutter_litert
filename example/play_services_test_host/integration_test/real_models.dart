@@ -95,9 +95,11 @@ void defineRealModelTests(LiteRtRuntimeStatus Function() status) {
         );
         return;
       }
+      // mobilefacenet has an op the GPU cannot run (L2_NORMALIZATION), which
+      // the CPU picks up.
       final model = CompiledModel.fromBuffer(
         models[name]!,
-        accelerators: {Accelerator.gpu},
+        accelerators: {Accelerator.gpu, Accelerator.cpu},
       );
       addTearDown(model.close);
       _expectCompiledModel(

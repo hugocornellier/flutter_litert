@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ffi';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../android_runtime.dart';
@@ -11,9 +12,7 @@ const MethodChannel _channel = MethodChannel('flutter_litert');
 Future<LiteRtRuntimeStatus>? _pending;
 bool? _pendingEnableGpu;
 bool? _pendingEnableAutomaticDownload;
-
-/// Why an auto build chose the bundled runtime, for later calls' statuses.
-String? _playServicesError;
+DateTime? _pendingDeadline;
 
 /// How much longer than the plugin's own timeout to wait for its reply.
 const Duration _replyGrace = Duration(seconds: 30);
@@ -57,7 +56,9 @@ LiteRtRuntime? get androidRuntime {
 /// CompiledModel runtime is initialized for CPU only and
 /// [LiteRtRuntimeStatus.gpuError] says why. The first successful
 /// initialization fixes this for the process: asking for the GPU later does
-/// not add it, and the status of that later call says so.
+/// not add it, and the status of that later call says so. Play services may
+/// also initialize without the GPU while it downloads its GPU module, in which
+/// case a later launch of the app can have it.
 ///
 /// [enableAutomaticDownload] lets Play services download the runtime module
 /// when the device does not have it yet. Without it, initialization fails
@@ -68,10 +69,10 @@ LiteRtRuntime? get androidRuntime {
 /// download is slow or stalled, and the next call retries it.
 ///
 /// Concurrent calls with the same options share one initialization; a call
-/// with other options runs after it. A runtime half that failed is retried by
-/// the next call. Throws [LiteRtRuntimeUnavailableException] when neither half
-/// could be initialized; when only one could, the returned status says which
-/// and why.
+/// with other options runs after it. Each call stays within its own [timeout].
+/// A runtime half that failed is retried by the next call. Throws
+/// [LiteRtRuntimeUnavailableException] when neither half could be initialized;
+/// when only one could, the returned status says which and why.
 Future<LiteRtRuntimeStatus> initializeAndroidRuntime({
   bool enableGpu = false,
   bool enableAutomaticDownload = true,
@@ -85,7 +86,9 @@ Future<LiteRtRuntimeStatus> initializeAndroidRuntime({
     switch (shim.selected) {
       case kRuntimeBundled:
         return Future.value(
-          LiteRtRuntimeStatus.bundled(playServicesError: _playServicesError),
+          LiteRtRuntimeStatus.bundled(
+            playServicesError: shim.playServicesError,
+          ),
         );
       case kRuntimeNotSelected:
         return _chooseRuntime(
@@ -138,12 +141,12 @@ Future<LiteRtRuntimeStatus> _chooseRuntime(
   // A concurrent call may have chosen first; its choice holds.
   final chosen = shim.select(
     error == null ? kRuntimePlayServices : kRuntimeBundled,
+    playServicesError: error,
   );
   if (chosen == kRuntimePlayServices) {
     return _statusOf(shim, enableGpu: enableGpu);
   }
-  _playServicesError ??= error;
-  return LiteRtRuntimeStatus.bundled(playServicesError: _playServicesError);
+  return LiteRtRuntimeStatus.bundled(playServicesError: shim.playServicesError);
 }
 
 Future<LiteRtRuntimeStatus> _initializePlayServices(
@@ -158,23 +161,17 @@ Future<LiteRtRuntimeStatus> _initializePlayServices(
   }
   final pending = _pending;
   if (pending != null) {
-    if (_pendingEnableGpu == enableGpu &&
-        _pendingEnableAutomaticDownload == enableAutomaticDownload) {
-      return pending;
-    }
-    // Joining would answer with the pending call's options, so run after it.
-    return pending
-        .then<void>((_) {}, onError: (Object _) {})
-        .then(
-          (_) => initializeAndroidRuntime(
-            enableGpu: enableGpu,
-            enableAutomaticDownload: enableAutomaticDownload,
-            timeout: timeout,
-          ),
-        );
+    return _afterPending(
+      shim,
+      pending,
+      enableGpu: enableGpu,
+      enableAutomaticDownload: enableAutomaticDownload,
+      timeout: timeout,
+    );
   }
   _pendingEnableGpu = enableGpu;
   _pendingEnableAutomaticDownload = enableAutomaticDownload;
+  _pendingDeadline = DateTime.now().add(timeout);
   return _pending =
       _initialize(
         shim,
@@ -184,6 +181,56 @@ Future<LiteRtRuntimeStatus> _initializePlayServices(
       ).whenComplete(() {
         _pending = null;
       });
+}
+
+/// Waits for the [pending] initialization, for at most [timeout].
+///
+/// Its result answers this call only if it had the same options and no less
+/// time. Otherwise this call initializes again afterwards, in the time it has
+/// left, since the result would answer for other options or a shorter wait.
+Future<LiteRtRuntimeStatus> _afterPending(
+  AndroidRuntimeShim shim,
+  Future<LiteRtRuntimeStatus> pending, {
+  required bool enableGpu,
+  required bool enableAutomaticDownload,
+  required Duration timeout,
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  final shareResult =
+      _pendingEnableGpu == enableGpu &&
+      _pendingEnableAutomaticDownload == enableAutomaticDownload &&
+      !deadline.isAfter(_pendingDeadline!);
+  try {
+    final status = await pending.timeout(timeout);
+    if (shareResult) return status;
+  } on TimeoutException {
+    final error =
+        'initialization did not finish within ${timeout.inMilliseconds} ms. '
+        'Google Play services may still be downloading the LiteRT module';
+    return _throwIfUnavailable(
+      _statusOf(
+        shim,
+        enableGpu: enableGpu,
+        interpreterError: error,
+        compiledModelError: error,
+      ),
+    );
+  } on LiteRtRuntimeUnavailableException {
+    if (shareResult) rethrow;
+  }
+  final remaining = deadline.difference(DateTime.now());
+  return initializeAndroidRuntime(
+    enableGpu: enableGpu,
+    enableAutomaticDownload: enableAutomaticDownload,
+    timeout: remaining.isNegative ? Duration.zero : remaining,
+  );
+}
+
+LiteRtRuntimeStatus _throwIfUnavailable(LiteRtRuntimeStatus status) {
+  if (!status.interpreterReady && !status.compiledModelReady) {
+    throw LiteRtRuntimeUnavailableException(status);
+  }
+  return status;
 }
 
 Future<LiteRtRuntimeStatus> _initialize(
@@ -207,6 +254,9 @@ Future<LiteRtRuntimeStatus> _initialize(
   } on PlatformException catch (e) {
     pluginError =
         'the Android plugin failed to initialize LiteRT: ${e.message}';
+    // A plugin bug rather than a runtime condition. An auto build goes on to
+    // the bundled runtime, so make sure it gets seen.
+    debugPrint('flutter_litert: $pluginError');
   } on TimeoutException {
     pluginError =
         'the Android plugin did not reply within '
@@ -223,17 +273,16 @@ Future<LiteRtRuntimeStatus> _initialize(
       );
     }
   }
-  final status = _statusOf(
-    shim,
-    enableGpu: enableGpu,
-    interpreterError: pluginError ?? reply?['interpreterError'] as String?,
-    compiledModelError: pluginError ?? reply?['compiledModelError'] as String?,
-    pluginGpuError: reply?['gpuError'] as String?,
+  return _throwIfUnavailable(
+    _statusOf(
+      shim,
+      enableGpu: enableGpu,
+      interpreterError: pluginError ?? reply?['interpreterError'] as String?,
+      compiledModelError:
+          pluginError ?? reply?['compiledModelError'] as String?,
+      pluginGpuError: reply?['gpuError'] as String?,
+    ),
   );
-  if (!status.interpreterReady && !status.compiledModelReady) {
-    throw LiteRtRuntimeUnavailableException(status);
-  }
-  return status;
 }
 
 /// Readiness is read from the shim rather than the channel reply, because the

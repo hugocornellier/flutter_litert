@@ -51,10 +51,12 @@ static atomic_int g_selected_runtime = kFlutterLiteRtRuntimeNotSelected;
 static atomic_int g_interpreter_state = kFlutterLiteRtStateNotInitialized;
 static atomic_int g_compiled_model_state = kFlutterLiteRtStateNotInitialized;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-#define FLUTTER_LITERT_ERROR_SIZE 512
+// Roomy enough for g_play_services_error to quote both halves' errors.
+#define FLUTTER_LITERT_ERROR_SIZE 2048
 static char g_interpreter_error[FLUTTER_LITERT_ERROR_SIZE];
 static char g_compiled_model_error[FLUTTER_LITERT_ERROR_SIZE];
 static char g_gpu_error[FLUTTER_LITERT_ERROR_SIZE];
+static char g_play_services_error[FLUTTER_LITERT_ERROR_SIZE];
 
 static void set_error(char* buffer, const char* message) {
   snprintf(buffer, FLUTTER_LITERT_ERROR_SIZE, "%s",
@@ -79,18 +81,29 @@ FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeSelected(void) {
 #endif
 }
 
-FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeSelect(int32_t runtime) {
+FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeSelect(
+    int32_t runtime, const char* play_services_error) {
 #if defined(FLUTTER_LITERT_RUNTIME_AUTO)
   if (runtime == kFlutterLiteRtRuntimeBundled ||
       runtime == kFlutterLiteRtRuntimePlayServices) {
-    int expected = kFlutterLiteRtRuntimeNotSelected;
-    atomic_compare_exchange_strong(&g_selected_runtime, &expected, runtime);
+    pthread_mutex_lock(&g_lock);
+    if (atomic_load(&g_selected_runtime) == kFlutterLiteRtRuntimeNotSelected) {
+      set_error(g_play_services_error, play_services_error);
+      atomic_store(&g_selected_runtime, runtime);
+    }
+    pthread_mutex_unlock(&g_lock);
   }
   return atomic_load(&g_selected_runtime);
 #else
   (void)runtime;
+  (void)play_services_error;
   return FlutterLiteRtRuntimeMode();
 #endif
+}
+
+// Written once, before the choice is published, and never changed.
+FLUTTER_LITERT_EXPORT const char* FlutterLiteRtRuntimePlayServicesError(void) {
+  return g_play_services_error;
 }
 
 FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeInterpreterState(void) {

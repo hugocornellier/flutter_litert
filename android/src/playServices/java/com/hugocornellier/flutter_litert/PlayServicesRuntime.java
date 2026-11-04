@@ -132,7 +132,9 @@ final class PlayServicesRuntime {
     if (gpuError != null) {
       gpuReason = gpuError;
     } else if (enableGpu) {
-      gpuReason = "Google Play services initialized LiteRT without a GPU accelerator on this device";
+      gpuReason =
+          "Google Play services initialized LiteRT without a GPU accelerator. Its GPU module may"
+              + " still be downloading, in which case a later launch of the app can have it";
     } else {
       gpuReason =
           "the CompiledModel runtime was initialized without GPU support (enableGpu: false),"

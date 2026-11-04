@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 
@@ -40,10 +41,18 @@ const int kRuntimeAuto = 2;
 
 typedef _Int32Native = Int32 Function();
 typedef _Int32Dart = int Function();
-typedef _SelectNative = Int32 Function(Int32);
-typedef _SelectDart = int Function(int);
+typedef _SelectNative = Int32 Function(Int32, Pointer<Utf8>);
+typedef _SelectDart = int Function(int, Pointer<Utf8>);
 typedef _StringNative = Pointer<Utf8> Function();
 typedef _PointerNative = Pointer<Void> Function();
+
+/// Decodes a message from the shim. It may be cut mid-character, and JNI hands
+/// out modified UTF-8, and neither should turn reporting an error into a
+/// FormatException.
+String _decodeMessage(Pointer<Utf8> message) => utf8.decode(
+  message.cast<Uint8>().asTypedList(message.length),
+  allowMalformed: true,
+);
 
 final class AndroidRuntimeShim {
   AndroidRuntimeShim._(DynamicLibrary library)
@@ -55,6 +64,9 @@ final class AndroidRuntimeShim {
       ),
       _select = library.lookupFunction<_SelectNative, _SelectDart>(
         'FlutterLiteRtRuntimeSelect',
+      ),
+      _playServicesError = library.lookupFunction<_StringNative, _StringNative>(
+        'FlutterLiteRtRuntimePlayServicesError',
       ),
       _interpreterState = library.lookupFunction<_Int32Native, _Int32Dart>(
         'FlutterLiteRtRuntimeInterpreterState',
@@ -89,6 +101,7 @@ final class AndroidRuntimeShim {
   final _Int32Dart _mode;
   final _Int32Dart _selected;
   final _SelectDart _select;
+  final _StringNative _playServicesError;
   final _Int32Dart _interpreterState;
   final _Int32Dart _compiledModelState;
   final _StringNative _interpreterError;
@@ -113,18 +126,33 @@ final class AndroidRuntimeShim {
   int get selected => _selected();
 
   /// Chooses [runtime] for an auto build unless one was chosen already, and
-  /// returns the runtime in use. The first choice holds for the process.
-  int select(int runtime) => _select(runtime);
+  /// returns the runtime in use. The first choice holds for the process, and
+  /// [playServicesError] is kept with it.
+  int select(int runtime, {String? playServicesError}) {
+    if (playServicesError == null) return _select(runtime, nullptr);
+    final error = playServicesError.toNativeUtf8();
+    try {
+      return _select(runtime, error);
+    } finally {
+      malloc.free(error);
+    }
+  }
+
+  /// Why an auto build chose the bundled runtime, or null if it did not.
+  String? get playServicesError {
+    final error = _decodeMessage(_playServicesError());
+    return error.isEmpty ? null : error;
+  }
 
   int get interpreterState => _interpreterState();
   int get compiledModelState => _compiledModelState();
-  String get interpreterError => _interpreterError().toDartString();
-  String get compiledModelError => _compiledModelError().toDartString();
+  String get interpreterError => _decodeMessage(_interpreterError());
+  String get compiledModelError => _decodeMessage(_compiledModelError());
 
   /// Why the CompiledModel runtime would have no GPU accelerator, recorded by
   /// the initialization that attached it, or null before that.
   String? get gpuError {
-    final error = _gpuError().toDartString();
+    final error = _decodeMessage(_gpuError());
     return error.isEmpty ? null : error;
   }
 

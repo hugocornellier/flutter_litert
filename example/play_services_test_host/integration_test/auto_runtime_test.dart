@@ -29,6 +29,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   late Uint8List modelBytes;
+  String? playServicesError;
   final expected = LiteRtRuntime.values.byName(_expected);
 
   setUpAll(() async {
@@ -65,10 +66,18 @@ void main() {
     expect(status.isReady, isTrue);
     expect(androidRuntime, expected);
     if (expected == LiteRtRuntime.bundled) {
-      expect(status.playServicesError, contains('Google Play services'));
+      // Play services itself failed, rather than the plugin around it.
+      expect(
+        status.playServicesError,
+        allOf(
+          contains('TfLiteNative.initialize failed'),
+          isNot(contains('Android plugin')),
+        ),
+      );
     } else {
       expect(status.playServicesError, isNull);
     }
+    playServicesError = status.playServicesError;
   });
 
   testWidgets('the APK packages the bundled runtime too', (tester) async {
@@ -94,6 +103,7 @@ void main() {
     final status = await initializeAndroidRuntime(enableGpu: true);
     expect(status.runtime, expected);
     expect(status.isReady, isTrue);
+    expect(status.playServicesError, playServicesError);
   });
 
   testWidgets('helper isolates use the chosen runtime', (tester) async {
@@ -113,5 +123,11 @@ void main() {
     });
     expect(runtime, expected);
     expect(output, 9);
+
+    // So does the reason for the choice.
+    final again = await Isolate.run(
+      () async => (await initializeAndroidRuntime()).playServicesError,
+    );
+    expect(again, playServicesError);
   });
 }

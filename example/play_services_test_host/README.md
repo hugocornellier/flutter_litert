@@ -61,11 +61,13 @@ python3 -I ../../scripts/check_android_runtime_apk.py --runtime playServices \
 
 Release builds shrink the plugin's Java and Kotlin with R8, and leave out
 package:integration_test. `lib/release_smoke.dart` checks a release build
-instead: it initializes the runtime, runs both runtimes once, and prints
+instead: it initializes the runtime, checks it is the one
+`FLUTTER_LITERT_EXPECT_RUNTIME` names, runs both runtimes once, and prints
 `flutter_litert release smoke: PASS` (or `FAIL`) to logcat.
 
 ```bash
-flutter build apk --release -t lib/release_smoke.dart
+flutter build apk --release -t lib/release_smoke.dart \
+  --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices
 bash ../../scripts/android_release_smoke.sh \
   build/app/outputs/flutter-apk/app-release.apk <device>
 ```

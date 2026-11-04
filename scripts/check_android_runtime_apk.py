@@ -15,7 +15,9 @@ For the bundled default, the APK must carry the bundled runtimes and a shim
 that neither forwards LiteRt nor links Play services.
 
 For auto, the APK must carry both: the Play services shim and clients, and the
-bundled runtimes.
+bundled runtimes. It must not carry the litert AAR's Java, which does not fit
+the litert-api that play-services-litert brings. R8 can hide that Java in a
+release APK, so check a debug APK as well.
 
 Only reads the APK; nothing in it is executed.
 """
@@ -47,10 +49,13 @@ BUNDLED_ONLY = BUNDLED_RUNTIMES + (
     "libLiteRtWebGpuAccelerator.so",
     "libtensorflowlite_flex_jni.so",
 )
+# A class only the litert AAR has, as dex stores its name.
+LITERT_AAR_JAVA_CLASS = b"Lorg/tensorflow/lite/NativeInterpreterWrapper;"
 SHIM_EXPORTS = (
     "FlutterLiteRtRuntimeMode",
     "FlutterLiteRtRuntimeSelected",
     "FlutterLiteRtRuntimeSelect",
+    "FlutterLiteRtRuntimePlayServicesError",
     "FlutterLiteRtRuntimeInterpreterState",
     "FlutterLiteRtRuntimeCompiledModelState",
     "FlutterLiteRtRuntimeInterpreterError",
@@ -145,6 +150,10 @@ def main():
             sys.exit(f"{args.apk}: no Flutter native libraries")
 
         errors = []
+        if play and bundled:
+            for name in apk.namelist():
+                if name.endswith(".dex") and LITERT_AAR_JAVA_CLASS in apk.read(name):
+                    errors.append(f"{name}: must not link the litert AAR's Java")
         litert_functions = dart_bound_litert_functions()
         for abi, files in sorted(libs.items()):
             present = set(files)

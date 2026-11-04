@@ -13,6 +13,14 @@ import 'package:flutter_litert/native.dart';
 ///
 ///   flutter_litert release smoke: PASS ...
 ///   flutter_litert release smoke: FAIL ...
+///
+/// FLUTTER_LITERT_EXPECT_RUNTIME (`--dart-define`) is the runtime the device
+/// should end up with. An auto build falls back to the bundled runtime without
+/// failing, so without this check a plugin broken by R8 would still pass.
+const String _expectedRuntime = String.fromEnvironment(
+  'FLUTTER_LITERT_EXPECT_RUNTIME',
+);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   String result;
@@ -34,10 +42,13 @@ Future<void> main() async {
     model.close();
 
     // simple_model is y = 2*x + 1.
-    final ok = (y1 - 7.0).abs() < 1e-3 && (y2 - 7.0).abs() < 1e-3;
+    final ok =
+        status.runtime.name == _expectedRuntime &&
+        (y1 - 7.0).abs() < 1e-3 &&
+        (y2 - 7.0).abs() < 1e-3;
     result =
-        '${ok ? 'PASS' : 'FAIL'} interpreter=$y1 compiledModel=$y2 '
-        'status=$status';
+        '${ok ? 'PASS' : 'FAIL'} expected=$_expectedRuntime interpreter=$y1 '
+        'compiledModel=$y2 status=$status';
   } catch (error) {
     result = 'FAIL $error';
   }

@@ -434,7 +434,7 @@ jobs:
       # runtimes once; it is launched on the emulator after the tests pass.
       - name: Build the Play services release smoke APK (R8)
         working-directory: example/play_services_test_host
-        run: flutter build apk --release -t lib/release_smoke.dart
+        run: flutter build apk --release -t lib/release_smoke.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices
 
       - name: Check the release APK packages the Play services runtime only
         run: >-
@@ -479,7 +479,7 @@ jobs:
             bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600 &&
             env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter test integration_test/auto_runtime_test.dart -d emulator-5554 --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices --timeout 600s &&
             python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-debug.apk &&
-            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter build apk --release -t lib/release_smoke.dart &&
+            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter build apk --release -t lib/release_smoke.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices &&
             python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-release.apk &&
             bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600'
 
@@ -524,7 +524,7 @@ jobs:
           script: >-
             bash -c 'flutter test integration_test/no_play_services_test.dart -d emulator-5554 --timeout 600s &&
             env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter test integration_test/auto_runtime_test.dart -d emulator-5554 --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=bundled --timeout 600s &&
-            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter build apk --release -t lib/release_smoke.dart &&
+            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter build apk --release -t lib/release_smoke.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=bundled &&
             python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-release.apk &&
             bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600'
 

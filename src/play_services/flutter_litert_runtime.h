@@ -21,9 +21,14 @@ FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeMode(void);
 FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeSelected(void);
 
 // Chooses 0 or 1 for an auto build, unless a runtime was already chosen, and
-// returns the runtime in use. The first choice holds for the process.
+// returns the runtime in use. The first choice holds for the process, and
+// play_services_error, which may be null, is kept with it.
 // Outside the auto mode this changes nothing.
-FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeSelect(int32_t runtime);
+FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeSelect(
+    int32_t runtime, const char* play_services_error);
+
+// Why an auto build chose the bundled runtime. Empty otherwise.
+FLUTTER_LITERT_EXPORT const char* FlutterLiteRtRuntimePlayServicesError(void);
 
 // 0: not initialized, 1: ready, 2: initialization failed.
 FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeInterpreterState(void);
