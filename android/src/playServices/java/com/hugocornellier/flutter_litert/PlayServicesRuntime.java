@@ -125,17 +125,29 @@ final class PlayServicesRuntime {
       compiledModelFailure = await(compiledModel, deadline, "LiteRt.initializeNative");
     }
 
+    // GPU support is fixed for the process when the runtime is attached, so
+    // the reason is recorded with it, for every isolate and every later call
+    // that asks for the GPU. It only shows when there is no GPU accelerator.
+    String gpuReason;
+    if (gpuError != null) {
+      gpuReason = gpuError;
+    } else if (enableGpu) {
+      gpuReason = "Google Play services initialized LiteRT without a GPU accelerator on this device";
+    } else {
+      gpuReason =
+          "the CompiledModel runtime was initialized without GPU support (enableGpu: false),"
+              + " which cannot be added later in this process";
+    }
+
     Map<String, Object> status = new HashMap<>();
     status.put("mode", MODE);
     status.put("interpreterError", recordInterpreter(interpreterFailure));
-    status.put("compiledModelError", recordCompiledModel(compiledModel, compiledModelFailure));
+    status.put(
+        "compiledModelError", recordCompiledModel(compiledModel, compiledModelFailure, gpuReason));
     status.put("gpuError", gpuError);
     synchronized (lock) {
       status.put("interpreterReady", interpreterReady);
       status.put("compiledModelReady", compiledModelReady);
-      // Lets Dart tell whether this call decided the CompiledModel runtime's
-      // GPU support, or found it already fixed by an earlier call.
-      status.put("compiledModelAttached", compiledModelReady && !compiledModelWasReady);
     }
     return status;
   }
@@ -201,12 +213,12 @@ final class PlayServicesRuntime {
 
   @Nullable
   private static String recordCompiledModel(
-      Task<CompiledModelNativeHandle> task, @Nullable Failure failure) {
+      Task<CompiledModelNativeHandle> task, @Nullable Failure failure, String gpuReason) {
     synchronized (lock) {
       if (compiledModelReady) return null;
       String error;
       if (failure == null) {
-        error = nativeAttachCompiledModel(task.getResult());
+        error = nativeAttachCompiledModel(task.getResult(), gpuReason);
         if (error == null) {
           compiledModelReady = true;
           return null;
@@ -222,7 +234,8 @@ final class PlayServicesRuntime {
   private static native void nativeSetInterpreterState(int state, @Nullable String error);
 
   @Nullable
-  private static native String nativeAttachCompiledModel(CompiledModelNativeHandle handle);
+  private static native String nativeAttachCompiledModel(
+      CompiledModelNativeHandle handle, String gpuReason);
 
   private static native void nativeSetCompiledModelFailure(@Nullable String error);
 }

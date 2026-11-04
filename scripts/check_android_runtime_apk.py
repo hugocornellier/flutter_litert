@@ -3,6 +3,7 @@
 
   python3 -I scripts/check_android_runtime_apk.py --runtime playServices app.apk
   python3 -I scripts/check_android_runtime_apk.py --runtime bundled app.apk
+  python3 -I scripts/check_android_runtime_apk.py --runtime auto app.apk
 
 For flutterLitert.runtime=playServices, every Flutter ABI in the APK must carry
 the runtime shim and the two Play services client libraries, and none of the
@@ -12,6 +13,9 @@ own API, and depend on the Play services client.
 
 For the bundled default, the APK must carry the bundled runtimes and a shim
 that neither forwards LiteRt nor links Play services.
+
+For auto, the APK must carry both: the Play services shim and clients, and the
+bundled runtimes.
 
 Only reads the APK; nothing in it is executed.
 """
@@ -45,10 +49,13 @@ BUNDLED_ONLY = BUNDLED_RUNTIMES + (
 )
 SHIM_EXPORTS = (
     "FlutterLiteRtRuntimeMode",
+    "FlutterLiteRtRuntimeSelected",
+    "FlutterLiteRtRuntimeSelect",
     "FlutterLiteRtRuntimeInterpreterState",
     "FlutterLiteRtRuntimeCompiledModelState",
     "FlutterLiteRtRuntimeInterpreterError",
     "FlutterLiteRtRuntimeCompiledModelError",
+    "FlutterLiteRtRuntimeGpuError",
     "FlutterLiteRtRuntimeApi",
     "FlutterLiteRtRuntimeGpuAccelerator",
     "FlutterLiteRtRuntimeContext",
@@ -116,10 +123,14 @@ def elf64_dynamic_info(data):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--runtime", choices=("bundled", "playServices"), required=True)
+    parser.add_argument(
+        "--runtime", choices=("bundled", "playServices", "auto"), required=True
+    )
     parser.add_argument("apk", type=pathlib.Path)
     args = parser.parse_args()
-    play = args.runtime == "playServices"
+    # Whether the Play services client is linked, and LiteRT itself packaged.
+    play = args.runtime != "bundled"
+    bundled = args.runtime != "playServices"
 
     with zipfile.ZipFile(args.apk) as apk:
         libs = {}
@@ -137,8 +148,16 @@ def main():
         litert_functions = dart_bound_litert_functions()
         for abi, files in sorted(libs.items()):
             present = set(files)
-            required = {SHIM} | set(PLAY_SERVICES_CLIENTS if play else BUNDLED_RUNTIMES)
-            forbidden = set(BUNDLED_ONLY if play else PLAY_SERVICES_CLIENTS)
+            required = {SHIM}
+            forbidden = set()
+            if play:
+                required |= set(PLAY_SERVICES_CLIENTS)
+            else:
+                forbidden |= set(PLAY_SERVICES_CLIENTS)
+            if bundled:
+                required |= set(BUNDLED_RUNTIMES)
+            else:
+                forbidden |= set(BUNDLED_ONLY)
             for lib in sorted(required - present):
                 errors.append(f"{abi}: missing {lib}")
             for lib in sorted(forbidden & present):

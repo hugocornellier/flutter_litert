@@ -48,7 +48,7 @@ endif()
 # table that Play services provides.
 if(ANDROID)
     set(FLUTTER_LITERT_RUNTIME "bundled" CACHE STRING
-        "LiteRT runtime: bundled or playServices")
+        "LiteRT runtime: bundled, playServices or auto")
 
     add_library(flutter_litert_runtime SHARED
         play_services/flutter_litert_runtime.c
@@ -65,11 +65,19 @@ if(ANDROID)
         -Wl,-z,max-page-size=16384
     )
 
-    if(FLUTTER_LITERT_RUNTIME STREQUAL "playServices")
+    # auto links the Play services client too, and also packages the bundled
+    # runtime; initializeAndroidRuntime() chooses one of them at run time.
+    if(FLUTTER_LITERT_RUNTIME STREQUAL "playServices" OR
+       FLUTTER_LITERT_RUNTIME STREQUAL "auto")
         find_package(litert_compiledmodel_gms_client REQUIRED CONFIG)
         target_compile_definitions(flutter_litert_runtime PRIVATE
             FLUTTER_LITERT_PLAY_SERVICES=1
         )
+        if(FLUTTER_LITERT_RUNTIME STREQUAL "auto")
+            target_compile_definitions(flutter_litert_runtime PRIVATE
+                FLUTTER_LITERT_RUNTIME_AUTO=1
+            )
+        endif()
         # The generated build_config.h the prefab headers include must come
         # before the prefab include directory.
         target_include_directories(flutter_litert_runtime BEFORE PRIVATE
@@ -80,7 +88,7 @@ if(ANDROID)
         )
     elseif(NOT FLUTTER_LITERT_RUNTIME STREQUAL "bundled")
         message(FATAL_ERROR
-            "FLUTTER_LITERT_RUNTIME must be bundled or playServices, "
+            "FLUTTER_LITERT_RUNTIME must be bundled, playServices or auto, "
             "not '${FLUTTER_LITERT_RUNTIME}'")
     endif()
 endif()

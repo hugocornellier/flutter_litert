@@ -12,28 +12,45 @@ Future<LiteRtRuntimeStatus>? _pending;
 bool? _pendingEnableGpu;
 bool? _pendingEnableAutomaticDownload;
 
-/// Why the CompiledModel runtime has no GPU accelerator, recorded by the call
-/// that initialized it, so that later calls asking for the GPU report it too.
-String? _gpuReason;
+/// Why an auto build chose the bundled runtime, for later calls' statuses.
+String? _playServicesError;
 
 /// How much longer than the plugin's own timeout to wait for its reply.
 const Duration _replyGrace = Duration(seconds: 30);
 
-/// The LiteRT runtime this app was built with.
+/// The LiteRT runtime this app uses.
 ///
-/// [LiteRtRuntime.playServices] only on Android apps built with
-/// `flutterLitert.runtime=playServices`; [LiteRtRuntime.bundled] otherwise.
-LiteRtRuntime get androidRuntime => usesPlayServicesRuntime
-    ? LiteRtRuntime.playServices
-    : LiteRtRuntime.bundled;
+/// [LiteRtRuntime.playServices] on Android apps built with
+/// `flutterLitert.runtime=playServices`, and with `auto` once
+/// [initializeAndroidRuntime] chose Play services. Null in an `auto` build
+/// until [initializeAndroidRuntime] has chosen. [LiteRtRuntime.bundled]
+/// otherwise.
+LiteRtRuntime? get androidRuntime {
+  final shim = androidRuntimeShim;
+  if (shim == null) return LiteRtRuntime.bundled;
+  return switch (shim.selected) {
+    kRuntimePlayServices => LiteRtRuntime.playServices,
+    kRuntimeBundled => LiteRtRuntime.bundled,
+    _ => null,
+  };
+}
 
 /// Initializes the Google Play services LiteRT runtime.
 ///
-/// Apps built with `flutterLitert.runtime=playServices` must await this, from
-/// the main isolate, before creating an `Interpreter` or a `CompiledModel`.
-/// Isolates spawned afterwards can use both without calling it again. With the
-/// bundled runtime, and on every platform but Android, it returns
-/// [LiteRtRuntimeStatus.bundled] immediately.
+/// Apps built with `flutterLitert.runtime=playServices` or `auto` must await
+/// this, from the main isolate, before creating an `Interpreter` or a
+/// `CompiledModel`. Isolates spawned afterwards can use both without calling it
+/// again. With the bundled runtime, and on every platform but Android, it
+/// returns [LiteRtRuntimeStatus.bundled] immediately.
+///
+/// In an `auto` build the first call chooses the runtime for the process: Play
+/// services when both of its halves initialize within [timeout], and the
+/// bundled runtime otherwise, with [LiteRtRuntimeStatus.playServicesError]
+/// saying why. It never throws [LiteRtRuntimeUnavailableException]. Later
+/// calls keep that choice, so a GPU request that Play services could not meet
+/// does not switch to the bundled runtime. A short [timeout] lets the app
+/// start on the bundled runtime while Play services is still downloading its
+/// module.
 ///
 /// [enableGpu] asks Play services for its GPU accelerator, for
 /// `CompiledModel` with `Accelerator.gpu`. If the GPU request fails, the
@@ -61,9 +78,80 @@ Future<LiteRtRuntimeStatus> initializeAndroidRuntime({
   Duration timeout = const Duration(minutes: 5),
 }) {
   final shim = androidRuntimeShim;
-  if (shim == null || !shim.isPlayServices) {
+  if (shim == null || shim.mode == kRuntimeBundled) {
     return Future.value(const LiteRtRuntimeStatus.bundled());
   }
+  if (shim.isAuto) {
+    switch (shim.selected) {
+      case kRuntimeBundled:
+        return Future.value(
+          LiteRtRuntimeStatus.bundled(playServicesError: _playServicesError),
+        );
+      case kRuntimeNotSelected:
+        return _chooseRuntime(
+          shim,
+          enableGpu: enableGpu,
+          enableAutomaticDownload: enableAutomaticDownload,
+          timeout: timeout,
+        );
+    }
+  }
+  return _initializePlayServices(
+    shim,
+    enableGpu: enableGpu,
+    enableAutomaticDownload: enableAutomaticDownload,
+    timeout: timeout,
+  );
+}
+
+/// Chooses the runtime of an auto build: Play services if both halves are
+/// ready, the bundled runtime otherwise.
+Future<LiteRtRuntimeStatus> _chooseRuntime(
+  AndroidRuntimeShim shim, {
+  required bool enableGpu,
+  required bool enableAutomaticDownload,
+  required Duration timeout,
+}) async {
+  String? error;
+  try {
+    final status = await _initializePlayServices(
+      shim,
+      enableGpu: enableGpu,
+      enableAutomaticDownload: enableAutomaticDownload,
+      timeout: timeout,
+    );
+    if (!status.interpreterReady) {
+      error =
+          'Google Play services could not provide the Interpreter runtime: '
+          '${status.interpreterError}';
+    } else if (!status.compiledModelReady) {
+      error =
+          'Google Play services could not provide the CompiledModel runtime: '
+          '${status.compiledModelError}';
+    }
+  } on LiteRtRuntimeUnavailableException catch (e) {
+    error =
+        'Google Play services could not provide LiteRT. Interpreter: '
+        '${e.status.interpreterError}. CompiledModel: '
+        '${e.status.compiledModelError}';
+  }
+  // A concurrent call may have chosen first; its choice holds.
+  final chosen = shim.select(
+    error == null ? kRuntimePlayServices : kRuntimeBundled,
+  );
+  if (chosen == kRuntimePlayServices) {
+    return _statusOf(shim, enableGpu: enableGpu);
+  }
+  _playServicesError ??= error;
+  return LiteRtRuntimeStatus.bundled(playServicesError: _playServicesError);
+}
+
+Future<LiteRtRuntimeStatus> _initializePlayServices(
+  AndroidRuntimeShim shim, {
+  required bool enableGpu,
+  required bool enableAutomaticDownload,
+  required Duration timeout,
+}) {
   if (shim.interpreterState == kRuntimeStateReady &&
       shim.compiledModelState == kRuntimeStateReady) {
     return Future.value(_statusOf(shim, enableGpu: enableGpu));
@@ -130,14 +218,8 @@ Future<LiteRtRuntimeStatus> _initialize(
     if (reply == null || reply['mode'] != 'playServices') {
       throw StateError(
         'flutter_litert: the Android plugin reported runtime '
-        '${reply?['mode']}, but libflutter_litert_runtime.so was built for '
-        'playServices. Rebuild the app.',
-      );
-    }
-    if (reply['compiledModelAttached'] == true) {
-      _gpuReason = gpuUnavailableReason(
-        gpuRequested: enableGpu,
-        pluginGpuError: reply['gpuError'] as String?,
+        '${reply?['mode']}, but libflutter_litert_runtime.so was built with '
+        'the Play services client. Rebuild the app.',
       );
     }
   }
@@ -181,7 +263,7 @@ LiteRtRuntimeStatus _statusOf(
       enableGpu: enableGpu,
       compiledModelReady: compiledModelReady,
       hasGpuAccelerator: hasGpuAccelerator,
-      reason: _gpuReason,
+      reason: shim.gpuError,
       pluginGpuError: pluginGpuError,
     ),
   );

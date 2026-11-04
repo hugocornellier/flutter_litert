@@ -2,7 +2,9 @@
 //
 // Every Android build ships this library. It answers which LiteRT runtime the
 // app was built with (the flutterLitert.runtime Gradle property) so Dart can
-// pick its native libraries synchronously, from any isolate.
+// pick its native libraries synchronously, from any isolate. In the auto mode
+// it also records which runtime initializeAndroidRuntime() chose, for the same
+// reason.
 //
 // In the Play services mode it also owns the CompiledModel runtime handed out
 // by Google Play services. Java resolves LiteRt.initializeNative() and passes
@@ -27,9 +29,12 @@
 
 #include "flutter_litert_runtime.h"
 
+// Values are shared with lib/src/bindings/android_runtime_shim.dart.
 enum {
+  kFlutterLiteRtRuntimeNotSelected = -1,
   kFlutterLiteRtRuntimeBundled = 0,
   kFlutterLiteRtRuntimePlayServices = 1,
+  kFlutterLiteRtRuntimeAuto = 2,
 };
 
 // Readiness of one Play services runtime component. Values are shared with
@@ -40,12 +45,16 @@ enum {
   kFlutterLiteRtStateFailed = 2,
 };
 
+#if defined(FLUTTER_LITERT_RUNTIME_AUTO)
+static atomic_int g_selected_runtime = kFlutterLiteRtRuntimeNotSelected;
+#endif
 static atomic_int g_interpreter_state = kFlutterLiteRtStateNotInitialized;
 static atomic_int g_compiled_model_state = kFlutterLiteRtStateNotInitialized;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 #define FLUTTER_LITERT_ERROR_SIZE 512
 static char g_interpreter_error[FLUTTER_LITERT_ERROR_SIZE];
 static char g_compiled_model_error[FLUTTER_LITERT_ERROR_SIZE];
+static char g_gpu_error[FLUTTER_LITERT_ERROR_SIZE];
 
 static void set_error(char* buffer, const char* message) {
   snprintf(buffer, FLUTTER_LITERT_ERROR_SIZE, "%s",
@@ -53,10 +62,34 @@ static void set_error(char* buffer, const char* message) {
 }
 
 FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeMode(void) {
-#if defined(FLUTTER_LITERT_PLAY_SERVICES)
+#if defined(FLUTTER_LITERT_RUNTIME_AUTO)
+  return kFlutterLiteRtRuntimeAuto;
+#elif defined(FLUTTER_LITERT_PLAY_SERVICES)
   return kFlutterLiteRtRuntimePlayServices;
 #else
   return kFlutterLiteRtRuntimeBundled;
+#endif
+}
+
+FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeSelected(void) {
+#if defined(FLUTTER_LITERT_RUNTIME_AUTO)
+  return atomic_load(&g_selected_runtime);
+#else
+  return FlutterLiteRtRuntimeMode();
+#endif
+}
+
+FLUTTER_LITERT_EXPORT int32_t FlutterLiteRtRuntimeSelect(int32_t runtime) {
+#if defined(FLUTTER_LITERT_RUNTIME_AUTO)
+  if (runtime == kFlutterLiteRtRuntimeBundled ||
+      runtime == kFlutterLiteRtRuntimePlayServices) {
+    int expected = kFlutterLiteRtRuntimeNotSelected;
+    atomic_compare_exchange_strong(&g_selected_runtime, &expected, runtime);
+  }
+  return atomic_load(&g_selected_runtime);
+#else
+  (void)runtime;
+  return FlutterLiteRtRuntimeMode();
 #endif
 }
 
@@ -77,6 +110,11 @@ FLUTTER_LITERT_EXPORT const char* FlutterLiteRtRuntimeInterpreterError(void) {
 
 FLUTTER_LITERT_EXPORT const char* FlutterLiteRtRuntimeCompiledModelError(void) {
   return g_compiled_model_error;
+}
+
+// Written once, with the ready CompiledModel state, and never changed.
+FLUTTER_LITERT_EXPORT const char* FlutterLiteRtRuntimeGpuError(void) {
+  return g_gpu_error;
 }
 
 JNIEXPORT void JNICALL
@@ -235,10 +273,11 @@ static const char* attach(JNIEnv* env, jobject handle, char* error,
 }
 
 // Returns null once the runtime is attached (now or by an earlier call), or a
-// description of the failure. A failed attach can be retried.
+// description of the failure. A failed attach can be retried. [gpu_error] is
+// why the runtime would have no GPU accelerator, kept for the process.
 JNIEXPORT jstring JNICALL
 Java_com_hugocornellier_flutter_1litert_PlayServicesRuntime_nativeAttachCompiledModel(
-    JNIEnv* env, jclass clazz, jobject handle) {
+    JNIEnv* env, jclass clazz, jobject handle, jstring gpu_error) {
   (void)clazz;
   char error[FLUTTER_LITERT_ERROR_SIZE];
   const char* failure = NULL;
@@ -246,6 +285,15 @@ Java_com_hugocornellier_flutter_1litert_PlayServicesRuntime_nativeAttachCompiled
   if (atomic_load(&g_api) == NULL) {
     failure = attach(env, handle, error, sizeof(error));
     set_error(g_compiled_model_error, failure);
+    if (failure == NULL) {
+      const char* message = gpu_error == NULL
+                                ? NULL
+                                : (*env)->GetStringUTFChars(env, gpu_error, NULL);
+      set_error(g_gpu_error, message);
+      if (message != NULL) {
+        (*env)->ReleaseStringUTFChars(env, gpu_error, message);
+      }
+    }
     atomic_store(&g_compiled_model_state, failure == NULL
                                               ? kFlutterLiteRtStateReady
                                               : kFlutterLiteRtStateFailed);

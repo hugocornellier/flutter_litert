@@ -21,10 +21,10 @@ import 'package:ffi/ffi.dart';
 
 /// Android library built from src/play_services/flutter_litert_runtime.c.
 ///
-/// It records which LiteRT runtime the app was built with and, for the Google
-/// Play services runtime, the initialization state of each half of it. That
-/// state is process-wide, so helper isolates see what the main isolate's
-/// initializeAndroidRuntime() call did.
+/// It records which LiteRT runtime the app was built with, which one an auto
+/// build chose and, for the Google Play services runtime, the initialization
+/// state of each half of it. That state is process-wide, so helper isolates
+/// see what the main isolate's initializeAndroidRuntime() call did.
 const String androidRuntimeShimLibrary = 'libflutter_litert_runtime.so';
 
 /// Values of FlutterLiteRtRuntime*State() in flutter_litert_runtime.c.
@@ -32,10 +32,16 @@ const int kRuntimeStateNotInitialized = 0;
 const int kRuntimeStateReady = 1;
 const int kRuntimeStateFailed = 2;
 
-const int _kRuntimeModePlayServices = 1;
+/// Values of FlutterLiteRtRuntimeMode() and FlutterLiteRtRuntimeSelected().
+const int kRuntimeNotSelected = -1;
+const int kRuntimeBundled = 0;
+const int kRuntimePlayServices = 1;
+const int kRuntimeAuto = 2;
 
 typedef _Int32Native = Int32 Function();
 typedef _Int32Dart = int Function();
+typedef _SelectNative = Int32 Function(Int32);
+typedef _SelectDart = int Function(int);
 typedef _StringNative = Pointer<Utf8> Function();
 typedef _PointerNative = Pointer<Void> Function();
 
@@ -43,6 +49,12 @@ final class AndroidRuntimeShim {
   AndroidRuntimeShim._(DynamicLibrary library)
     : _mode = library.lookupFunction<_Int32Native, _Int32Dart>(
         'FlutterLiteRtRuntimeMode',
+      ),
+      _selected = library.lookupFunction<_Int32Native, _Int32Dart>(
+        'FlutterLiteRtRuntimeSelected',
+      ),
+      _select = library.lookupFunction<_SelectNative, _SelectDart>(
+        'FlutterLiteRtRuntimeSelect',
       ),
       _interpreterState = library.lookupFunction<_Int32Native, _Int32Dart>(
         'FlutterLiteRtRuntimeInterpreterState',
@@ -57,6 +69,9 @@ final class AndroidRuntimeShim {
           .lookupFunction<_StringNative, _StringNative>(
             'FlutterLiteRtRuntimeCompiledModelError',
           ),
+      _gpuError = library.lookupFunction<_StringNative, _StringNative>(
+        'FlutterLiteRtRuntimeGpuError',
+      ),
       _api = library.lookupFunction<_PointerNative, _PointerNative>(
         'FlutterLiteRtRuntimeApi',
       ),
@@ -72,20 +87,46 @@ final class AndroidRuntimeShim {
   /// API, forwarded to the Play services runtime.
   final DynamicLibrary library;
   final _Int32Dart _mode;
+  final _Int32Dart _selected;
+  final _SelectDart _select;
   final _Int32Dart _interpreterState;
   final _Int32Dart _compiledModelState;
   final _StringNative _interpreterError;
   final _StringNative _compiledModelError;
+  final _StringNative _gpuError;
   final _PointerNative _api;
   final _PointerNative _gpuAccelerator;
   final _PointerNative _context;
 
-  bool get isPlayServices => _mode() == _kRuntimeModePlayServices;
+  /// The flutterLitert.runtime the app was built with: [kRuntimeBundled],
+  /// [kRuntimePlayServices] or [kRuntimeAuto].
+  int get mode => _mode();
+
+  /// Whether the app was built with flutterLitert.runtime=playServices.
+  bool get isPlayServices => mode == kRuntimePlayServices;
+
+  /// Whether the app was built with flutterLitert.runtime=auto.
+  bool get isAuto => mode == kRuntimeAuto;
+
+  /// The runtime in use: [kRuntimeBundled], [kRuntimePlayServices], or
+  /// [kRuntimeNotSelected] while an auto build has not chosen one.
+  int get selected => _selected();
+
+  /// Chooses [runtime] for an auto build unless one was chosen already, and
+  /// returns the runtime in use. The first choice holds for the process.
+  int select(int runtime) => _select(runtime);
 
   int get interpreterState => _interpreterState();
   int get compiledModelState => _compiledModelState();
   String get interpreterError => _interpreterError().toDartString();
   String get compiledModelError => _compiledModelError().toDartString();
+
+  /// Why the CompiledModel runtime would have no GPU accelerator, recorded by
+  /// the initialization that attached it, or null before that.
+  String? get gpuError {
+    final error = _gpuError().toDartString();
+    return error.isEmpty ? null : error;
+  }
 
   /// The Play services LiteRtRuntimeCApiStruct, or nullptr before it is ready.
   Pointer<Void> get runtimeApi => _api();
@@ -117,9 +158,29 @@ final AndroidRuntimeShim? androidRuntimeShim = () {
   return AndroidRuntimeShim._(library);
 }();
 
-/// Whether the app was built with flutterLitert.runtime=playServices.
-final bool usesPlayServicesRuntime =
-    androidRuntimeShim?.isPlayServices ?? false;
+/// Whether LiteRT comes from Google Play services in this process.
+///
+/// True for flutterLitert.runtime=playServices, and for auto once
+/// initializeAndroidRuntime() chose Play services. In an auto build that has
+/// not chosen yet this throws, since the runtime to bind is not known.
+bool get usesPlayServicesRuntime {
+  final shim = androidRuntimeShim;
+  if (shim == null) return false;
+  switch (shim.selected) {
+    case kRuntimePlayServices:
+      return true;
+    case kRuntimeNotSelected:
+      throw StateError(
+        'flutter_litert: this app is built with flutterLitert.runtime=auto, '
+        'so initializeAndroidRuntime() chooses between the Google Play '
+        'services and the bundled LiteRT runtime. Call `await '
+        'initializeAndroidRuntime()` from the main isolate before creating an '
+        'Interpreter or a CompiledModel.',
+      );
+    default:
+      return false;
+  }
+}
 
 /// Throws unless the Play services runtime half named [component] is ready.
 ///
@@ -166,28 +227,12 @@ void ensurePlayServicesCompiledModelReady() {
   );
 }
 
-/// Why a CompiledModel runtime has no GPU accelerator, as decided by the
-/// initialization that attached it.
-///
-/// [pluginGpuError] is the plugin's reason when the GPU request failed.
-String gpuUnavailableReason({
-  required bool gpuRequested,
-  required String? pluginGpuError,
-}) {
-  if (pluginGpuError != null) return pluginGpuError;
-  return gpuRequested
-      ? 'Google Play services initialized LiteRT without a GPU accelerator on '
-            'this device'
-      : 'the CompiledModel runtime was initialized without GPU support '
-            '(enableGpu: false), which cannot be added later in this process';
-}
-
 /// [LiteRtRuntimeStatus.gpuError] for one initializeAndroidRuntime() call.
 ///
 /// Computed per call, so that a call asking for the GPU always learns why it
-/// has none, even when an earlier call decided that. [reason] comes from
-/// [gpuUnavailableReason] at that earlier call; [pluginGpuError] is this
-/// call's GPU failure, reported while the CompiledModel runtime is not ready.
+/// has none, even when an earlier call or another isolate decided that.
+/// [reason] is [AndroidRuntimeShim.gpuError]; [pluginGpuError] is this call's
+/// GPU failure, reported while the CompiledModel runtime is not ready.
 String? gpuErrorForCall({
   required bool enableGpu,
   required bool compiledModelReady,

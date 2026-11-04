@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_litert/native.dart';
 
-/// Release build smoke test for the Play services runtime.
+/// Release build smoke test for the Play services and auto runtimes.
 ///
 /// Release builds shrink the plugin's Java and Kotlin with R8 and leave out
 /// package:integration_test, so CI builds this entry point with

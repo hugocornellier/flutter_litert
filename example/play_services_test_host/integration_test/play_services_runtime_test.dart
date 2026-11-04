@@ -157,6 +157,12 @@ void main() {
         }
       });
       expect(y, closeTo(11.0, 1e-3));
+
+      // The runtime's GPU support, and why it has none, is process-wide.
+      final again = await Isolate.run(
+        () async => (await initializeAndroidRuntime(enableGpu: true)).gpuError,
+      );
+      expect(again, status.gpuError);
     });
 
     testWidgets('runs through IsolateInterpreter', (tester) async {

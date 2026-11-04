@@ -61,21 +61,24 @@ if (shouldApplyKotlinAndroidPlugin) {
 //                                     (play-services-litert), so no LiteRT
 //                                     native library is packaged. The app must
 //                                     call initializeAndroidRuntime() first.
-//
-// The choice is made at build time because the two runtimes cannot share an
-// APK: the native libraries the Dart bindings open differ, and the Play
-// services client replaces the bundled Java and native artifacts.
+// flutterLitert.runtime=auto          Both are packaged. initializeAndroidRuntime()
+//                                     uses Play services when it can provide
+//                                     both runtime halves, and the bundled
+//                                     runtime otherwise.
 val litertRuntime =
     providers.gradleProperty("flutterLitert.runtime").orNull?.let { value ->
         when (value) {
-            "bundled", "playServices" -> value
+            "bundled", "playServices", "auto" -> value
             else -> throw GradleException(
-                "[flutter_litert] flutterLitert.runtime must be bundled or " +
-                    "playServices, not '$value'"
+                "[flutter_litert] flutterLitert.runtime must be bundled, " +
+                    "playServices or auto, not '$value'"
             )
         }
     } ?: "bundled"
-val usePlayServicesRuntime = litertRuntime == "playServices"
+// Whether the Play services client is linked (playServices and auto).
+val usePlayServicesRuntime = litertRuntime != "bundled"
+// Whether LiteRT itself is packaged in the APK (bundled and auto).
+val packageBundledRuntime = litertRuntime != "playServices"
 val playServicesLitertVersion = "17.0.0"
 
 android {
@@ -117,6 +120,9 @@ android {
             // at launch; see the file.
             consumerProguardFiles("proguard-play-services.pro")
         }
+        if (usePlayServicesRuntime && packageBundledRuntime) {
+            consumerProguardFiles("proguard-auto.pro")
+        }
         externalNativeBuild {
             cmake {
                 arguments += "-DFLUTTER_LITERT_RUNTIME=$litertRuntime"
@@ -141,7 +147,8 @@ dependencies {
             "implementation",
             "com.google.android.gms:play-services-litert:$playServicesLitertVersion"
         )
-    } else {
+    }
+    if (packageBundledRuntime) {
         val litert = "1.4.2"
         add("implementation", "com.google.ai.edge.litert:litert:$litert")
         add("implementation", "com.google.ai.edge.litert:litert-gpu:$litert")
@@ -392,7 +399,17 @@ abstract class DownloadLitertJniTask : DefaultTask() {
     }
 }
 
-if (usePlayServicesRuntime) {
+// flutter_litert_flex links libtensorflowlite_jni.so, so it needs the bundled
+// runtime in use, which auto does not guarantee.
+if (usePlayServicesRuntime && rootProject.findProject(":flutter_litert_flex") != null) {
+    throw GradleException(
+        "[flutter_litert] flutter_litert_flex is not supported with " +
+            "flutterLitert.runtime=$litertRuntime: the Select TF ops runtime " +
+            "needs flutterLitert.runtime=bundled."
+    )
+}
+
+if (!packageBundledRuntime) {
     // These options configure the bundled runtime's native libraries, which
     // the Play services runtime does not package. Reject them rather than
     // silently ignoring an explicit setting.
@@ -403,17 +420,9 @@ if (usePlayServicesRuntime) {
     if (bundledOnlyProperties.isNotEmpty()) {
         throw GradleException(
             "[flutter_litert] ${bundledOnlyProperties.joinToString()} only " +
-                "apply to flutterLitert.runtime=bundled. Remove them to use the " +
-                "Google Play services runtime."
-        )
-    }
-    // flutter_litert_flex links libtensorflowlite_jni.so, which only the
-    // bundled runtime packages.
-    if (rootProject.findProject(":flutter_litert_flex") != null) {
-        throw GradleException(
-            "[flutter_litert] flutter_litert_flex is not supported with " +
-                "flutterLitert.runtime=playServices: the Select TF ops runtime " +
-                "needs the bundled LiteRT runtime."
+                "apply when the bundled runtime is packaged " +
+                "(flutterLitert.runtime=bundled or auto). Remove them to use " +
+                "the Google Play services runtime."
         )
     }
 } else {

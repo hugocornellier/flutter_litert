@@ -1,15 +1,18 @@
 /// Where an Android app gets its LiteRT runtime from.
 ///
 /// This is chosen at build time with the `flutterLitert.runtime` Gradle
-/// property. Every other platform always uses [bundled].
+/// property, or, with `flutterLitert.runtime=auto`, by the first
+/// `initializeAndroidRuntime` call. Every other platform always uses
+/// [bundled].
 enum LiteRtRuntime {
-  /// LiteRT is packaged in the app (the default).
+  /// LiteRT is packaged in the app (the default, and the fallback of `auto`).
   bundled,
 
-  /// LiteRT comes from Google Play services (`flutterLitert.runtime=playServices`).
+  /// LiteRT comes from Google Play services (`flutterLitert.runtime=playServices`,
+  /// or `auto` on a device where Play services provides it).
   ///
-  /// The app does not package LiteRT, and must call `initializeAndroidRuntime`
-  /// before it creates an `Interpreter` or a `CompiledModel`.
+  /// The app must call `initializeAndroidRuntime` before it creates an
+  /// `Interpreter` or a `CompiledModel`.
   playServices,
 }
 
@@ -28,10 +31,11 @@ final class LiteRtRuntimeStatus {
     this.interpreterError,
     this.compiledModelError,
     this.gpuError,
+    this.playServicesError,
   });
 
   /// Status of the [LiteRtRuntime.bundled] runtime, which is always ready.
-  const LiteRtRuntimeStatus.bundled()
+  const LiteRtRuntimeStatus.bundled({this.playServicesError})
     : runtime = LiteRtRuntime.bundled,
       interpreterReady = true,
       compiledModelReady = true,
@@ -40,7 +44,7 @@ final class LiteRtRuntimeStatus {
       compiledModelError = null,
       gpuError = null;
 
-  /// The runtime the app was built with.
+  /// The runtime in use.
   final LiteRtRuntime runtime;
 
   /// Whether `Interpreter` can be used.
@@ -69,6 +73,12 @@ final class LiteRtRuntimeStatus {
   /// while [compiledModelReady] is true.
   final String? gpuError;
 
+  /// Why a `flutterLitert.runtime=auto` build uses the bundled runtime rather
+  /// than Google Play services, when it does.
+  ///
+  /// Null in isolates other than the one that made the choice.
+  final String? playServicesError;
+
   /// Whether both `Interpreter` and `CompiledModel` can be used.
   bool get isReady => interpreterReady && compiledModelReady;
 
@@ -80,7 +90,8 @@ final class LiteRtRuntimeStatus {
       'gpuAvailable: $gpuAvailable'
       '${interpreterError == null ? '' : ', interpreterError: $interpreterError'}'
       '${compiledModelError == null ? '' : ', compiledModelError: $compiledModelError'}'
-      '${gpuError == null ? '' : ', gpuError: $gpuError'})';
+      '${gpuError == null ? '' : ', gpuError: $gpuError'}'
+      '${playServicesError == null ? '' : ', playServicesError: $playServicesError'})';
 }
 
 /// Thrown by `initializeAndroidRuntime` when neither half of the Google Play

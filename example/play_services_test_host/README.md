@@ -22,6 +22,19 @@ every physical device either, so they skip on both CI devices and report why.
 image without Google Play services and checks that initialization fails
 promptly with both reasons.
 
+`integration_test/auto_runtime_test.dart` covers `flutterLitert.runtime=auto`,
+which packages both runtimes. Build it with that property and say which
+runtime the device should end up with: `playServices` with Google Play
+services, `bundled` without.
+
+```bash
+env 'ORG_GRADLE_PROJECT_flutterLitert.runtime=auto' \
+  flutter test integration_test/auto_runtime_test.dart -d <device> \
+  --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices
+python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto \
+  build/app/outputs/flutter-apk/app-debug.apk
+```
+
 To compare runtimes on one device, run the real-model checks on their own,
 once as built and once with the bundled runtime:
 

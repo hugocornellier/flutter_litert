@@ -34,7 +34,6 @@ final class PlayServicesRuntime {
     status.put("gpuError", null);
     status.put("interpreterError", null);
     status.put("compiledModelError", null);
-    status.put("compiledModelAttached", false);
     callback.onComplete(status);
   }
 }

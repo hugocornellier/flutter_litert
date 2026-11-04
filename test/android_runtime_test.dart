@@ -30,10 +30,25 @@ void main() {
       expect(status.interpreterError, isNull);
       expect(status.compiledModelError, isNull);
       expect(status.gpuError, isNull);
+      expect(status.playServicesError, isNull);
       expect(
         status.toString(),
         'LiteRtRuntimeStatus(runtime: bundled, interpreterReady: true, '
         'compiledModelReady: true, gpuAvailable: null)',
+      );
+    });
+
+    test('an auto fallback to bundled says why', () {
+      const status = LiteRtRuntimeStatus.bundled(
+        playServicesError: 'Google Play services could not provide LiteRT',
+      );
+      expect(status.runtime, LiteRtRuntime.bundled);
+      expect(status.isReady, isTrue);
+      expect(
+        status.toString(),
+        endsWith(
+          'playServicesError: Google Play services could not provide LiteRT)',
+        ),
       );
     });
 
@@ -155,25 +170,8 @@ void main() {
       );
     });
 
-    test('a later GPU request learns the runtime was attached without it', () {
-      final reason = gpuUnavailableReason(
-        gpuRequested: false,
-        pluginGpuError: null,
-      );
-      expect(reason, contains('enableGpu: false'));
-      expect(reason, contains('cannot be added later'));
-      expect(errorFor(reason: reason), reason);
-    });
-
-    test('the attach reason prefers the plugin\'s GPU failure', () {
-      expect(
-        gpuUnavailableReason(gpuRequested: true, pluginGpuError: 'p'),
-        'p',
-      );
-      expect(
-        gpuUnavailableReason(gpuRequested: true, pluginGpuError: null),
-        contains('without a GPU accelerator'),
-      );
+    test('falls back to a generic reason when none was recorded', () {
+      expect(errorFor(), 'the CompiledModel runtime has no GPU accelerator');
     });
   });
 

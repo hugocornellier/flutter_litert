@@ -12,8 +12,10 @@
   Delegates, custom ops, NPU, and `flutter_litert_flex` are not available in
   this mode: constructing them fails with a clear error, and
   `PerformanceConfig` modes run on the Play services CPU path instead. The
-  plugin ships the R8 rule release builds of this mode need. The default
-  bundled runtime is unchanged. See
+  plugin ships the R8 rule release builds of this mode need.
+  `flutterLitert.runtime=auto` packages both runtimes and uses Play services
+  where it can provide them, the bundled runtime otherwise, for apps that
+  also ship outside Google Play. The default bundled runtime is unchanged. See
   [LiteRT from Google Play services](README.md#litert-from-google-play-services-android).
   Thanks to Sasha Denisov for the proposal.
 
