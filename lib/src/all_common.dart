@@ -1,5 +1,8 @@
 // Platform-neutral (WASM-safe) exports shared by the portable
 // `flutter_litert.dart` barrel and the native-only `native.dart` barrel.
+export 'android_runtime.dart';
+export 'unsupported/android_runtime_init.dart'
+    if (dart.library.io) 'native/android_runtime_init.dart';
 export 'compiled_model/compiled_model.dart'
     show
         Accelerator,

@@ -1,3 +1,24 @@
+## Unreleased
+
+* **Opt-in LiteRT runtime from Google Play services on Android**
+  ([issue #23](https://github.com/hugocornellier/flutter_litert/issues/23)).
+  Setting `flutterLitert.runtime=playServices` in the app's
+  `android/gradle.properties` builds against `play-services-litert` 17.0.0
+  instead of packaging LiteRT in the APK. `Interpreter` and `CompiledModel`
+  both run on it after a one-time `await initializeAndroidRuntime()`, and
+  `CompiledModel` can use the Play services GPU accelerator on devices where
+  Play services provides one (`status.gpuAvailable` says so). Initialization
+  gives up after a `timeout` (5 minutes by default) and can be retried.
+  Delegates, custom ops, NPU, and `flutter_litert_flex` are not available in
+  this mode: constructing them fails with a clear error, and
+  `PerformanceConfig` modes run on the Play services CPU path instead. The
+  plugin ships the R8 rule release builds of this mode need.
+  `flutterLitert.runtime=auto` packages both runtimes and uses Play services
+  where it can provide them, the bundled runtime otherwise, for apps that
+  also ship outside Google Play. The default bundled runtime is unchanged. See
+  [LiteRT from Google Play services](README.md#litert-from-google-play-services-android).
+  Thanks to Sasha Denisov for the proposal.
+
 ## 3.9.4
 
 * **Multi-input models now run on the web** ([issue #21](https://github.com/hugocornellier/flutter_litert/issues/21)).

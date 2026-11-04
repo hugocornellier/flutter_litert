@@ -13,6 +13,7 @@
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'bindings/android_runtime_shim.dart';
 import 'native/interpreter.dart';
 import 'native/interpreter_options.dart';
 import 'native/delegate.dart';
@@ -108,6 +109,11 @@ class InterpreterFactory {
         !Platform.isWindows) {
       return (options, null);
     }
+    // The Play services runtime exports no XNNPACK delegate API and applies
+    // XNNPACK itself by default, so the request is already met.
+    if (usesPlayServicesRuntime) {
+      return (options, null);
+    }
     try {
       final xnnOpts = XNNPackDelegateOptions(numThreads: threadCount);
       try {
@@ -127,6 +133,19 @@ class InterpreterFactory {
     InterpreterOptions options,
   ) {
     if (!Platform.isIOS && !Platform.isMacOS && !Platform.isAndroid) {
+      return (options, null);
+    }
+    // The Play services runtime has no Interpreter GPU delegate. Keep the
+    // CPU fallback every other delegate failure gets, but say why and where
+    // its GPU is.
+    if (usesPlayServicesRuntime) {
+      _warnDelegateFallback(
+        'GPU',
+        playServicesUnsupported(
+          'The Interpreter GPU delegate',
+          'Use CompiledModel with Accelerator.gpu for the Play services GPU.',
+        ),
+      );
       return (options, null);
     }
     try {

@@ -58,6 +58,7 @@ It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutt
   [CompiledModel (LiteRT Next)](#compiledmodel-litert-next).
 - The classic `Interpreter` API remains fully supported when needed.
 - Auto-bundled native libraries. No hand-built `.so`, `.dll`, or `.dylib` files: just add the dependency and it works on Android, iOS, macOS, Windows, and Linux (plus web via `initializeWeb()`). See [Platform support](#platform-support).
+- LiteRT from Google Play services on Android (opt-in). Set one Gradle property and the APK ships without its own LiteRT runtime, or ships it only as a fallback for devices without Play services. See [LiteRT from Google Play services](#litert-from-google-play-services-android).
 - Interpreter delegates. XNNPACK (CPU) on all native platforms, plus GPU, Metal, and CoreML. None are deprecated: `CompiledModel` is the newer API but currently miscomputes some models, so delegate-backed `Interpreter` inference stays a first-class path. See [Delegates](#delegates).
 - On-device training with weight persistence and [variable tensor inspection](#inspecting-variable-tensors). See [On-device training](#on-device-training).
 - Custom ops. MediaPipe's `Convolution2DTransposeBias` is included on native platforms, and you can register your own. See [Custom ops](#custom-ops).
@@ -623,6 +624,36 @@ flutterLitert.bundleGpuAccelerator=false
 ```
 
 The accelerator adds about 2.7 MB on arm64 or 3.4 MB on x86_64 before APK compression. ABI-split APKs and Play-delivered app bundles normally deliver only the matching ABI. This property affects only the CompiledModel accelerator; the classic Interpreter runtime and its GPU delegate are unchanged.
+
+### LiteRT from Google Play services (Android)
+
+By default the Android build packages LiteRT in the APK. Apps distributed through Google Play can instead use the LiteRT runtime that Google Play services provides (`com.google.android.gms:play-services-litert`), so the APK carries no LiteRT runtime of its own. The choice is made at build time and covers both `Interpreter` and `CompiledModel`:
+
+```properties
+# android/gradle.properties
+flutterLitert.runtime=playServices
+```
+
+In this mode the runtime must be initialized once, from the main isolate, before any model is created:
+
+```dart
+final status = await initializeAndroidRuntime(enableGpu: true);
+if (!status.isReady) {
+  // One of the two runtimes failed; the status says which and why.
+  debugPrint('$status');
+}
+```
+
+`initializeAndroidRuntime()` returns `LiteRtRuntimeStatus` immediately on every other platform and with the bundled runtime, so the call can stay in cross-platform code. It throws `LiteRtRuntimeUnavailableException` when neither runtime could be initialized, for example on a device without Google Play services. Isolates spawned after it completes, including `IsolateInterpreter`, need no further setup. `androidRuntime` reports which runtime the app uses.
+
+To also support devices without Google Play services, such as sideloaded installs or devices without Google apps, use `flutterLitert.runtime=auto`. The APK then packages both runtimes, and the first `initializeAndroidRuntime()` call chooses one for the process: Play services when both its Interpreter and CompiledModel runtimes initialize within `timeout`, the bundled runtime otherwise. It does not throw `LiteRtRuntimeUnavailableException`; `status.runtime` says which runtime was chosen and `status.playServicesError` why it is not Play services. Until that call completes, creating a model throws a `StateError` and `androidRuntime` is null. The choice holds for the process, including a later `enableGpu: true` call that Play services cannot give a GPU. A short `timeout` lets a first launch start on the bundled runtime while Play services is still downloading its module. Play services is chosen even when it has no GPU, as it can happen on a first launch (see below), so such a launch runs on the CPU rather than switching to the bundled GPU accelerator. The APK is larger than a bundled build, since it adds the Play services client and its dependencies, including WorkManager and Room. The bullets below apply when Play services is chosen; the build-time restrictions apply to `auto` except that `flutterLitert.bundleGpuAccelerator` and `flutterLitert.qualcommNpuRuntimeDir` are allowed. `Accelerator.npu` works only when the bundled runtime was chosen, so an app that needs NPU should use the default bundled build.
+
+- **GPU.** `enableGpu: true` asks Play services for its GPU accelerator, used by `CompiledModel` with `Accelerator.gpu`. `status.gpuAvailable` says whether it was provided, and `status.gpuError` why not. If the GPU request fails, CompiledModel still initializes for the CPU. The first successful initialization fixes GPU support for the process, so ask for it on the first call; a later `enableGpu: true` call, in any isolate, reports why there is none. Play services' GPU module is not on every device yet. When it is missing, Play services initializes without it and downloads it in the background, so the app's first launch runs on the CPU and a later launch can have the GPU. On some of these devices, a first initialization with `enableGpu: true` takes tens of seconds or longer, so keep the app in a loading state until the call completes. Check `status.gpuAvailable` rather than assuming it.
+- **Download and timeout.** Play services downloads the runtime module on first use. Pass `enableAutomaticDownload: false` to fail instead. A call that has not finished within `timeout` (5 minutes by default) reports the unfinished runtime as failed, and the next call retries it.
+- **Not available in this mode.** These throw `UnsupportedError`: the classic Interpreter delegates constructed directly (`XNNPackDelegate`, `GpuDelegateV2`), custom ops (including `addMediaPipeCustomOps`), `Accelerator.npu`, and Interpreter functions the Play services runtime does not export. `PerformanceConfig` keeps its best-effort behavior: Play services applies XNNPACK itself, so `.xnnpack()` and `.auto()` add no delegate, and `.gpu()` runs on the CPU and prints a warning. Use `CompiledModel` with `Accelerator.gpu` for the Play services GPU. The `flutter_litert_flex` addon and the `flutterLitert.bundleGpuAccelerator` and `flutterLitert.qualcommNpuRuntimeDir` properties are rejected at build time.
+- **Build requirements.** `minSdk` 24. `play-services-litert` 17.0.0 depends on Kotlin 2.4 libraries, so the app needs Kotlin Gradle plugin 2.3 or newer; the project template of current Flutter releases qualifies. An app that uses Hilt needs Hilt 2.60.1 or newer, because Hilt 2.59.2 cannot read Kotlin 2.4 metadata.
+
+[`example/play_services_test_host`](example/play_services_test_host) is a minimal app built this way. CI runs its integration tests on an emulator and on a physical phone in Firebase Test Lab, and its `auto` test on emulators with and without Google Play services. Its GPU test runs only where Play services provides the accelerator and skips elsewhere, which has so far included both CI devices.
 
 ### CompiledModel on the web
 

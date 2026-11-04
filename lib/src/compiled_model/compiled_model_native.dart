@@ -22,6 +22,7 @@ import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 
+import '../bindings/android_runtime_shim.dart';
 import '../bindings/litert_ffi.dart';
 import '../bindings/litert_loader.dart';
 import '../util/async_lock.dart';
@@ -456,6 +457,13 @@ class CompiledModel {
   }) {
     final requestsNpu = accelerators.contains(Accelerator.npu);
     if (Platform.isAndroid && requestsNpu) {
+      if (usesPlayServicesRuntime) {
+        throw playServicesUnsupported(
+          'Accelerator.npu',
+          'Use Accelerator.gpu or Accelerator.cpu, or the default bundled '
+              'runtime with a packaged vendor NPU module.',
+        );
+      }
       final nativeLibraryDir = androidNativeLibraryDir;
       if (nativeLibraryDir == null) {
         throw UnsupportedError(
@@ -1156,8 +1164,25 @@ Pointer<Void> _createEnvironment(
       if (runtimeDir != null)
         MapEntry(kLiteRtEnvOptionTagRuntimeLibraryDir, runtimeDir),
     ];
+    // The Play services runtime is only reachable through the handles its
+    // Java initialization produced, which LiteRT takes as environment options.
+    final shim = usesPlayServicesRuntime ? androidRuntimeShim : null;
+    final pointerOptions = <MapEntry<int, Pointer<Void>>>[
+      if (shim != null) ...[
+        MapEntry(kLiteRtEnvOptionTagSystemRuntimeHandle, shim.runtimeApi),
+        if (shim.gpuAccelerator != nullptr)
+          MapEntry(
+            kLiteRtEnvOptionTagSystemGpuAcceleratorHandle,
+            shim.gpuAccelerator,
+          ),
+        if (shim.context != nullptr)
+          MapEntry(kLiteRtEnvOptionTagContext, shim.context),
+      ],
+    ];
     final optionCount =
-        stringOptions.length + (autoRegisterAccelerators == null ? 0 : 1);
+        stringOptions.length +
+        pointerOptions.length +
+        (autoRegisterAccelerators == null ? 0 : 1);
     if (optionCount == 0) {
       _check(
         'LiteRtCreateEnvironment',
@@ -1173,6 +1198,13 @@ Pointer<Void> _createEnvironment(
           ..tag = option.key
           ..value.type = kLiteRtAnyTypeString
           ..value.value.strValue = value;
+        optionIndex++;
+      }
+      for (final option in pointerOptions) {
+        envOptions[optionIndex]
+          ..tag = option.key
+          ..value.type = kLiteRtAnyTypeVoidPtr
+          ..value.value.ptrValue = option.value;
         optionIndex++;
       }
       if (autoRegisterAccelerators != null) {

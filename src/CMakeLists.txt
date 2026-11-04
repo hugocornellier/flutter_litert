@@ -41,3 +41,54 @@ elseif(WIN32)
         SUFFIX ".dll"
     )
 endif()
+
+# Android runtime shim (play_services/flutter_litert_runtime.c). It reports
+# the runtime selected by the flutterLitert.runtime Gradle property and, for
+# the Google Play services runtime, forwards the LiteRt C API to the function
+# table that Play services provides.
+if(ANDROID)
+    set(FLUTTER_LITERT_RUNTIME "bundled" CACHE STRING
+        "LiteRT runtime: bundled, playServices or auto")
+
+    add_library(flutter_litert_runtime SHARED
+        play_services/flutter_litert_runtime.c
+    )
+    set_target_properties(flutter_litert_runtime PROPERTIES
+        C_VISIBILITY_PRESET hidden
+    )
+    # missing-prototypes makes the compiler check every generated forwarder
+    # against the public LiteRt declaration of the same name.
+    target_compile_options(flutter_litert_runtime PRIVATE
+        -Wall -Wextra -Werror=missing-prototypes
+    )
+    target_link_options(flutter_litert_runtime PRIVATE
+        -Wl,-z,max-page-size=16384
+    )
+
+    # auto links the Play services client too, and also packages the bundled
+    # runtime; initializeAndroidRuntime() chooses one of them at run time.
+    if(FLUTTER_LITERT_RUNTIME STREQUAL "playServices" OR
+       FLUTTER_LITERT_RUNTIME STREQUAL "auto")
+        find_package(litert_compiledmodel_gms_client REQUIRED CONFIG)
+        target_compile_definitions(flutter_litert_runtime PRIVATE
+            FLUTTER_LITERT_PLAY_SERVICES=1
+        )
+        if(FLUTTER_LITERT_RUNTIME STREQUAL "auto")
+            target_compile_definitions(flutter_litert_runtime PRIVATE
+                FLUTTER_LITERT_RUNTIME_AUTO=1
+            )
+        endif()
+        # The generated build_config.h the prefab headers include must come
+        # before the prefab include directory.
+        target_include_directories(flutter_litert_runtime BEFORE PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/play_services/include
+        )
+        target_link_libraries(flutter_litert_runtime PRIVATE
+            litert_compiledmodel_gms_client::litert_compiledmodel_gms_client
+        )
+    elseif(NOT FLUTTER_LITERT_RUNTIME STREQUAL "bundled")
+        message(FATAL_ERROR
+            "FLUTTER_LITERT_RUNTIME must be bundled, playServices or auto, "
+            "not '${FLUTTER_LITERT_RUNTIME}'")
+    endif()
+endif()

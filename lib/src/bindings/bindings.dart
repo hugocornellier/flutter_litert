@@ -18,6 +18,7 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 
+import 'package:flutter_litert/src/bindings/android_runtime_shim.dart';
 import 'package:flutter_litert/src/bindings/tensorflow_lite_bindings_generated.dart';
 import 'package:flutter_litert/src/delegates/delegate_library_loader.dart';
 
@@ -130,8 +131,38 @@ final DynamicLibrary _dylibGpu = () {
   throw UnsupportedError('Unknown platform: ${Platform.operatingSystem}');
 }();
 
+/// Play services client library that exports the TfLite C API as Gms* symbols.
+const String playServicesTfLiteLibrary = 'libtensorflowlite_jni_gms_client.so';
+
+/// Bindings to the TfLite C API of the Google Play services runtime.
+///
+/// Thrown readiness errors are not cached: Dart re-runs a top-level final's
+/// initializer after it throws, so this binds once the runtime is ready.
+TensorFlowLiteBindings _playServicesBindings() {
+  ensurePlayServicesInterpreterReady();
+  final library = DynamicLibrary.open(playServicesTfLiteLibrary);
+  return TensorFlowLiteBindings.fromLookup(<T extends NativeType>(name) {
+    try {
+      return library.lookup<T>('Gms$name');
+    } on ArgumentError {
+      throw playServicesUnsupported(
+        name,
+        'Use the default bundled runtime for this feature.',
+      );
+    }
+  });
+}
+
 /// TensorFlowLite Bindings
-final tfliteBinding = TensorFlowLiteBindings(_dylib);
+final tfliteBinding = usesPlayServicesRuntime
+    ? _playServicesBindings()
+    : TensorFlowLiteBindings(_dylib);
 
 /// TensorFlowLite Gpu Bindings
-final tfliteBindingGpu = TensorFlowLiteBindings(_dylibGpu);
+final tfliteBindingGpu = usesPlayServicesRuntime
+    ? throw playServicesUnsupported(
+        'The GPU delegate',
+        'Use CompiledModel with Accelerator.gpu and '
+            'initializeAndroidRuntime(enableGpu: true) instead.',
+      )
+    : TensorFlowLiteBindings(_dylibGpu);
