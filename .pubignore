@@ -17,6 +17,9 @@ build/
 # flex integration-test host: local-only, not a consumer-facing example
 example/flex_test_host/
 
+# Play services integration-test host: CI-only, not a consumer-facing example
+example/play_services_test_host/
+
 # web integration-test host: CI-only, not a consumer-facing example
 example_web/
 
@@ -45,6 +48,8 @@ test/
 
 # Local planning/generated documentation that is not part of the package API.
 doc/MODEL_STORE_PLAN.md
+doc/LITERT_2_2_0_UPGRADE_PLAN.md
+doc/RUNTIME_LOGGING_PLAN.md
 doc/api/
 
 # Old example subdirectories (leftover from tflite_flutter)
