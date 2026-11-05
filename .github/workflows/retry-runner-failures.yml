@@ -1,0 +1,41 @@
+name: Retry runner failures
+
+# Reruns the `build` workflow only when GitHub failed to provide or keep a machine
+# for a job, or the machine ran out of disk, so real failures stay red. Stops after
+# 3 attempts.
+on:
+  workflow_run:
+    workflows: [build]
+    types: [completed]
+
+permissions:
+  actions: write
+  checks: read
+
+jobs:
+  retry:
+    if: >-
+      github.event.workflow_run.run_attempt < 3 &&
+      (github.event.workflow_run.conclusion == 'failure' ||
+      github.event.workflow_run.conclusion == 'cancelled')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Rerun if a job lost its runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          jobs=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/attempts/$ATTEMPT/jobs" --paginate \
+            --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled") | .id')
+          for job in $jobs; do
+            if gh api "repos/$GH_REPO/check-runs/$job/annotations" --jq '.[].message' \
+              | grep -qE 'not acquired by Runner|lost communication with the server|No space left on device'; then
+              echo "Job $job lost its runner, rerunning failed jobs."
+              gh run rerun "$RUN_ID" --failed
+              exit 0
+            fi
+          done
+          echo "No runner failures found, nothing to rerun."

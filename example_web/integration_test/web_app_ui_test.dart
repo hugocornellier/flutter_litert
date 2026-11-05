@@ -105,12 +105,18 @@ void main() {
 
   /// Pumps until a detection cycle that started after [previous] completes,
   /// in either a fresh status line (returned) or an engine error (null).
+  ///
+  /// A new cycle can produce the same text as [previous], since the browser
+  /// rounds the inference time. The status line only matches [statusRe] while
+  /// idle, so seeing it clear also shows that a new cycle started.
   Future<String?> waitForIdle(WidgetTester tester, {String? previous}) async {
     String? status;
+    var cycleStarted = false;
     await pumpUntil(tester, () {
       if (errorLine(tester) != null) return true;
       status = statusLine(tester);
-      return status != null && status != previous;
+      if (status == null) cycleStarted = true;
+      return status != null && (status != previous || cycleStarted);
     }, 'a detection result (previous: $previous)');
     return status;
   }

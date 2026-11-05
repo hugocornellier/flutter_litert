@@ -402,6 +402,13 @@ jobs:
   build-android-play-services:
     runs-on: ubuntu-24.04
     steps:
+      # This job builds several APKs and runs an emulator, which can fill the
+      # runner's disk. It does not use these preinstalled toolchains.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
