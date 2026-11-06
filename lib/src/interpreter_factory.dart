@@ -20,7 +20,6 @@ import 'native/delegate.dart';
 import 'native/isolate_interpreter.dart';
 import 'delegates/xnnpack_delegate_native.dart';
 import 'delegates/metal_delegate_native.dart';
-import 'delegates/gpu_delegate_native.dart';
 import 'delegates/coreml_delegate_native.dart';
 import 'performance_config.dart';
 
@@ -62,7 +61,7 @@ class InterpreterFactory {
       return _createXnnpack(options, threadCount);
     }
     if (effectiveConfig.mode == PerformanceMode.gpu) {
-      return _createGpu(options);
+      return _createGpu(options, threadCount);
     }
     if (effectiveConfig.mode == PerformanceMode.coreml) {
       return _createCoreml(options);
@@ -92,7 +91,7 @@ class InterpreterFactory {
     int threadCount,
   ) {
     if (Platform.isIOS) {
-      return _createGpu(options);
+      return _createGpu(options, threadCount);
     }
     // Android, macOS, Linux, Windows, all use XNNPACK.
     return _createXnnpack(options, threadCount);
@@ -131,6 +130,7 @@ class InterpreterFactory {
 
   static (InterpreterOptions, Delegate?) _createGpu(
     InterpreterOptions options,
+    int threadCount,
   ) {
     if (!Platform.isIOS && !Platform.isMacOS && !Platform.isAndroid) {
       return (options, null);
@@ -148,10 +148,18 @@ class InterpreterFactory {
       );
       return (options, null);
     }
+    // The bundled Android runtime has no Interpreter GPU delegate either. Its
+    // GPU is behind CompiledModel, so say so and use the fastest thing left.
+    if (Platform.isAndroid) {
+      stderr.writeln(
+        'flutter_litert: the Interpreter GPU delegate is not available on '
+        'Android; falling back to XNNPACK. Use CompiledModel with '
+        'Accelerator.gpu for the GPU.',
+      );
+      return _createXnnpack(options, threadCount);
+    }
     try {
-      final gpuDelegate = (Platform.isIOS || Platform.isMacOS)
-          ? GpuDelegate()
-          : GpuDelegateV2() as Delegate;
+      final gpuDelegate = GpuDelegate();
       options.addDelegate(gpuDelegate);
       return (options, gpuDelegate);
     } catch (error) {

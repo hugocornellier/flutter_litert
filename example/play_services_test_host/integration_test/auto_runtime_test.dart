@@ -81,9 +81,11 @@ void main() {
   });
 
   testWidgets('the APK packages the bundled runtime too', (tester) async {
-    for (final library in ['libLiteRt.so', 'libtensorflowlite_jni.so']) {
-      expect(() => DynamicLibrary.open(library), returnsNormally);
-    }
+    expect(() => DynamicLibrary.open('libLiteRt.so'), returnsNormally);
+    expect(
+      () => DynamicLibrary.open('libtensorflowlite_jni.so'),
+      throwsArgumentError,
+    );
   });
 
   testWidgets('Interpreter and CompiledModel run', (tester) async {

@@ -19,13 +19,16 @@ import 'dart:ffi';
 import 'dart:io';
 
 import 'package:flutter_litert/src/bindings/android_runtime_shim.dart';
+import 'package:flutter_litert/src/bindings/litert_loader.dart';
 import 'package:flutter_litert/src/bindings/tensorflow_lite_bindings_generated.dart';
 import 'package:flutter_litert/src/delegates/delegate_library_loader.dart';
 
 /// Top-level finals are initialized lazily on first access in Dart.
 final DynamicLibrary _dylib = () {
+  // The bundled runtime exports the TfLite C API from the same library as the
+  // LiteRt C API, so Interpreter and CompiledModel share one handle.
   if (Platform.isAndroid) {
-    return DynamicLibrary.open('libtensorflowlite_jni.so');
+    return litertDynamicLibrary;
   }
 
   if (Platform.isIOS) {
@@ -123,14 +126,6 @@ String? _resolvePackagePath(String packageName) {
   return null;
 }
 
-final DynamicLibrary _dylibGpu = () {
-  if (Platform.isAndroid) {
-    return DynamicLibrary.open('libtensorflowlite_gpu_jni.so');
-  }
-
-  throw UnsupportedError('Unknown platform: ${Platform.operatingSystem}');
-}();
-
 /// Play services client library that exports the TfLite C API as Gms* symbols.
 const String playServicesTfLiteLibrary = 'libtensorflowlite_jni_gms_client.so';
 
@@ -159,10 +154,19 @@ final tfliteBinding = usesPlayServicesRuntime
     : TensorFlowLiteBindings(_dylib);
 
 /// TensorFlowLite Gpu Bindings
-final tfliteBindingGpu = usesPlayServicesRuntime
-    ? throw playServicesUnsupported(
-        'The GPU delegate',
-        'Use CompiledModel with Accelerator.gpu and '
-            'initializeAndroidRuntime(enableGpu: true) instead.',
-      )
-    : TensorFlowLiteBindings(_dylibGpu);
+///
+/// No runtime provides these any more: Android's only Interpreter GPU delegate
+/// was libtensorflowlite_gpu_jni.so, and the Metal delegate does not use them.
+final TensorFlowLiteBindings tfliteBindingGpu = () {
+  if (usesPlayServicesRuntime) {
+    throw playServicesUnsupported(
+      'The GPU delegate',
+      'Use CompiledModel with Accelerator.gpu and '
+          'initializeAndroidRuntime(enableGpu: true) instead.',
+    );
+  }
+  throw UnsupportedError(
+    'GpuDelegateV2 is not available on ${Platform.operatingSystem}. '
+    'Use CompiledModel with Accelerator.gpu instead.',
+  );
+}();
