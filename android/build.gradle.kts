@@ -81,8 +81,6 @@ val usePlayServicesRuntime = litertRuntime != "bundled"
 // Whether LiteRT itself is packaged in the APK (bundled and auto).
 val packageBundledRuntime = litertRuntime != "playServices"
 val playServicesLitertVersion = "17.0.0"
-// The classic runtime behind Interpreter.
-val litertInterpreterVersion = "1.4.2"
 
 android {
     compileSdk = 36
@@ -116,8 +114,8 @@ android {
     }
 
     defaultConfig {
-        // play-services-litert requires API 24.
-        minSdk = if (usePlayServicesRuntime) 24 else 21
+        // libLiteRt.so and play-services-litert both require API 24.
+        minSdk = 24
         if (usePlayServicesRuntime) {
             // Keeps release builds of apps that use the runtime from crashing
             // at launch; see the file.
@@ -148,30 +146,21 @@ dependencies {
             "com.google.android.gms:play-services-litert:$playServicesLitertVersion"
         )
     }
-    // auto packages only the native libraries of these; see
-    // DownloadInterpreterJniTask.
-    if (!usePlayServicesRuntime) {
-        add("implementation", "com.google.ai.edge.litert:litert:$litertInterpreterVersion")
-        add("implementation", "com.google.ai.edge.litert:litert-gpu:$litertInterpreterVersion")
-    }
 }
 
-// LiteRT Next native libraries (CompiledModel API), sourced directly from
+// LiteRT native libraries (Interpreter and CompiledModel), sourced directly from
 // Google's official Maven AAR (com.google.ai.edge.litert:litert:<ver>, the 2.x
 // line) instead of a hand-packaged release zip. Downloaded at build time (not
-// shipped in the pub package) and extracted as jniLibs alongside the classic
-// litert:1.4.x artifact above. The Interpreter path is unchanged.
+// shipped in the pub package) and extracted as jniLibs.
 //
 // The 2.x AAR ships libLiteRt.so for arm64-v8a, armeabi-v7a, and x86_64. Its
 // GPU accelerator, libLiteRtClGlAccelerator.so, ships for arm64-v8a and x86_64
 // only, so armeabi-v7a remains fully supported on the CPU.
 //
 // Why fetch+extract rather than a normal Gradle `implementation` dependency:
-// the classic Interpreter still needs litert:1.4.x (libtensorflowlite_jni.so),
-// and the 2.x AAR dropped that .so in favour of libLiteRt.so. Declaring both
-// versions of the same module would resolve to a single version and break one
-// of the two runtimes. Selectively extracting the 2.x native libraries keeps
-// them side by side.
+// Dart binds these libraries directly and never needs the AAR's Java, and
+// flutterLitert.runtime=auto cannot link that Java alongside
+// play-services-litert.
 val litertNextVersion = "2.3.2"
 
 // The GPU accelerator is bundled by default. Apps that do not use it can set
@@ -407,72 +396,6 @@ abstract class DownloadLitertJniTask : DefaultTask() {
     }
 }
 
-// flutterLitert.runtime=auto gets the classic runtime's native libraries from
-// the litert and litert-gpu AARs by extraction too, because it cannot link their
-// Java. play-services-litert raises the litert-api that Java is written against
-// to 2.x, which no longer has classes it uses (org.tensorflow.lite.Delegate, for
-// one), so R8 rejects an app that keeps it. Dart binds these libraries directly
-// and never needs that Java.
-abstract class DownloadInterpreterJniTask : DefaultTask() {
-    @get:Input
-    abstract val litertVersion: Property<String>
-
-    @get:OutputDirectory
-    abstract val outputDir: DirectoryProperty
-
-    @get:Inject
-    abstract val archiveOperations: ArchiveOperations
-
-    @get:Inject
-    abstract val fileSystemOperations: FileSystemOperations
-
-    @TaskAction
-    fun download() {
-        val version = litertVersion.get()
-        val outDir = outputDir.get().asFile
-        val abis = listOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        val libraries = mapOf(
-            "litert" to "libtensorflowlite_jni.so",
-            "litert-gpu" to "libtensorflowlite_gpu_jni.so"
-        )
-        logger.lifecycle(
-            "[flutter_litert] Downloading the Interpreter native libraries " +
-                "(${libraries.values.joinToString()}) from Maven $version..."
-        )
-        if (outDir.exists() && !outDir.deleteRecursively()) {
-            throw GradleException(
-                "[flutter_litert] Failed to clean generated JNI directory: $outDir"
-            )
-        }
-        outDir.mkdirs()
-        temporaryDir.mkdirs()
-        libraries.forEach { (artifact, library) ->
-            val aar = File(temporaryDir, "$artifact-$version.aar")
-            val url = "https://dl.google.com/dl/android/maven2/com/google/ai/edge/" +
-                "litert/$artifact/$version/$artifact-$version.aar"
-            URI(url).toURL().openStream().use { input ->
-                aar.outputStream().use { output -> input.copyTo(output) }
-            }
-            fileSystemOperations.copy {
-                from(archiveOperations.zipTree(aar)) {
-                    abis.forEach { abi -> include("jni/$abi/$library") }
-                    eachFile { path = path.substringAfter("jni/") }
-                    includeEmptyDirs = false
-                }
-                into(outDir)
-            }
-        }
-        val missing = abis.flatMap { abi -> libraries.values.map { "$abi/$it" } }
-            .filterNot { File(outDir, it).isFile }
-        if (missing.isNotEmpty()) {
-            throw GradleException(
-                "[flutter_litert] The litert $version AARs did not provide " +
-                    missing.joinToString()
-            )
-        }
-    }
-}
-
 // flutter_litert_flex links libtensorflowlite_jni.so, so it needs the bundled
 // runtime in use, which auto does not guarantee.
 if (usePlayServicesRuntime && rootProject.findProject(":flutter_litert_flex") != null) {
@@ -507,13 +430,6 @@ if (!packageBundledRuntime) {
             qualcommNpuRuntimeDir.fileValue(qualcommNpuRuntimeDirectory)
         }
     }
-    val downloadInterpreterJni = if (usePlayServicesRuntime) {
-        tasks.register<DownloadInterpreterJniTask>("downloadInterpreterJni") {
-            litertVersion.set(litertInterpreterVersion)
-        }
-    } else {
-        null
-    }
 
     androidComponents {
         onVariants { variant ->
@@ -521,9 +437,6 @@ if (!packageBundledRuntime) {
                 "[flutter_litert] AGP did not expose jniLibs sources for variant ${variant.name}"
             }
             jniLibs.addGeneratedSourceDirectory(downloadLitertJni) { it.outputDir }
-            if (downloadInterpreterJni != null) {
-                jniLibs.addGeneratedSourceDirectory(downloadInterpreterJni) { it.outputDir }
-            }
         }
     }
 }
