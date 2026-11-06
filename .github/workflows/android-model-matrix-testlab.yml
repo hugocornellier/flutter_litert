@@ -360,8 +360,10 @@ jobs:
             test "$PACKAGED_ABIS" = arm64-v8a
             grep -q '^lib/arm64-v8a/libLiteRt[.]so$' "$APK_LISTING"
             grep -q '^lib/arm64-v8a/libLiteRtClGlAccelerator[.]so$' "$APK_LISTING"
-            grep -q '^lib/arm64-v8a/libtensorflowlite_gpu_jni[.]so$' "$APK_LISTING"
-            grep -q '^lib/arm64-v8a/libtensorflowlite_flex_jni[.]so$' "$APK_LISTING"
+            if grep -Eq '^lib/arm64-v8a/libtensorflowlite(_gpu|_flex)?_jni[.]so$' "$APK_LISTING"; then
+              echo "A LiteRT 1.x library is packaged in shard $shard" >&2
+              exit 1
+            fi
             grep -q '^lib/arm64-v8a/libLiteRtCompilerPlugin_Qualcomm[.]so$' "$APK_LISTING"
             grep -q '^lib/arm64-v8a/libLiteRtDispatch_Qualcomm[.]so$' "$APK_LISTING"
             grep -q "^lib/arm64-v8a/libQnnHtpV${QUALCOMM_HTP_VERSION}Skel[.]so$" "$APK_LISTING"
