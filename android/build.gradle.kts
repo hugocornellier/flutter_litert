@@ -172,7 +172,7 @@ dependencies {
 // versions of the same module would resolve to a single version and break one
 // of the two runtimes. Selectively extracting the 2.x native libraries keeps
 // them side by side.
-val litertNextVersion = "2.2.0"
+val litertNextVersion = "2.3.2"
 
 // The GPU accelerator is bundled by default. Apps that do not use it can set
 // flutterLitert.bundleGpuAccelerator=false in android/gradle.properties.
@@ -243,9 +243,11 @@ abstract class DownloadLitertJniTask : DefaultTask() {
         val shouldBundleGpu = bundleGpuAccelerator.get()
         val qualcommNpuDir = qualcommNpuRuntimeDir.orNull?.asFile
         val outDir = outputDir.get().asFile
-        val aar = File(temporaryDir, "litert-$version.aar")
-        val url = "https://dl.google.com/dl/android/maven2/com/google/ai/edge/" +
-            "litert/litert/$version/litert-$version.aar"
+        // Since 2.3.0 the GPU accelerator ships in litert-gpu, not litert.
+        val artifacts = buildList {
+            add("litert")
+            if (shouldBundleGpu) add("litert-gpu")
+        }
         val libraryNames = buildList {
             add("libLiteRt.so")
             if (shouldBundleGpu) add("libLiteRtClGlAccelerator.so")
@@ -260,34 +262,39 @@ abstract class DownloadLitertJniTask : DefaultTask() {
                 "[flutter_litert] Failed to clean generated JNI directory: $outDir"
             )
         }
-        fileSystemOperations.delete {
-            delete(aar)
-        }
         outDir.mkdirs()
-        aar.parentFile.mkdirs()
-        URI(url).toURL().openStream().use { input ->
-            aar.outputStream().use { output -> input.copyTo(output) }
-        }
-        fileSystemOperations.copy {
-            from(archiveOperations.zipTree(aar)) {
-                // Android emulators do not provide working OpenCL. If this
-                // accelerator registers but cannot initialize, a combined GPU
-                // and CPU compilation can fail instead of falling back inside
-                // LiteRT. The Dart fallback factories catch that error and
-                // retry CPU-only.
-                include("jni/**/libLiteRt.so")
-                if (shouldBundleGpu) {
-                    include(
-                        "jni/arm64-v8a/libLiteRtClGlAccelerator.so",
-                        "jni/x86_64/libLiteRtClGlAccelerator.so"
-                    )
-                }
-                // Strip the AAR's leading "jni/" so files land at the jniLibs
-                // layout <abi>/libLiteRt*.so.
-                eachFile { path = path.substringAfter("jni/") }
-                includeEmptyDirs = false
+        temporaryDir.mkdirs()
+        artifacts.forEach { artifact ->
+            val aar = File(temporaryDir, "$artifact-$version.aar")
+            val url = "https://dl.google.com/dl/android/maven2/com/google/ai/edge/" +
+                "litert/$artifact/$version/$artifact-$version.aar"
+            fileSystemOperations.delete {
+                delete(aar)
             }
-            into(outDir)
+            URI(url).toURL().openStream().use { input ->
+                aar.outputStream().use { output -> input.copyTo(output) }
+            }
+            fileSystemOperations.copy {
+                from(archiveOperations.zipTree(aar)) {
+                    // Android emulators do not provide working OpenCL. If this
+                    // accelerator registers but cannot initialize, a combined GPU
+                    // and CPU compilation can fail instead of falling back inside
+                    // LiteRT. The Dart fallback factories catch that error and
+                    // retry CPU-only.
+                    include("jni/**/libLiteRt.so")
+                    if (shouldBundleGpu) {
+                        include(
+                            "jni/arm64-v8a/libLiteRtClGlAccelerator.so",
+                            "jni/x86_64/libLiteRtClGlAccelerator.so"
+                        )
+                    }
+                    // Strip the AAR's leading "jni/" so files land at the jniLibs
+                    // layout <abi>/libLiteRt*.so.
+                    eachFile { path = path.substringAfter("jni/") }
+                    includeEmptyDirs = false
+                }
+                into(outDir)
+            }
         }
 
         val qualcommNpuLibraries = if (qualcommNpuDir != null) {
@@ -393,7 +400,7 @@ abstract class DownloadLitertJniTask : DefaultTask() {
             val problems = missing.map { "missing $it" } +
                 unexpected.map { "unexpected $it" }
             throw GradleException(
-                "[flutter_litert] LiteRT Next Maven AAR yielded an invalid " +
+                "[flutter_litert] LiteRT Next Maven AARs yielded an invalid " +
                     "native library set: ${problems.joinToString()}"
             )
         }
