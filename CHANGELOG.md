@@ -1,3 +1,129 @@
+## 4.0.0
+
+Moves the Android `Interpreter` from LiteRT 1.4.2 to LiteRT 2.x, so both
+Android APIs now run on one shared `libLiteRt.so` (2.3.2), and updates every
+`CompiledModel` runtime. LiteRT 2.x has no Interpreter GPU delegate and no flex
+delegate on Android, so this release removes both there. iOS, macOS, Linux,
+and Windows keep their Interpreter delegates. Read the migration guide below
+before upgrading an Android app.
+
+### Breaking changes
+
+* **The Android `Interpreter` runs on LiteRT 2.x.** The bundled runtime is the
+  `libLiteRt.so` from Google's `com.google.ai.edge.litert:litert` 2.3.2 AAR,
+  the same library `CompiledModel` uses. LiteRT 1.4.2 is gone: the
+  `litert:1.4.2` and `litert-gpu:1.4.2` dependencies are no longer added to the
+  app, and `Interpreter.version` no longer reports `2.22.0-dev0+selfbuilt`.
+  The bundled native libraries are 4.2 to 8.7 MB smaller per ABI (arm64-v8a
+  8.9 MB, armeabi-v7a 3.7 MB, x86_64 11.7 MB, against about 15.7, 7.8, and
+  20.4 MB in 3.10.0).
+* **Android `minSdk` is now 24** for every runtime, because `libLiteRt.so`
+  needs API 24. An app below 24 fails to build with:
+
+  ```text
+  Manifest merger failed : uses-sdk:minSdkVersion 23 cannot be smaller than version 24 declared in library [:flutter_litert]
+  ```
+
+  Raise the app's `minSdk` to 24. `tools:overrideLibrary` does not help: the
+  build then succeeds, but LiteRT cannot load below API 24. The bundled
+  minimum was 21 in 3.10.x.
+* **Removed: `GpuDelegateV2`, `GpuDelegateOptionsV2`, and the
+  `TfLiteGpuInferenceUsage`, `TfLiteGpuInferencePriority`, and
+  `TfLiteGpuExperimentalFlags` enums.** They were the Android GL/CL GPU
+  delegate for the `Interpreter`, and LiteRT 2.x has none. This reverses the
+  3.7.0 statement that no removal was scheduled: the runtime that provided the
+  delegate is gone, so it could not be kept. On Android the GPU now means
+  `CompiledModel` with `Accelerator.gpu`. The Metal `GpuDelegate` on iOS and
+  macOS is unchanged.
+* **`PerformanceConfig.gpu()` and `PerformanceMode.gpu` use XNNPACK on the
+  bundled Android runtime.** They never throw: the first use in an isolate
+  prints one warning and continues on XNNPACK. They still use Metal on iOS and
+  macOS, `PerformanceConfig.auto()` is unchanged everywhere, and the Play
+  services runtime still runs them on its CPU path.
+* **Android flex is removed.** LiteRT 2.x has no flex delegate (Select TF ops)
+  for Android. `FlexDelegate.isAvailable` is false on Android, and
+  `FlexDelegate()` and `FlexDelegate.create()` throw an `UnsupportedError`
+  that explains what to do. An Android build that still includes
+  `flutter_litert_flex` fails at Gradle configuration with the same advice.
+  `flutter_litert_flex` 2.0.0 supports iOS, macOS, Linux, and Windows only.
+  Without flex, Android cannot run `SELECT_TF_OPS` models, including training
+  models that need TensorFlow ops (such as some `Conv2D` training graphs) and
+  checkpoint save and restore through `SaveV2`/`RestoreV2`. Weight persistence
+  through `get_weights`/`set_weights` signatures still works.
+* **Android 32-bit x86 is no longer packaged.** The ABIs are arm64-v8a,
+  armeabi-v7a, and x86_64. Flutter does not build 32-bit x86 Android apps, so
+  Flutter apps are not affected in practice.
+* **The `org.tensorflow.lite` Java classes leave the app's classpath.** They
+  came from the `litert:1.4.2` dependency, which the plugin no longer adds.
+  Android code that imported them must add its own LiteRT dependency. Apps
+  that already declare one no longer conflict with the plugin's.
+* **Small CPU numerics differences on Android.** LiteRT 2.3.2 is not
+  bit-identical to 1.4.2. Float CPU results stayed within 8.8e-05 relative on
+  the custom-op tests, and the largest summary difference across the model
+  matrix was 0.000932, with no top-1 index changed. Quantized models on the
+  plain CPU path moved more: MobileNet changed 7 of 1001 scores (the largest
+  from 83 to 90, top-5 order unchanged), and YAMNet changed 2 of 521 (0.8516 to
+  0.8008, top-1 unchanged, but class 132 now ties class 147). Quantized
+  XNNPACK results are bit-identical. Byte-level goldens recorded on Android
+  need regenerating.
+
+### Runtime updates
+
+* Android `CompiledModel`: LiteRT 2.2.0 to 2.3.2 (Google Maven). The GPU
+  accelerator `libLiteRtClGlAccelerator.so` now comes from the `litert-gpu`
+  2.3.2 AAR and is still packaged for arm64-v8a and x86_64 only; armeabi-v7a
+  is CPU-only.
+* Android Qualcomm NPU: the compiler plugin and dispatch libraries now come
+  from Google Maven (`litert-npu-runtime-qualcomm` 2.3.2), and the QAIRT pin
+  moves from 2.47.0.260601 to 2.50.0.260828. A
+  `flutterLitert.qualcommNpuRuntimeDir` bundle must be rebuilt from those two.
+  See `doc/android_compiled_model_npu.md`.
+* Linux and Windows `CompiledModel`: LiteRT 2.1.5 to 2.3.0 (`ai-edge-litert`
+  2.3.0), with the desktop WebGPU accelerator rebuilt for 2.3.0.
+* Web: LiteRT.js 2.5.3 to 2.6.0 (`@litertjs/core@2.6.0`).
+* iOS and macOS `CompiledModel`: LiteRT 2.3.x.
+* The Play services runtime (`play-services-litert` 17.0.0) is unchanged.
+* The example app builds with Kotlin 2.4.0.
+
+### Migrating from 3.10.x
+
+1. **Raise `minSdk` to 24** in `android/app/build.gradle(.kts)` if it is
+   lower. If the app must support API 21 to 23, stay on 3.10.x.
+2. **Replace `GpuDelegateV2`.** Code that constructs it no longer compiles.
+   For the GPU on Android, use `CompiledModel` with `Accelerator.gpu` (for
+   example `CompiledModel.fromBufferWithConfig(bytes)`, whose Auto policy
+   tries the GPU and falls back to the CPU), and check its output once with
+   `verifyCompiledModel`. For an `Interpreter`, use `PerformanceConfig.auto()`
+   or `PerformanceConfig.xnnpack()`.
+3. **Expect some models to run slower without the Interpreter GPU.** The
+   physical-device matrix (Pixel 9 Pro, Galaxy A56, Galaxy S23, 29 models)
+   found three models that no Android GPU path now runs on any of the three
+   devices: `face_blendshapes`, `face_detection_full_range_sparse`, and
+   `species_classifier_float16`. Where the Interpreter GPU was the fastest
+   path, the best remaining path was slower:
+   * Pixel 9 Pro: `mobilefacenet` +21%, `efficientdet_lite2` +18%,
+     `selfie_multiclass` +11%, `pose_landmark_heavy` +10% (24.2 to 26.8 ms),
+     `yolov8n_float32` +1%.
+   * Galaxy A56: `mobilefacenet` +20% (3.7 to 4.4 ms), `yolov8n_float32` +5%.
+   * Galaxy S23: `superanimal_ssdlite_float16` +57% (4.7 to 7.4 ms),
+     `mobilefacenet` +15%, `efficientdet_lite2` +8%, `efficientdet_lite0` +6%.
+
+   These are median latencies from single Test Lab runs, so differences under
+   about 25% are within run-to-run noise, and battery, heat, and CPU load were
+   not measured. If one of these models matters to you, stay on 3.10.x,
+   try a re-exported or newer version of the model on `CompiledModel`, or wait
+   for a LiteRT release that runs it on the GPU. `CompiledModel` still returns
+   wrong output for some models whose output tensor is dynamic, so gate it with
+   `verifyCompiledModel`.
+4. **Android flex users:** reconvert the model to LiteRT built-in ops and
+   remove `flutter_litert_flex` from the Android build, or stay on
+   `flutter_litert` 3.10.x with `flutter_litert_flex` 1.3.0. Apps that use
+   flex only on iOS, macOS, Linux, or Windows move to
+   `flutter_litert: ^4.0.0` with `flutter_litert_flex: ^2.0.0`.
+5. **Android code that imported `org.tensorflow.lite` classes** adds its own
+   `com.google.ai.edge.litert:litert` dependency.
+6. **Re-check exact-output tests** on Android, as described above.
+
 ## 3.10.0
 
 * **Opt-in LiteRT runtime from Google Play services on Android**
