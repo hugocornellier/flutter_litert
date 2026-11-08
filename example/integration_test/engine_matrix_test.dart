@@ -3,7 +3,7 @@
 // Cross-platform engine x accelerator benchmark + correctness matrix.
 //
 // Runs every bundled model through BOTH runtimes: the classic Interpreter
-// (cpu / xnnpack / Metal GPU / GL-CL GPU / CoreML) and the LiteRT Next
+// (cpu / xnnpack / Metal GPU / CoreML) and the LiteRT Next
 // CompiledModel (cpu / strict-GPU fp16+fp32 sync / strict-GPU async / GPU|CPU
 // fallback / host-memory async), measuring per cell:
 //   - compile_ms   : runtime/delegate build + tensor allocation (cold start)
@@ -77,12 +77,6 @@ final interpModes = <InterpMode>[
     final d = GpuDelegate(
       options: GpuDelegateOptions(allowPrecisionLoss: true),
     );
-    o.addDelegate(d);
-    return (o, d);
-  }),
-  InterpMode('gpu_glcl', () {
-    final o = InterpreterOptions();
-    final d = GpuDelegateV2();
     o.addDelegate(d);
     return (o, d);
   }),
@@ -474,7 +468,7 @@ void main() {
         '${meta['build_mode']} / commit ${meta['litert_commit']}',
       );
       print(
-        'Interpreter: cpu/xnn/gpu_metal/gpu_glcl/coreml. CompiledModel: '
+        'Interpreter: cpu/xnn/gpu_metal/coreml. CompiledModel: '
         'cpu, strict-gpu fp16/fp32 sync, gpu async, gpu|cpu, host-mem async.',
       );
       print('=' * 130);

@@ -88,15 +88,6 @@ const _modes = <_ModeSpec>[
     timingScope: 'invoke_only',
   ),
   _ModeSpec(
-    label: 'interpreter_gpu_v2',
-    engine: 'interpreter',
-    delegate: 'gpu_v2_gl_cl',
-    accelerators: 'gpu_v2_gl_cl',
-    precision: 'fp32',
-    bufferMode: 'interpreter_tensor',
-    timingScope: 'invoke_only',
-  ),
-  _ModeSpec(
     label: 'interpreter_flex',
     engine: 'interpreter',
     delegate: 'flex_select_tf_ops',

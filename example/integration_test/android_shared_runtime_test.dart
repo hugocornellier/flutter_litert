@@ -303,31 +303,4 @@ void main() {
 
     expectAllEqual(await running, expected, 'compiled model');
   });
-
-  testWidgets('PerformanceConfig.gpu falls back to XNNPACK', (tester) async {
-    final (options, delegate) = InterpreterFactory.create(
-      const PerformanceConfig.gpu(),
-    );
-    final interpreter = Interpreter.fromBuffer(simpleModel, options: options);
-    addTearDown(() {
-      interpreter.close();
-      options.delete();
-      delegate?.delete();
-    });
-
-    expect(delegate, isA<XNNPackDelegate>());
-    interpreter.allocateTensors();
-    interpreter.getInputTensor(0).asFloat32View()[0] = 3.0;
-    interpreter.invoke();
-    expect(
-      interpreter.getOutputTensor(0).asFloat32View()[0],
-      closeTo(7.0, 1e-3),
-    );
-  });
-
-  testWidgets('GpuDelegateV2 explains that it is gone on Android', (
-    tester,
-  ) async {
-    expect(() => GpuDelegateV2(), throwsA(isA<UnsupportedError>()));
-  });
 }

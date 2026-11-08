@@ -861,16 +861,6 @@ final _interpModes = <_InterpMode>[
     },
   ),
   _InterpMode(
-    label: 'interpreter_gpu_v2',
-    delegate: 'gpu_v2_gl_cl',
-    requiresActiveDelegate: true,
-    builder: () async {
-      final delegate = GpuDelegateV2();
-      final options = _newInterpreterOptions(delegate: delegate);
-      return _InterpResources(options, delegate);
-    },
-  ),
-  _InterpMode(
     label: 'interpreter_flex',
     delegate: 'flex_select_tf_ops',
     requiresActiveDelegate: true,
