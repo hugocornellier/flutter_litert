@@ -610,7 +610,7 @@ class EngineConfig {
 String perfModeLabel(PerformanceMode m) => switch (m) {
   PerformanceMode.disabled => 'CPU (no delegate)',
   PerformanceMode.xnnpack => 'XNNPACK',
-  PerformanceMode.gpu => Platform.isAndroid ? 'GPU (GL/CL)' : 'GPU (Metal)',
+  PerformanceMode.gpu => 'GPU (Metal)',
   PerformanceMode.coreml => 'CoreML',
   PerformanceMode.auto => 'Auto',
 };
@@ -620,8 +620,9 @@ bool perfModeAvailable(PerformanceMode m) => switch (m) {
   PerformanceMode.disabled ||
   PerformanceMode.xnnpack ||
   PerformanceMode.auto => true,
-  PerformanceMode.gpu =>
-    Platform.isIOS || Platform.isMacOS || Platform.isAndroid,
+  // Android has no Interpreter GPU delegate since 4.0.0: its GPU is the
+  // CompiledModel GPU accelerator.
+  PerformanceMode.gpu => Platform.isIOS || Platform.isMacOS,
   PerformanceMode.coreml => Platform.isIOS || Platform.isMacOS,
 };
 
@@ -629,7 +630,8 @@ bool perfModeAvailable(PerformanceMode m) => switch (m) {
 String? perfModeReason(PerformanceMode m) {
   if (perfModeAvailable(m)) return null;
   return switch (m) {
-    PerformanceMode.gpu => 'GPU delegate: Apple and Android only',
+    PerformanceMode.gpu =>
+      'GPU delegate: iOS and macOS only (use CompiledModel GPU on Android)',
     PerformanceMode.coreml => 'CoreML: iOS and macOS only',
     _ => 'Unavailable on this platform',
   };

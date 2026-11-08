@@ -1,15 +1,12 @@
 // This factory is the supported way to get delegate-backed Interpreter
-// inference: it selects the platform GPU/Metal/CoreML delegate and falls back
-// when one declines a model.
+// inference: it selects the platform delegate (XNNPACK, Metal, CoreML) and
+// falls back when one declines a model.
 //
-// Those delegates used to be deprecated in favour of CompiledModel, and this
-// file suppressed the resulting warning. That was untenable in both directions.
-// The public PerformanceConfig.gpu() / .coreml() are built on them and were
-// never deprecated, so the advertised 4.0.0 removal would have broken supported
-// API with no notice. And CompiledModel cannot yet stand in, because it
-// miscomputes models whose output tensor ends up dynamic (see
-// doc/delegate_verification.md). The deprecations were dropped in 3.7.0, so the
-// suppression went with them.
+// PerformanceConfig.gpu() means the Metal delegate on iOS and macOS. Android
+// has no Interpreter GPU delegate since 4.0.0, because LiteRT 2.x ships none:
+// the bundled runtime warns once and uses XNNPACK, and Play services keeps its
+// own CPU fallback. Android GPU inference goes through CompiledModel with
+// Accelerator.gpu.
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -38,7 +35,29 @@ class InterpreterFactory {
     );
   }
 
+  static bool _warnedAndroidGpuRemoved = false;
+
+  /// Says once that `PerformanceConfig.gpu()` became XNNPACK on Android.
+  ///
+  /// Apps often build an interpreter per frame or per model, so a warning on
+  /// every call would flood the log. Dart keeps statics per isolate, so a
+  /// background isolate that also asks for the GPU prints it once more.
+  static void _warnAndroidGpuRemovedOnce() {
+    if (_warnedAndroidGpuRemoved) return;
+    _warnedAndroidGpuRemoved = true;
+    stderr.writeln(
+      'flutter_litert: PerformanceConfig.gpu() uses XNNPACK on Android. The '
+      'Android Interpreter GPU delegate (GpuDelegateV2) was removed in '
+      'flutter_litert 4.0.0, because LiteRT 2.x has none. For the GPU, use '
+      'CompiledModel with Accelerator.gpu.',
+    );
+  }
+
   /// Creates [InterpreterOptions] and an optional [Delegate] based on [config].
+  ///
+  /// Never throws for an unavailable delegate: it warns on stderr and returns
+  /// options for the next best path. [PerformanceMode.gpu] on bundled Android
+  /// returns an XNNPACK delegate, and on Play services no delegate.
   static (InterpreterOptions, Delegate?) create(
     PerformanceConfig? config, {
     bool addMediaPipeCustomOps = false,
@@ -149,13 +168,10 @@ class InterpreterFactory {
       return (options, null);
     }
     // The bundled Android runtime has no Interpreter GPU delegate either. Its
-    // GPU is behind CompiledModel, so say so and use the fastest thing left.
+    // GPU is behind CompiledModel, so say so and use the fastest thing left:
+    // XNNPACK is often several times faster than bare CPU.
     if (Platform.isAndroid) {
-      stderr.writeln(
-        'flutter_litert: the Interpreter GPU delegate is not available on '
-        'Android; falling back to XNNPACK. Use CompiledModel with '
-        'Accelerator.gpu for the GPU.',
-      );
+      _warnAndroidGpuRemovedOnce();
       return _createXnnpack(options, threadCount);
     }
     try {

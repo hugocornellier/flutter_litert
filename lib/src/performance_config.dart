@@ -6,7 +6,12 @@ enum PerformanceMode {
   /// XNNPACK delegate (CPU-optimized, all native platforms).
   xnnpack,
 
-  /// GPU delegate (Metal on iOS and macOS, OpenGL/OpenCL on Android).
+  /// Metal GPU delegate on iOS and macOS.
+  ///
+  /// Android has no Interpreter GPU delegate since flutter_litert 4.0.0, so
+  /// this mode uses XNNPACK there (with a one-time warning), and no delegate on
+  /// the Play services runtime. For the GPU on Android, use `CompiledModel`
+  /// with `Accelerator.gpu`. Other platforms run on CPU.
   gpu,
 
   /// CoreML delegate (iOS/macOS only).
@@ -31,7 +36,8 @@ class PerformanceConfig {
   const PerformanceConfig.xnnpack({this.numThreads})
     : mode = PerformanceMode.xnnpack;
 
-  /// Creates a GPU-accelerated config.
+  /// Creates a GPU-accelerated config: Metal on iOS and macOS, XNNPACK on
+  /// Android. See [PerformanceMode.gpu].
   const PerformanceConfig.gpu({this.numThreads}) : mode = PerformanceMode.gpu;
 
   /// Creates a CoreML-accelerated config.
