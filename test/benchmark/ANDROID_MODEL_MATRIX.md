@@ -4,11 +4,14 @@ The Android matrix runs the same deterministic tensor-parity accuracy check as
 the macOS matrix against all 29 published models. It measures every Android
 backend currently exposed by `flutter_litert`:
 
-- Interpreter: plain CPU, XNNPACK, Flex, and GPU v2 GL/CL at fp16 and fp32.
+- Interpreter: plain CPU and XNNPACK.
 - CompiledModel: every non-empty combination of CPU, GPU, and NPU at fp32,
   plus strict GPU fp16.
 
-That is 13 backend cells per model and 377 rows in the merged dataset. Each
+That is 10 backend cells per model and 290 rows in the merged dataset. The
+recorded 3.x datasets (`ANDROID_*MODEL_MATRIX_RESULTS.json`) also measured
+`interpreter_flex` and `interpreter_gpu_v2_*`, which were removed in 4.0.0, so
+the Galaxy S23 dataset has 13 cells per model and 377 rows. Each
 successful cell executes three finite, non-degenerate fixtures and compares
 every float output to the plain CPU Interpreter reference using
 `atol = 1e-4` and `rtol = 1%`. Warm-up and timed samples are configured by the
@@ -19,9 +22,13 @@ workflow (5 and 15 by default).
 [`android-model-matrix-testlab.yml`](../../.github/workflows/android-model-matrix-testlab.yml)
 pins the exact commits of the seven public model repositories, balances the 29
 models into five shards, and builds one arm64 APK per shard. A free virtual
-CPU-only smoke must pass before it submits the five physical Galaxy S23 runs.
-The physical device supplies the Android GPU drivers and Snapdragon 8 Gen 2
-HTP v73 NPU used by every shard.
+CPU-only smoke must pass before it submits the five physical runs. The
+`device_model` input picks the device: `dm1q` (Galaxy S23, the default),
+`caiman` (Pixel 9 Pro), or `a56x` (Galaxy A56). The `abi` input can switch the
+shards to the 32-bit `armeabi-v7a` build. On the Galaxy S23 the physical device
+supplies the Android GPU drivers and Snapdragon 8 Gen 2 HTP v73 NPU used by
+every shard. The merged report names the device recorded in the shard
+metadata.
 
 No backend exception aborts a shard. The row records the model, API, mode,
 phase, Dart error type, stack, and any parsed numeric/symbolic `LiteRtStatus`
@@ -40,9 +47,9 @@ drivers are thread-affine and the package documents mobile-accelerator
 Every workflow run uploads one artifact containing:
 
 - `ANDROID_MODEL_MATRIX_RESULTS.json`: full metadata, references, accuracy
-  cases, timing distributions, errors, and all 377 rows;
+  cases, timing distributions, errors, and all 290 rows;
 - `ANDROID_MODEL_MATRIX_RESULTS.csv`: flattened rows for analysis;
-- `ANDROID_MODEL_MATRIX_REPORT.md`: the giant 29-model × 13-backend table;
+- `ANDROID_MODEL_MATRIX_REPORT.md`: the giant 29-model × 10-backend table;
 - `raw/`: Test Lab logcat, instrumentation result, and JUnit XML per shard.
 
 **Note (2026-09-24): the `cat_detection` and `dog_detection` rows in the three

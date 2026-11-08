@@ -34,6 +34,8 @@ each run so the file accumulates a record across hardware.
 delegate, Apple) · `gpu_glcl` (GL/CL GPU delegate, Android/desktop) · `coreml`
 (CoreML/ANE, Apple).
 
+> The GL/CL delegate behind `gpu_glcl` (`GpuDelegateV2`) was removed in 4.0.0; the `gpu_glcl` numbers below are historical.
+
 **CompiledModel:** `cm_cpu` · `cm_gpu16` (strict GPU, fp16) · `cm_gpu32` (strict
 GPU, fp32) · `cm_gpuA` (strict GPU, fp16, async) · `cm_g+c` (GPU|CPU fallback,
 fp32) · `cm_hmA` (strict GPU, fp16, host-memory buffers, async).
@@ -131,7 +133,7 @@ fall back to the classic Interpreter instead, which is what
 Run `test/benchmark/run_matrix.sh linux` on the target box and commit the updated CSV +
 table. Expectations to verify: `gpu_metal`/`coreml` are `unsupported`; the new
 `libLiteRtWebGpuAccelerator.so` (Vulkan) drives the `cm_gpu*`/`cm_g+c` columns;
-`gpu_glcl` availability depends on the GL/CL delegate.
+`gpu_glcl` no longer exists, since its GL/CL delegate was removed in 4.0.0.
 
 ## Windows: _pending_
 

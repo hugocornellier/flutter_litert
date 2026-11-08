@@ -1,5 +1,7 @@
 # Android physical-device model matrix
 
+> Historical 3.x run. The `interpreter_flex` and `interpreter_gpu_v2_*` modes were removed in 4.0.0; their rows are kept as recorded.
+
 Generated 2026-08-05T10:58:04.319685Z from five Firebase Test Lab Galaxy S23 shards.
 
 - Rows: 377/377 (rectangular: true)
