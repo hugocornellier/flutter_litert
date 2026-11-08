@@ -1887,13 +1887,13 @@ flutter_litert ships two independent native runtimes, one per API. The classic `
 | macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 (CPU / Metal GPU / Core ML NPU) |
 | Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.0 |
 | Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.0 |
-| Web | LiteRT.js 2.5.3 / TFLite.js (WASM) | LiteRT.js 2.5.3 (WASM / WebGPU) |
+| Web | LiteRT.js 2.6.0 / TFLite.js (WASM) | LiteRT.js 2.6.0 (WASM / WebGPU) |
 
 Bundling:
 - Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, plus `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64`, from the `2.2.0` AAR. SoC-specific NPU runtimes remain app-provided.
 - iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` xcframework (release `litert-ios-v1.0.1` for SPM, `litert-ios-v1.0.0` for CocoaPods; both the same commit-pinned LiteRT Next build, commit `1adc2475`).
 - macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` wheel (2.3.0 on Windows and Linux, 2.1.5 on macOS), bundled via CMake on Windows and Linux and via CocoaPods on macOS.
-- Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.5.3`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).
+- Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.6.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).
 
 > Intel Macs only: the iOS simulator is not supported under Swift Package Manager on x86_64. You have two options: test using a real iOS device or switch to CocoaPods to use the simulator. This applies to Intel Macs only.
 
