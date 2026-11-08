@@ -350,11 +350,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # Runs real CompiledModel inference plus the classic Interpreter, which
-      # on Android loads a different library entirely (libtensorflowlite_jni.so
-      # from litert:1.4.x, next to libLiteRt.so from the 2.x AAR) and is
-      # otherwise never executed anywhere in CI. CompiledModel CPU and
-      # fallback-factory tests pass. The bundled x86_64 accelerator registers,
+      # Runs real CompiledModel inference plus the classic Interpreter. Both
+      # load from the one libLiteRt.so of the litert 2.x AAR on Android, and
+      # interpreter_coexistence_test checks that they share it without
+      # clashing. CompiledModel CPU and fallback-factory tests pass. The bundled x86_64 accelerator registers,
       # while direct combined and strict-GPU tests skip because emulators have
       # no working OpenCL. Up to three attempts: Gradle's SDK-component install
       # can receive a corrupted NDK archive ("Error on ZipFile unknown
@@ -391,14 +390,62 @@ jobs:
           python3 -I scripts/check_android_runtime_apk.py --runtime bundled
           example/build/app/outputs/flutter-apk/app-debug.apk
 
+  # build-android on the oldest Android the plugin supports (minSdk 24), where
+  # libLiteRt.so must still load and run both APIs. The image is
+  # google_apis x86_64 (revision 27 in the SDK index) rather than default
+  # x86_64, whose last revision (8) is years older; the bundled runtime uses
+  # no Google API, so the extra apps on the image do not change the result.
+  build-android-api24:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Enable KVM for hardware-accelerated emulation
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # The same suites and retries as build-android.
+      - name: Run integration tests (Android 7.0 emulator)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 24
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          working-directory: example
+          # One line on purpose, as in build-android.
+          script: >-
+            bash -c 'set +e; rc=1; for attempt in 1 2 3; do
+            flutter test integration_test/compiled_model_test.dart -d emulator-5554 --timeout 600s &&
+            flutter test integration_test/interpreter_coexistence_test.dart -d emulator-5554 --timeout 600s; rc=$?;
+            [ "$rc" -eq 0 ] && break;
+            echo "::warning::Android API 24 integration tests attempt $attempt failed (rc=$rc)";
+            [ "$attempt" -lt 3 ] && rm -rf "$ANDROID_HOME"/ndk/* "$ANDROID_HOME"/.temp;
+            done; exit "$rc"'
+
   # flutterLitert.runtime=playServices (issue #23): LiteRT comes from Google
   # Play services instead of the APK. example/play_services_test_host is built
-  # with that property, since the main example depends on flutter_litert_flex,
-  # which Play services mode rejects. The APK check runs on every push; the
-  # integration test then runs on an emulator image with the Play Store, where
-  # Play services downloads its LiteRT module on first use. Emulators have no
-  # Play services GPU accelerator, so the GPU tests skip here; they run only on
-  # a physical phone where Play services provides one.
+  # with that property: a small app that sets the mode in its own
+  # gradle.properties and holds the Play services tests, apart from the main
+  # example and its bundled-runtime suites. The APK check runs on every push;
+  # the integration test then runs on an emulator image with the Play Store,
+  # where Play services downloads its LiteRT module on first use. Emulators
+  # have no Play services GPU accelerator, so the GPU tests skip here; they run
+  # only on a physical phone where Play services provides one.
   build-android-play-services:
     runs-on: ubuntu-24.04
     steps:
@@ -598,6 +645,11 @@ jobs:
           fi
           unzip -l "$AAR" | grep -E 'jni/.*/libtflite_custom_ops\.so' \
             || { echo '::error::CMake custom-ops .so missing from AAR under AGP 9'; exit 1; }
+          # LiteRT 1.x is gone: the Interpreter loads from libLiteRt.so.
+          if unzip -l "$AAR" | grep -E 'jni/.*/libtensorflowlite_(gpu_|flex_)?jni\.so'; then
+            echo '::error::the AAR must not package a LiteRT 1.x library'
+            exit 1
+          fi
           echo 'AGP 9 build packaged the expected native libraries.'
 
   build-ios:
