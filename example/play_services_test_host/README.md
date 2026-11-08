@@ -4,9 +4,9 @@ Dedicated integration test host for `flutterLitert.runtime=playServices`, the
 opt-in Android build that takes LiteRT from Google Play services instead of
 packaging it in the APK.
 
-The property is set in `android/gradle.properties`. The main `example/` app
-cannot be built this way because it depends on `flutter_litert_flex`, which
-needs the bundled runtime, so this host depends on `flutter_litert` alone.
+The property is set in `android/gradle.properties`. This host depends on
+`flutter_litert` alone and keeps the Play services tests apart from the main
+`example/` app, whose suites cover the bundled runtime.
 
 `integration_test/play_services_runtime_test.dart` checks that models fail
 with a clear error before `initializeAndroidRuntime()`, then runs the
