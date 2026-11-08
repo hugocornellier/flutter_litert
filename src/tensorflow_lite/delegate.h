@@ -21,32 +21,10 @@ limitations under the License.
 #include <stddef.h>
 
 #include "common.h"
-#include "delegate_options.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif  // __cplusplus
-
-// Creates a new delegate instance that need to be destroyed with
-// TfLiteGpuDelegateV2Delete when delegate is no longer used by TFLite.
-//
-// This delegate encapsulates multiple GPU-acceleration APIs under the hood to
-// make use of the fastest available on a device.
-//
-// When `options` is set to `nullptr`, then default options are used.
-//
-// `TfLiteGpuDelegateV2Create` creates an instance for use with the synchronous
-// API.  `TfLiteGpuDelegateV2CreateAsync` creates an instance for use with the
-// asynchronous API.
-TFL_CAPI_EXPORT TfLiteDelegate* TfLiteGpuDelegateV2Create(
-    const TfLiteGpuDelegateOptionsV2* options);
-#if defined(__ANDROID__)
-TFL_CAPI_EXPORT TfLiteDelegate* TfLiteGpuDelegateV2CreateAsync(
-    const TfLiteGpuDelegateOptionsV2* options);
-#endif
-
-// Destroys a delegate created with `TfLiteGpuDelegateV2Create` call.
-TFL_CAPI_EXPORT void TfLiteGpuDelegateV2Delete(TfLiteDelegate* delegate);
 
 TFL_CAPI_EXPORT TfLiteDelegate* tflite_plugin_create_delegate(
     const char* const* options_keys, const char* const* options_values,

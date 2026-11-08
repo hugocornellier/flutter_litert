@@ -152,21 +152,3 @@ TensorFlowLiteBindings _playServicesBindings() {
 final tfliteBinding = usesPlayServicesRuntime
     ? _playServicesBindings()
     : TensorFlowLiteBindings(_dylib);
-
-/// TensorFlowLite Gpu Bindings
-///
-/// No runtime provides these any more: Android's only Interpreter GPU delegate
-/// was libtensorflowlite_gpu_jni.so, and the Metal delegate does not use them.
-final TensorFlowLiteBindings tfliteBindingGpu = () {
-  if (usesPlayServicesRuntime) {
-    throw playServicesUnsupported(
-      'The GPU delegate',
-      'Use CompiledModel with Accelerator.gpu and '
-          'initializeAndroidRuntime(enableGpu: true) instead.',
-    );
-  }
-  throw UnsupportedError(
-    'GpuDelegateV2 is not available on ${Platform.operatingSystem}. '
-    'Use CompiledModel with Accelerator.gpu instead.',
-  );
-}();

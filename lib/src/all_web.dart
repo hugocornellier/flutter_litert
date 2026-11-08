@@ -12,7 +12,6 @@ export 'web/web_init.dart';
 export 'web/js_interop/litertjs_bindings.dart'
     show configureLiteRtLoader, configureLiteRtWebLoader;
 export 'delegates/xnnpack_delegate_web.dart';
-export 'delegates/gpu_delegate_web.dart';
 export 'delegates/metal_delegate_web.dart';
 export 'delegates/coreml_delegate_web.dart';
 export 'delegates/flex_delegate_web.dart';

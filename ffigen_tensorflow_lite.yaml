@@ -14,7 +14,6 @@ headers:
     - 'src/tensorflow_lite/metal_delegate.h'
     - 'src/tensorflow_lite/xnnpack_delegate.h'
     - 'src/tensorflow_lite/delegate.h'
-    - 'src/tensorflow_lite/delegate_options.h'
   include-directives:
     - 'src/tensorflow_lite/c_api.h'
     - 'src/tensorflow_lite/c_api_experimental.h'
@@ -23,7 +22,6 @@ headers:
     - 'src/tensorflow_lite/metal_delegate.h'
     - 'src/tensorflow_lite/xnnpack_delegate.h'
     - 'src/tensorflow_lite/delegate.h'
-    - 'src/tensorflow_lite/delegate_options.h'
 preamble: |
   // ignore_for_file: always_specify_types
   // ignore_for_file: camel_case_types
