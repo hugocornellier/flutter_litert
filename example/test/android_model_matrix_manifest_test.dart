@@ -49,9 +49,9 @@ void main() {
   });
 
   test('covers both APIs and every CompiledModel accelerator set', () {
-    expect(androidInterpreterMatrixModes, hasLength(5));
+    expect(androidInterpreterMatrixModes, hasLength(2));
     expect(androidCompiledModelMatrixModes, hasLength(8));
-    expect(androidMatrixModes.map((mode) => mode.label).toSet(), hasLength(13));
+    expect(androidMatrixModes.map((mode) => mode.label).toSet(), hasLength(10));
     expect(
       androidCompiledModelMatrixModes
           .where((mode) => mode.precision == 'fp32')

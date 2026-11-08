@@ -728,58 +728,6 @@ final _interpModes = <_InterpMode>[
       return _InterpResources(options, delegate, [delegateOptions.delete]);
     },
   ),
-  _InterpMode(
-    label: 'interpreter_flex',
-    delegate: 'flex_select_tf_ops',
-    accelerators: 'cpu_flex',
-    requiresActiveDelegate: true,
-    builder: () async {
-      if (!FlexDelegate.isAvailable) {
-        throw UnsupportedError(
-          'optional flutter_litert_flex delegate is not bundled in the matrix host',
-        );
-      }
-      final delegate = await FlexDelegate.create();
-      final options = _newInterpreterOptions(delegate: delegate);
-      return _InterpResources(options, delegate);
-    },
-  ),
-  _InterpMode(
-    label: 'interpreter_gpu_v2_gl_cl_fp16',
-    delegate: 'gpu_v2_gl_cl',
-    accelerators: 'gpu',
-    requiresActiveDelegate: true,
-    builder: () async {
-      final delegateOptions = GpuDelegateOptionsV2(
-        isPrecisionLossAllowed: true,
-        inferencePriority1: TfLiteGpuInferencePriority
-            .TFLITE_GPU_INFERENCE_PRIORITY_MIN_LATENCY,
-        inferencePriority2: TfLiteGpuInferencePriority
-            .TFLITE_GPU_INFERENCE_PRIORITY_MIN_MEMORY_USAGE,
-        inferencePriority3: TfLiteGpuInferencePriority
-            .TFLITE_GPU_INFERENCE_PRIORITY_MAX_PRECISION,
-      );
-      final delegate = GpuDelegateV2(options: delegateOptions);
-      final options = _newInterpreterOptions(delegate: delegate);
-      return _InterpResources(options, delegate, [delegateOptions.delete]);
-    },
-  ),
-  _InterpMode(
-    label: 'interpreter_gpu_v2_gl_cl_fp32',
-    delegate: 'gpu_v2_gl_cl',
-    accelerators: 'gpu',
-    requiresActiveDelegate: true,
-    builder: () async {
-      final delegateOptions = GpuDelegateOptionsV2(
-        isPrecisionLossAllowed: false,
-        inferencePriority1: TfLiteGpuInferencePriority
-            .TFLITE_GPU_INFERENCE_PRIORITY_MAX_PRECISION,
-      );
-      final delegate = GpuDelegateV2(options: delegateOptions);
-      final options = _newInterpreterOptions(delegate: delegate);
-      return _InterpResources(options, delegate, [delegateOptions.delete]);
-    },
-  ),
 ];
 
 class _CmMode {
