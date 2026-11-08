@@ -99,14 +99,18 @@ final class LiteRtEnvOption extends Struct {
 
 typedef LiteRtOpaquePayloadDeleterNative = Void Function(Pointer<Void>);
 
+// LiteRT 2.1.6 added an environment as the first model-loading argument but
+// kept the same exported symbol names and public API version, so the ABI
+// cannot be probed at runtime. Android (2.2.0), Linux and Windows (2.3.0)
+// bundle runtimes with the environment-aware ABI; the currently bundled Apple
+// runtimes retain the legacy ABI. Present one environment-aware Dart signature
+// to the caller and adapt only at this binding boundary.
+final bool _envAwareModelLoading =
+    Platform.isAndroid || Platform.isLinux || Platform.isWindows;
+
 int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Pointer<Void>>)
 _bindCreateModelFromFile(DynamicLibrary dylib) {
-  // LiteRT 2.1.6 added an environment as the first model-loading argument but
-  // kept the same exported symbol names and public API version. Android is
-  // pinned to 2.2.0; the currently bundled Apple/desktop runtimes retain the
-  // legacy ABI. Present one environment-aware Dart signature to the caller and
-  // adapt only at this binding boundary.
-  if (Platform.isAndroid) {
+  if (_envAwareModelLoading) {
     return dylib.lookupFunction<
       Int32 Function(Pointer<Void>, Pointer<Utf8>, Pointer<Pointer<Void>>),
       int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Pointer<Void>>)
@@ -122,7 +126,7 @@ _bindCreateModelFromFile(DynamicLibrary dylib) {
 
 int Function(Pointer<Void>, Pointer<Void>, int, Pointer<Pointer<Void>>)
 _bindCreateModelFromBuffer(DynamicLibrary dylib) {
-  if (Platform.isAndroid) {
+  if (_envAwareModelLoading) {
     return dylib.lookupFunction<
       Int32 Function(
         Pointer<Void>,
