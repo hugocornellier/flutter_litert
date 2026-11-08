@@ -111,14 +111,27 @@ typedef LiteRtStatus (*LiteRtWrapDelegateFn)(
     void* tflite_delegate, TfLiteDelegateDeleter deleter,
     LiteRtDelegateWrapper* wrapper);
 
-// The iOS LiteRT binaries are pinned to commit
-// 1adc2475829fbe52d5670873821a45bea8779532. At that revision delegate wrappers
-// own the delegate through a deleter passed to LiteRtWrapDelegate; there is no
-// separate destroy-delegate callback in LiteRtAcceleratorDefV1. Registering
-// the runtime's XNNPACK definition after Core ML preserves NPU-first ordering
-// for a mixed {npu, cpu} request.
+// Mirrors LiteRtAbiHeader (litert/c/internal/litert_abi_header.h), the first
+// member of every ABI-stable LiteRT struct since v2.3.0.
 typedef struct {
-  int version;
+  uint16_t struct_size;
+  uint16_t major_version;
+  uint16_t minor_version;
+  uint16_t reserved;
+} LiteRtAbiHeaderShim;
+
+enum {
+  kLiteRtAcceleratorDefMajorVersion = 1,
+};
+
+// The iOS LiteRT runtime is built from LiteRT v2.3.2. Its accelerator
+// definition starts with an ABI header, delegate wrappers own the delegate
+// through a deleter passed to LiteRtWrapDelegate, and there is no separate
+// destroy-delegate callback in LiteRtAcceleratorDefV1. Registering the
+// runtime's XNNPACK definition after Core ML preserves NPU-first ordering for
+// a mixed {npu, cpu} request.
+typedef struct {
+  LiteRtAbiHeaderShim abi_header;
   LiteRtGetNameCallback get_name;
   LiteRtGetVersionCallback get_version;
   LiteRtGetHardwareSupportCallback get_hardware_support;
@@ -126,6 +139,8 @@ typedef struct {
   LiteRtCreateDelegateCallback create_delegate;
 } LiteRtAcceleratorDefV1Prefix;
 
+_Static_assert(sizeof(LiteRtAbiHeaderShim) == 8,
+               "LiteRt ABI header size mismatch");
 _Static_assert(sizeof(TfLiteCoreMlDelegateOptionsShim) == 16,
                "TfLite Core ML options ABI mismatch");
 _Static_assert(offsetof(LiteRtAcceleratorDefV1Prefix, get_name) == 8,
@@ -134,6 +149,15 @@ _Static_assert(offsetof(LiteRtAcceleratorDefV1Prefix, create_delegate) == 40,
                "LiteRt accelerator create_delegate offset mismatch");
 _Static_assert(sizeof(LiteRtAcceleratorDefV1Prefix) == 48,
                "LiteRt accelerator prefix size mismatch");
+
+// Mirrors LITERT_ABI_IS_COMPATIBLE(def, 1, 0) and also requires the definition
+// to be large enough to hold every callback this bridge reads.
+static bool IsCompatibleAcceleratorDef(
+    const LiteRtAcceleratorDefV1Prefix* def) {
+  return def != NULL &&
+         def->abi_header.major_version == kLiteRtAcceleratorDefMajorVersion &&
+         def->abi_header.struct_size >= sizeof(LiteRtAcceleratorDefV1Prefix);
+}
 
 typedef void* (*TfLiteCoreMlNpuDelegateCreateFn)(
     const TfLiteCoreMlDelegateOptionsShim* options);
@@ -214,7 +238,7 @@ static void LoadLiteRtSymbols(void) {
   const LiteRtAcceleratorDefV1Prefix* const* cpu_def =
       (const LiteRtAcceleratorDefV1Prefix* const*)ResolveRequired(
           "LiteRtStaticLinkedAcceleratorCpuDef");
-  if (cpu_def == NULL || *cpu_def == NULL || (*cpu_def)->version != 1) {
+  if (cpu_def == NULL || !IsCompatibleAcceleratorDef(*cpu_def)) {
     return;
   }
   g_litert.cpu_accelerator_def = *cpu_def;

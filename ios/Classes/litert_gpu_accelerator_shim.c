@@ -21,11 +21,11 @@
 // `litert::internal::RegisterAcceleratorFromDef`.
 //
 // ABI: `LiteRtAcceleratorDefV1` is declared ABI-stable by LiteRT
-// (litert/c/internal/litert_accelerator_def.h, version field +
-// static_asserts). The layout below matches google-ai-edge/LiteRT commit
-// 1adc2475829fbe52d5670873821a45bea8779532, the same commit the bundled iOS
-// binaries are built from, and is guarded by the same static_asserts plus a
-// runtime version check.
+// (litert/c/internal/litert_accelerator_def.h, LiteRtAbiHeader +
+// static_asserts). The layout below matches LiteRT v2.3.x, the release the
+// bundled iOS runtime (v2.3.2 source build) and Metal accelerator (v2.3.0
+// prebuilt) come from, and is guarded by the same static_asserts plus the
+// runtime check upstream applies, LITERT_ABI_IS_COMPATIBLE(def, 1, 0).
 //
 // CocoaPods compiles this file via the podspec's Classes/** source glob;
 // SwiftPM compiles it through the Sources/flutter_litert_gpu_shim forwarder
@@ -57,13 +57,21 @@ enum {
   kShimLiteRtStatusErrorWrongVersion = 8,
 };
 
-#define SHIM_ACCELERATOR_DEF_VERSION 1
+#define SHIM_ACCELERATOR_DEF_MAJOR_VERSION 1
 #define SHIM_MAX_SUPPORTED_BUFFER_TYPES 16
+
+// Mirrors LiteRtAbiHeader (litert/c/internal/litert_abi_header.h).
+typedef struct {
+  uint16_t struct_size;
+  uint16_t major_version;
+  uint16_t minor_version;
+  uint16_t reserved;
+} ShimLiteRtAbiHeader;
 
 // All LiteRT handle and callback types are opaque pointers at this ABI
 // boundary; only the struct layout below must match.
 typedef struct {
-  int version;
+  ShimLiteRtAbiHeader abi_header;
   void* get_name;
   void* get_version;
   void* get_hardware_support;
@@ -72,6 +80,7 @@ typedef struct {
   void* start_metrics_collection;
   void* stop_metrics_collection;
   struct {
+    ShimLiteRtAbiHeader abi_header;
     void* create_func;
     void* destroy_func;
     void* lock_func;
@@ -87,23 +96,28 @@ typedef struct {
 
 // Mirrors of upstream litert_accelerator_def.h /
 // litert_custom_tensor_buffer_handlers_def.h static_asserts.
-_Static_assert(sizeof(ShimLiteRtAcceleratorDefV1) == 192,
+_Static_assert(sizeof(ShimLiteRtAbiHeader) == 8,
+               "LiteRtAbiHeader size mismatch");
+_Static_assert(sizeof(ShimLiteRtAcceleratorDefV1) == 200,
                "LiteRtAcceleratorDefV1 size mismatch");
 _Static_assert(offsetof(ShimLiteRtAcceleratorDefV1, get_name) == 8,
                "get_name offset mismatch");
 _Static_assert(offsetof(ShimLiteRtAcceleratorDefV1, create_delegate) == 40,
                "create_delegate offset mismatch");
+_Static_assert(offsetof(ShimLiteRtAcceleratorDefV1, start_metrics_collection) ==
+                   48,
+               "start_metrics_collection offset mismatch");
 _Static_assert(offsetof(ShimLiteRtAcceleratorDefV1, buffer_handlers) == 64,
                "buffer_handlers offset mismatch");
 _Static_assert(
-    offsetof(ShimLiteRtAcceleratorDefV1, buffer_handlers.device_tag) == 112,
-    "device_tag offset mismatch");  // 64 + 48 per upstream asserts.
+    offsetof(ShimLiteRtAcceleratorDefV1, buffer_handlers.device_tag) == 120,
+    "device_tag offset mismatch");  // 64 + 56 per upstream asserts.
 _Static_assert(offsetof(ShimLiteRtAcceleratorDefV1,
-                        buffer_handlers.num_supported_buffer_types) == 120,
-               "num_supported_buffer_types offset mismatch");  // 64 + 56.
+                        buffer_handlers.num_supported_buffer_types) == 128,
+               "num_supported_buffer_types offset mismatch");  // 64 + 64.
 _Static_assert(offsetof(ShimLiteRtAcceleratorDefV1,
-                        buffer_handlers.supported_buffer_types) == 128,
-               "supported_buffer_types offset mismatch");  // 64 + 64.
+                        buffer_handlers.supported_buffer_types) == 136,
+               "supported_buffer_types offset mismatch");  // 64 + 72.
 
 typedef LiteRtStatusShim (*ShimCreateAccelerator)(void** accelerator);
 typedef LiteRtStatusShim (*ShimDestroyAccelerator)(void* accelerator);
@@ -152,7 +166,8 @@ LiteRtStatusShim LiteRtRegisterGpuAccelerator(void* env) {
   const ShimLiteRtAcceleratorDefV1* def =
       (const ShimLiteRtAcceleratorDefV1*)dlsym(handle, "LiteRtAcceleratorImpl");
   if (def == NULL) return kShimLiteRtStatusErrorNotFound;
-  if (def->version != SHIM_ACCELERATOR_DEF_VERSION) {
+  if (def->abi_header.major_version != SHIM_ACCELERATOR_DEF_MAJOR_VERSION ||
+      def->abi_header.struct_size < sizeof(ShimLiteRtAcceleratorDefV1)) {
     return kShimLiteRtStatusErrorWrongVersion;
   }
   if (def->get_name == NULL || def->get_version == NULL ||
@@ -212,6 +227,23 @@ LiteRtStatusShim LiteRtRegisterGpuAccelerator(void* env) {
   SHIM_SET_OR_BAIL(set_jit_responsibility(
       accelerator,
       def->is_tflite_delegate_responsible_for_jit_compilation));
+  // Optional callbacks, set only when present, as upstream does.
+  if (def->start_metrics_collection != NULL) {
+    ShimSetFnPtr set_start_metrics = (ShimSetFnPtr)shim_api(
+        "LiteRtSetAcceleratorStartMetricsCollection");
+    if (set_start_metrics != NULL) {
+      SHIM_SET_OR_BAIL(
+          set_start_metrics(accelerator, def->start_metrics_collection));
+    }
+  }
+  if (def->stop_metrics_collection != NULL) {
+    ShimSetFnPtr set_stop_metrics = (ShimSetFnPtr)shim_api(
+        "LiteRtSetAcceleratorStopMetricsCollection");
+    if (set_stop_metrics != NULL) {
+      SHIM_SET_OR_BAIL(
+          set_stop_metrics(accelerator, def->stop_metrics_collection));
+    }
+  }
 #undef SHIM_SET_OR_BAIL
 
   // On failure LiteRtRegisterAccelerator releases the accelerator itself.
