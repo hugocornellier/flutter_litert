@@ -396,13 +396,20 @@ abstract class DownloadLitertJniTask : DefaultTask() {
     }
 }
 
-// flutter_litert_flex links libtensorflowlite_jni.so, so it needs the bundled
-// runtime in use, which auto does not guarantee.
-if (usePlayServicesRuntime && rootProject.findProject(":flutter_litert_flex") != null) {
+// Android flex was removed in 4.0.0. flutter_litert_flex 1.x has no
+// constraint on flutter_litert, so pub can still resolve it next to 4.0.0,
+// and its Android side needs the LiteRT 1.x libtensorflowlite_jni.so that
+// 4.0.0 no longer ships. Flutter includes every plugin that has Android code
+// as the Gradle project :<plugin name>, so this finds 1.x in any app, whatever
+// the runtime. A flutter_litert_flex without Android code has no such project
+// and passes.
+if (rootProject.findProject(":flutter_litert_flex") != null) {
     throw GradleException(
-        "[flutter_litert] flutter_litert_flex is not supported with " +
-            "flutterLitert.runtime=$litertRuntime: the Select TF ops runtime " +
-            "needs flutterLitert.runtime=bundled."
+        "[flutter_litert] Android flex was removed in flutter_litert 4.0.0 " +
+            "because LiteRT 2.x has no flex delegate (Select TF ops), but " +
+            "this app includes flutter_litert_flex for Android. Reconvert " +
+            "the model to LiteRT built-in ops and remove flutter_litert_flex, " +
+            "or stay on flutter_litert 3.10.x with flutter_litert_flex 1.3.0."
     )
 }
 
