@@ -7,6 +7,12 @@
 > named `LiteRtStatus` values, the `CoreMlDelegate` and `InterpreterPool` leak fixes, and
 > the un-deprecation of the Interpreter delegates. See [CHANGELOG.md](../CHANGELOG.md)
 > for what the package does now.
+>
+> **Since 4.0.0** the Android `Interpreter` runs on the same LiteRT 2.3.2 `libLiteRt.so`
+> as `CompiledModel` and has no GPU delegate: `GpuDelegateV2` was removed, and Android
+> GPU is `CompiledModel` only. The Interpreter GPU measurements below were taken on
+> macOS and the iOS simulator (Metal). The `CompiledModel` dynamic-output findings still
+> apply, so `verifyCompiledModel` remains the recommended check.
 
 Status at the time of writing: investigated, not yet fixed. Detection mechanism
 **resolved** for GPU (see [Spike result](#spike-result-resolved)). Reviewed and revised;
@@ -859,7 +865,7 @@ Revised after the merged review.
    `kTfLiteDelegateError` undoes all previously applied delegates.
 8. Resolve delegate ownership explicitly: who holds the rejected delegate, the effective
    delegate, and what the returned `Delegate?` now means for the pool.
-9. Test on physical iOS and physical Android (GPUv2) before shipping. Simulator and macOS
+9. Test on physical iOS and physical Android (GPUv2, removed in 4.0.0) before shipping. Simulator and macOS
    share host hardware and are not independent observations.
 
 **Bug 2, CompiledModel correctness:**

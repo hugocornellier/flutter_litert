@@ -16,15 +16,17 @@ own physical-device correctness matrix.
 
 The physical validation below (July 30 and August 1, 2026) ran LiteRT Next
 2.1.6 with QAIRT 2.47.0.260601 JIT libraries, and its figures are attributed to
-that version. The package now bundles LiteRT Next 2.2.0
+that version. flutter_litert 4.0.0 bundles LiteRT 2.3.2
 (`litertNextVersion` in `android/build.gradle.kts`). The vendor JIT runtime must
-match the bundled version, so current builds need the 2.2.0
-`litert_npu_runtime_libraries_jit.zip`. It keeps the same library names and the
-same QAIRT pin; the device results below predate it.
+match the bundled version, so 4.0.0 builds need the 2.3.2 compiler and dispatch
+plugins from Google Maven (`com.google.ai.edge.litert:litert-npu-runtime-qualcomm`)
+together with QAIRT 2.50.0.260828, the version LiteRT 2.3.2 pins. The library
+names are unchanged. A runtime prepared for flutter_litert 3.10.x (LiteRT 2.2.0,
+QAIRT 2.47.0.260601) must be rebuilt.
 
-The ordinary package retains Flutter's minimum SDK and remains multi-ABI. The
-device-targeted NPU bundle opts into minSdk 31 and arm64 because the official
-modules require Android 12+. NPU is activated only by an explicit
+The ordinary package requires minSdk 24 since 4.0.0 (the bundled `libLiteRt.so` requires API 24)
+and remains multi-ABI. The device-targeted NPU bundle opts into minSdk 31 and
+arm64 because the NPU modules require Android 12+. NPU is activated only by an explicit
 `Accelerator.npu` request in an app that received a matching runtime.
 CPU/GPU-only apps have no new vendor binaries or runtime initialization.
 
@@ -71,16 +73,24 @@ devices.
 ## Runtime distribution
 
 Production distribution should follow LiteRT's device-targeted Play Feature
-Delivery layout. Unpack `litert_npu_runtime_libraries_jit.zip`, run its
-Qualcomm fetch script, and add the conditional dynamic-feature modules to the
-host Android app. Only the module matching the device should be installed;
-putting several vendor dispatch libraries in one directory is ambiguous because
-LiteRT selects the first matching dispatch library.
+Delivery layout: one conditional dynamic-feature module per HTP generation,
+added to the host Android app. Only the module matching the device should be
+installed; putting several vendor dispatch libraries in one directory is
+ambiguous because LiteRT selects the first matching dispatch library.
+
+Since LiteRT 2.3.0 the vendor plugins ship on Google Maven instead of in a
+`litert_npu_runtime_libraries_jit.zip` release archive. The module scaffolding
+(`runtime_strings`, `qualcomm_runtime_v73`, `_v75`, and `_v79`, without any
+binaries) is checked in at `example/android/qualcomm_npu_feature_modules`. Each
+module's `src/main/jni/arm64-v8a` is filled with the two LiteRT plugins from the
+`litert-npu-runtime-qualcomm` AAR (`jni/arm64-v8a/*.so`) and the seven QAIRT
+files for that generation (`lib/aarch64-android` plus the
+`hexagon-v<n>/unsigned` Skel). `.github/workflows/android-npu-testlab.yml` shows
+the exact steps and checksums.
 
 The example app provides complete reference wiring for the three physically
-validated generations. Given a prepared archive root containing
-`runtime_strings` and the official `qualcomm_runtime_v73`, `_v75`, and `_v79`
-modules, build with:
+validated generations. Given a prepared root containing `runtime_strings` and
+the filled `qualcomm_runtime_v73`, `_v75`, and `_v79` modules, build with:
 
 ```text
 -PflutterLitert.qualcommNpuFeatureRoot=/absolute/path/to/prepared/runtime/root
@@ -125,12 +135,13 @@ The v75 filenames change together for another supported HTP generation. Gradle
 accepts v69, v73, v75, v79, or v81, requires one matching Skel/Stub pair, and
 rejects incomplete or competing LiteRT vendor libraries.
 
-The QAIRT SDK archive is approximately 2.35 GB. Each delivered generation has
-nine NPU files totaling about 105 MB; the prepared three-generation feature
-root is about 315 MB, but Play delivers only one module. The manual CI workflow
-downloads the official archives, verifies their SHA-256 digests, extracts only
-those 27 files, and caches the prepared root. It never commits or republishes
-the Qualcomm binaries.
+The QAIRT 2.50.0.260828 SDK archive is approximately 2.6 GB. Each delivered
+generation has nine NPU files (seven from QAIRT, two from the Maven AAR)
+totaling about 110 MB; the prepared three-generation feature root is about
+330 MB, but Play delivers only one module. The manual CI workflow downloads the
+AAR and the QAIRT archive, verifies their SHA-256 digests, extracts only the 21
+QAIRT files plus the two plugins per module, and caches the prepared root. It
+never commits or republishes the Qualcomm binaries.
 
 ## Placement and validation semantics
 

@@ -7,6 +7,14 @@ Research date: 2026-08-01
 Related implementation checkpoint:
 [Android CompiledModel NPU](android_compiled_model_npu.md)
 
+> **4.0.0 update.** This draft was researched against LiteRT 2.1.6 and its
+> GitHub release archives. flutter_litert 4.0.0 bundles LiteRT 2.3.2. Since
+> LiteRT 2.3.0 the Qualcomm compiler and dispatch plugins ship on Google Maven
+> (`com.google.ai.edge.litert:litert-npu-runtime-qualcomm`), and 4.0.0 pairs
+> them with QAIRT 2.50.0.260828. The v2.1.6 archive inventory and sizes below
+> are historical; [Android CompiledModel NPU](android_compiled_model_npu.md)
+> describes the current Qualcomm setup.
+
 ## 1. Decision summary
 
 `flutter_litert` should own Android NPU vendor integration. Detection packages
