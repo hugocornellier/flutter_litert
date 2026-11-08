@@ -8,7 +8,6 @@ export 'native/version.dart';
 export 'native/backend_verification.dart';
 export 'native/init.dart';
 export 'delegates/xnnpack_delegate_native.dart';
-export 'delegates/gpu_delegate_native.dart';
 export 'delegates/metal_delegate_native.dart';
 export 'delegates/coreml_delegate_native.dart';
 export 'delegates/flex_delegate_native.dart';
