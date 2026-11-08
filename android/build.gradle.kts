@@ -149,13 +149,15 @@ dependencies {
 }
 
 // LiteRT native libraries (Interpreter and CompiledModel), sourced directly from
-// Google's official Maven AAR (com.google.ai.edge.litert:litert:<ver>, the 2.x
-// line) instead of a hand-packaged release zip. Downloaded at build time (not
-// shipped in the pub package) and extracted as jniLibs.
+// Google's official Maven AARs (com.google.ai.edge.litert:litert and
+// litert-gpu, the 2.x line) instead of a hand-packaged release zip. Downloaded
+// at build time (not shipped in the pub package) and extracted as jniLibs.
 //
-// The 2.x AAR ships libLiteRt.so for arm64-v8a, armeabi-v7a, and x86_64. Its
-// GPU accelerator, libLiteRtClGlAccelerator.so, ships for arm64-v8a and x86_64
-// only, so armeabi-v7a remains fully supported on the CPU.
+// The litert AAR ships libLiteRt.so for arm64-v8a, armeabi-v7a, and x86_64.
+// The litert-gpu AAR ships the GPU accelerator, libLiteRtClGlAccelerator.so,
+// for the same three ABIs. We package it for arm64-v8a and x86_64 only, by
+// choice: the armeabi-v7a accelerator is untested here, and armeabi-v7a stays
+// fully supported on the CPU.
 //
 // Why fetch+extract rather than a normal Gradle `implementation` dependency:
 // Dart binds these libraries directly and never needs the AAR's Java, and
@@ -173,11 +175,15 @@ val shouldBundleGpuAccelerator =
             )
     } ?: true
 
-// Android NPU runtime libraries are vendor- and SoC-specific, and Google
-// distributes them separately from the LiteRT Maven AAR. Normal builds stay
-// unchanged. A consuming app (or the physical-device test workflow) may point
-// this property at one prepared Qualcomm JIT runtime directory containing the
-// matching LiteRT compiler/dispatch libraries and QAIRT libraries:
+// Android NPU runtime libraries are vendor- and SoC-specific. Google publishes
+// the LiteRT side of them as separate Maven AARs
+// (com.google.ai.edge.litert:litert-npu-runtime-qualcomm and the other
+// litert-npu-runtime-* artifacts), and Qualcomm ships the QAIRT libraries in
+// its own SDK. Normal builds stay unchanged. A consuming app (or the
+// physical-device test workflow) may point this property at one prepared
+// Qualcomm JIT runtime directory containing the compiler and dispatch
+// libraries from litert-npu-runtime-qualcomm (same version as litert) and the
+// matching QAIRT libraries:
 //
 // flutterLitert.qualcommNpuRuntimeDir=/absolute/path/to/arm64-v8a
 //
@@ -271,6 +277,8 @@ abstract class DownloadLitertJniTask : DefaultTask() {
                     // LiteRT. The Dart fallback factories catch that error and
                     // retry CPU-only.
                     include("jni/**/libLiteRt.so")
+                    // litert-gpu also ships an armeabi-v7a accelerator; it is
+                    // left out on purpose (see the comment on litertNextVersion).
                     if (shouldBundleGpu) {
                         include(
                             "jni/arm64-v8a/libLiteRtClGlAccelerator.so",
