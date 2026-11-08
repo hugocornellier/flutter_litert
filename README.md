@@ -59,7 +59,7 @@ It started as a fork of [`tflite_flutter`](https://pub.dev/packages/tflite_flutt
 - The classic `Interpreter` API remains fully supported when needed.
 - Auto-bundled native libraries. No hand-built `.so`, `.dll`, or `.dylib` files: just add the dependency and it works on Android, iOS, macOS, Windows, and Linux (plus web via `initializeWeb()`). See [Platform support](#platform-support).
 - LiteRT from Google Play services on Android (opt-in). Set one Gradle property and the APK ships without its own LiteRT runtime, or ships it only as a fallback for devices without Play services. See [LiteRT from Google Play services](#litert-from-google-play-services-android).
-- Interpreter delegates. XNNPACK (CPU) on all native platforms, plus GPU, Metal, and CoreML. None are deprecated: `CompiledModel` is the newer API but currently miscomputes some models, so delegate-backed `Interpreter` inference stays a first-class path. See [Delegates](#delegates).
+- Interpreter delegates. XNNPACK (CPU) on all native platforms, plus Metal and CoreML on Apple platforms. None are deprecated: `CompiledModel` is the newer API but currently miscomputes some models, so delegate-backed `Interpreter` inference stays a first-class path. Android has no Interpreter GPU delegate since 4.0.0; its GPU path is `CompiledModel`. See [Delegates](#delegates).
 - On-device training with weight persistence and [variable tensor inspection](#inspecting-variable-tensors). See [On-device training](#on-device-training).
 - Custom ops. MediaPipe's `Convolution2DTransposeBias` is included on native platforms, and you can register your own. See [Custom ops](#custom-ops).
 - Isolate support. Background-thread inference via `IsolateInterpreter` on native platforms (web provides a compatibility wrapper).
@@ -114,7 +114,7 @@ flutter run
 
 For web, see [Web support](#web-support).
 
-The optional `flutter_litert_flex` addon has a dedicated integration host in `example/flex_test_host` that proves it installs and runs on its own. The main example also depends on it, because its model-matrix tests include a Flex delegate configuration.
+The optional `flutter_litert_flex` addon has a dedicated integration host in `example/flex_test_host` that proves it installs and runs on its own. The main example does not depend on it, because Android has no flex delegate since 4.0.0 and an Android build that includes the addon fails.
 
 ### Demos
 
@@ -158,7 +158,7 @@ if (!status.isReady) {
 - **Timeout.** Play services downloads the runtime on first use. After `timeout` (5 minutes by default) the call reports failure, and the next call retries.
 - **`auto`.** The first call picks a runtime for the whole process, and `status.runtime` says which. Creating a model before then throws a `StateError`. Play services is chosen even when it has no GPU.
 - **Not available.** Directly constructed delegates, custom ops, `Accelerator.npu` (except when `auto` picks the bundled runtime) and `flutter_litert_flex`. `PerformanceConfig.gpu()` runs on the CPU with a warning.
-- **Requires.** `minSdk` 24, Kotlin Gradle plugin 2.3 or newer, and Hilt 2.60.1 or newer if the app uses Hilt.
+- **Requires.** Kotlin Gradle plugin 2.3 or newer, and Hilt 2.60.1 or newer if the app uses Hilt. `minSdk` 24 applies to every Android build since 4.0.0, not only this mode.
 
 [`example/play_services_test_host`](example/play_services_test_host) is a minimal app built this way. Its GPU test has not run in CI yet, because neither CI device has the accelerator.
 
@@ -174,7 +174,7 @@ lines.
 ```yaml
 dependencies:
   # tflite_flutter: ^0.11.0
-  flutter_litert: ^3.10.0
+  flutter_litert: ^4.0.0
 ```
 
 **2. Change the import.**
@@ -187,7 +187,10 @@ import 'package:flutter_litert/flutter_litert.dart';
 Existing `Interpreter` code keeps working unchanged: `Interpreter.fromAsset`,
 `fromFile`, `fromBuffer`, `run`, `runForMultipleInputs`, `InterpreterOptions`,
 `getInputTensors`, `getOutputTensors`, signature runners, and the delegate
-classes all keep their names and signatures.
+classes all keep their names and signatures. The exception is the Android GL/CL
+`GpuDelegateV2`, which flutter_litert 4.0.0 removed: on Android, use
+`CompiledModel` with `Accelerator.gpu` for the GPU. Android apps also need
+`minSdk` 24.
 
 **3. Delete your native library setup.** This is the step most projects forget.
 `tflite_flutter` required you to download `libtensorflowlite_c` yourself and
@@ -214,8 +217,8 @@ supported platform, so all of that can go.
 - `CompiledModel` is float32-only. Quantized and integer I/O, on-device
   training, custom ops, and named signatures stay on the classic `Interpreter`,
   which is fully supported and not deprecated.
-- Delegate construction is unchanged, but GPU behaviour differs by platform.
-  Read [Accelerator selection and precision](#accelerator-selection-and-precision)
+- Delegate construction is unchanged, but GPU behaviour differs by platform:
+  Metal on Apple platforms, and on Android only through `CompiledModel`. Read [Accelerator selection and precision](#accelerator-selection-and-precision)
   before assuming a delegate engaged; a delegate that fails to apply can fall
   back to CPU without an error.
 
@@ -310,7 +313,7 @@ model.close();
   `{npu, cpu}` is the practical request; about half its models match a CPU
   reference. See
   [CompiledModel NPU on Apple platforms](#compiledmodel-npu-on-apple-platforms).
-- On Android, `Accelerator.gpu` uses the bundled OpenCL/GL accelerator on `arm64-v8a` and `x86_64`. `armeabi-v7a` remains CPU-only.
+- On Android, `Accelerator.gpu` uses the bundled OpenCL/GL accelerator on `arm64-v8a` and `x86_64`. `armeabi-v7a` is CPU-only, because the accelerator is not packaged for it. Since 4.0.0 this is the only GPU path on Android: the `Interpreter` has no GPU delegate there.
 - On Android API 31+ arm64, `Accelerator.npu` can use an app-provided LiteRT
   vendor runtime. NPU binaries are SoC-specific and are not bundled by default.
   See [CompiledModel NPU on Android](#compiledmodel-npu-on-android).
@@ -545,10 +548,11 @@ validates integration only, because it has no Neural Engine; the iOS figures in
 
 > **This is not a drop-in feature.** Unlike Apple, where the Neural Engine
 > works with no setup, Android NPU requires *you* to supply the vendor runtime.
-> Qualcomm's public QAIRT archive is a ~2.35 GB one-time download on your build
-> machine, from which nine libraries are staged and wired into Gradle by
-> absolute path. What ships is far smaller: **about 104 MB per SoC generation**,
-> or ~315 MB if you bundle v73, v75, and v79 together. A fused APK covers **one
+> Qualcomm's public QAIRT archive is a ~2.6 GB one-time download on your build
+> machine. Seven of its libraries, plus LiteRT's two Qualcomm libraries from
+> Google Maven, are staged and wired into Gradle by absolute path. What ships is
+> far smaller: **about 110 MB per SoC generation**, or ~330 MB if you bundle
+> v73, v75, and v79 together. A fused APK covers **one
 > generation only**, so broad distribution wants Play Feature Delivery, which
 > sends a device just the module matching its chip. Budget real integration
 > time, and expect this to suit apps shipping to known hardware more than
@@ -568,7 +572,11 @@ Requirements:
 
 - Android API 31 or newer and `arm64-v8a`;
 - a vendor/SoC supported by the selected LiteRT runtime;
-- the JIT runtime libraries matching the bundled LiteRT Next version;
+- the Qualcomm runtime libraries matching the bundled LiteRT version (2.3.2):
+  `libLiteRtCompilerPlugin_Qualcomm.so` and `libLiteRtDispatch_Qualcomm.so`
+  from the `com.google.ai.edge.litert:litert-npu-runtime-qualcomm:2.3.2` AAR,
+  plus the seven QAIRT 2.50.0.260828 libraries for the device's HTP
+  generation;
 - `packaging { jniLibs { useLegacyPackaging = true } }` in the app module,
   because LiteRT must scan real files rather than compressed APK entries.
 
@@ -576,35 +584,42 @@ The plugin manifest exposes the device-provided Qualcomm
 `libcdsprpc.so` library to apps targeting Android 12+ as an optional
 `uses-native-library`; consuming apps need no manifest change of their own.
 
-For production, use Google's conditional Play Feature Delivery modules from
-`litert_npu_runtime_libraries_jit.zip`. They deliver only the runtime matching
-the device. The example app contains reference wiring for SM8550/v73,
-SM8650/v75, and SM8750/v79: point
-`flutterLitert.qualcommNpuFeatureRoot` at the prepared archive root to build an
-Android App Bundle with mutually targeted feature modules. Unsupported devices
-receive the base module without Qualcomm binaries. The plugin intentionally
-does not bundle every vendor runtime into ordinary APKs.
+For production, use conditional Play Feature Delivery modules, which deliver
+only the runtime matching the device. The example app contains reference wiring
+for SM8550/v73, SM8650/v75, and SM8750/v79, with the module scaffolding checked
+in at
+[`example/android/qualcomm_npu_feature_modules`](example/android/qualcomm_npu_feature_modules).
+Copy that folder, fill each module's `src/main/jni/arm64-v8a` with the two
+LiteRT Qualcomm libraries and that generation's seven QAIRT libraries, then
+point `flutterLitert.qualcommNpuFeatureRoot` at the copy to build an Android App
+Bundle with mutually targeted feature modules. Unsupported devices receive the
+base module without Qualcomm binaries. The plugin intentionally does not bundle
+every vendor runtime into ordinary APKs.
 
 ```properties
 # example/android/gradle.properties (absolute path required)
-flutterLitert.qualcommNpuFeatureRoot=/path/to/prepared/litert_npu_runtime_libraries
+flutterLitert.qualcommNpuFeatureRoot=/path/to/prepared/qualcomm_npu_feature_modules
 ```
 
 For a local or Firebase Test Lab APK, a single prepared Qualcomm runtime can be
-fused directly. Download and unpack the official LiteRT 2.2.0 JIT runtime,
-run its `fetch_qualcomm_library.sh`, then point the Gradle property at one
-matching `arm64-v8a` directory:
+fused directly. Point the Gradle property at one filled `arm64-v8a` directory:
 
 ```properties
 # android/gradle.properties (absolute path required)
-flutterLitert.qualcommNpuRuntimeDir=/path/to/litert_npu_runtime_libraries/qualcomm_runtime_v73/src/main/jni/arm64-v8a
+flutterLitert.qualcommNpuRuntimeDir=/path/to/prepared/qualcomm_npu_feature_modules/qualcomm_runtime_v73/src/main/jni/arm64-v8a
 ```
+
+The manual workflow
+[`.github/workflows/android-npu-testlab.yml`](.github/workflows/android-npu-testlab.yml)
+does this preparation step by step, with pinned SHA-256 digests, and is the
+reference for which archive paths to extract.
 
 HTP v73 targets the Galaxy S23's SM8550, v75 the Galaxy S24 Ultra's SM8650,
 and v79 the Galaxy S25 Ultra's SM8750. Each directory must contain one
 Qualcomm compiler plugin, one dispatch library, and all seven QAIRT JIT/runtime
 libraries; the Gradle task rejects incomplete or multi-vendor sets before an
-APK is built.
+APK is built. The LiteRT and QAIRT versions move together: a runtime prepared
+for flutter_litert 3.10.x (LiteRT 2.2.0, QAIRT 2.47.0.260601) must be rebuilt.
 
 Use strict `{Accelerator.npu}` to prove that the complete graph can run on the
 NPU. `{Accelerator.npu, Accelerator.cpu}` intentionally permits partial
@@ -640,7 +655,10 @@ validation fully dispatched the strict smoke model to HTP. Sweeps on all three
 generations dispatched MobileFaceNet within the default correctness tolerance.
 Selfie multiclass segmentation and heavy pose also dispatched completely, but
 missed the conservative 1% CPU-reference tolerance and must not be enabled
-without application-level accuracy validation.
+without application-level accuracy validation. These results were recorded with
+LiteRT 2.1.6 and QAIRT 2.47. On LiteRT 2.3.2 with QAIRT 2.50, the Galaxy S23
+model matrix has so far been re-run; the guide lists what changed there,
+including NPU cells that selfie segmentation no longer passes.
 
 ### CompiledModel GPU on Android
 
@@ -655,7 +673,7 @@ Apps that do not use CompiledModel GPU acceleration can remove the accelerator f
 flutterLitert.bundleGpuAccelerator=false
 ```
 
-The accelerator adds about 2.7 MB on arm64 or 3.4 MB on x86_64 before APK compression. ABI-split APKs and Play-delivered app bundles normally deliver only the matching ABI. This property affects only the CompiledModel accelerator; the classic Interpreter runtime and its GPU delegate are unchanged.
+The accelerator adds about 3.3 MB on arm64 or 3.9 MB on x86_64 before APK compression. ABI-split APKs and Play-delivered app bundles normally deliver only the matching ABI. This property affects only the CompiledModel accelerator. The classic Interpreter shares the same `libLiteRt.so` and has no GPU delegate on Android, so it is unaffected.
 
 ### CompiledModel on the web
 
@@ -726,13 +744,13 @@ final outputs = await model.runAsync(inputs); // Future<List<Float32List>>
 
 ### Coming from the Interpreter delegate API
 
-You do not have to migrate at all. Nothing in the `Interpreter` API is deprecated, including the GPU, Metal, and CoreML delegates. Migrate where `CompiledModel` measurably wins for your models, and verify it with `verifyCompiledModel` before trusting it (see [Verifying a CompiledModel](#verifying-a-compiledmodel)).
+On iOS and macOS you do not have to migrate at all: nothing in the `Interpreter` API is deprecated, including the Metal and CoreML delegates. On Android, `CompiledModel` is the only GPU path since 4.0.0, because the Android Interpreter GPU delegate (`GpuDelegateV2`) was removed with the move to LiteRT 2.x. Migrate where `CompiledModel` measurably wins for your models, and verify it with `verifyCompiledModel` before trusting it (see [Verifying a CompiledModel](#verifying-a-compiledmodel)).
 
 Before (Interpreter plus GPU delegate):
 
 ```dart
 final options = InterpreterOptions();
-options.addDelegate(GpuDelegateV2()); // or GpuDelegate() / CoreMlDelegate()
+options.addDelegate(GpuDelegate()); // Metal on iOS and macOS, or CoreMlDelegate()
 final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
 
 interpreter.run(input, output);
@@ -753,8 +771,8 @@ What changes:
 | Interpreter API | CompiledModel API |
 |-----------------|-------------------|
 | `Interpreter.fromAsset` / `fromFile` / `fromBuffer` | `CompiledModel.fromFileWithConfig` / `fromBufferWithConfig` |
-| `options.addDelegate(GpuDelegateV2())` (or Metal / CoreML) | `CompiledModelConfig.auto()` or an explicit policy |
-| `GpuDelegateOptionsV2(isPrecisionLossAllowed: true)` | `precision: Precision.fp16` (or `Precision.fp32`) |
+| `options.addDelegate(GpuDelegate())` (or CoreML) | `CompiledModelConfig.auto()` or an explicit policy |
+| `GpuDelegateOptions(allowPrecisionLoss: true)` | `precision: Precision.fp16` (or `Precision.fp32`) |
 | `interpreter.run(input, output)` with nested lists | `model.run(inputs)` returning `List<Float32List>` |
 | `interpreter.close()` | `model.close()` |
 
@@ -791,13 +809,14 @@ print('TFLite version: ${Interpreter.version}'); // e.g. "2.20.0"
 
 ### Delegates
 
-> **Nothing here is deprecated.** These delegates were briefly marked deprecated in favour of
-> [`CompiledModel`](#compiledmodel-litert-next), with a removal planned for 4.0.0. That was reversed in 3.7.0 for two reasons.
+> **Nothing here is deprecated.** The Metal and CoreML delegates stay first-class, because `CompiledModel` cannot yet
+> replace them everywhere: it returns `kLiteRtStatusOk` while leaving the output buffer unwritten for models whose output
+> tensor ends up dynamic, which includes heatmap models with a deconvolution head.
 >
-> `PerformanceConfig.gpu()` and `.coreml()` are built on these classes and were never deprecated, so removing them would have
-> broken supported API with no notice. More importantly, `CompiledModel` cannot yet replace them: it returns
-> `kLiteRtStatusOk` while leaving the output buffer unwritten for models whose output tensor ends up dynamic, which includes
-> heatmap models with a deconvolution head. Steering callers onto that would have traded correct results for wrong ones.
+> **The Android GPU delegate (`GpuDelegateV2`) was removed in 4.0.0.** 3.7.0 said no removal was scheduled. That changed
+> when the Android `Interpreter` moved to LiteRT 2.x, which has no Interpreter GPU delegate. On Android, use
+> [`CompiledModel`](#compiledmodel-litert-next) with `Accelerator.gpu` for the GPU. `PerformanceConfig.gpu()` still works
+> there, on XNNPACK with a one-time warning.
 >
 > Prefer [`PerformanceConfig`](#performanceconfig) over constructing delegates directly, and gate any `CompiledModel`
 > adoption behind `verifyCompiledModel`.
@@ -815,10 +834,11 @@ final interpreter = await Interpreter.fromAsset('model.tflite', options: options
 | Delegate | Platform | Hardware | Class |
 |----------|----------|----------|-------|
 | XNNPACK | Android, iOS, macOS, Windows, Linux | CPU (optimized SIMD) | `XNNPackDelegate` |
-| GPU (Android) | Android | GPU (OpenGL / OpenCL) | `GpuDelegateV2` |
 | Metal | iOS, macOS (arm64 only on macOS) | GPU (Metal) | `GpuDelegate` |
 | CoreML | iOS, macOS (arm64 only on macOS) | Neural Engine / GPU / CPU | `CoreMlDelegate` |
-| Flex | Android, iOS, macOS, Windows, Linux | CPU (TensorFlow ops) | `FlexDelegate` |
+| Flex | iOS, macOS, Windows, Linux | CPU (TensorFlow ops) | `FlexDelegate` |
+
+Android has no Interpreter GPU delegate and no Flex delegate since 4.0.0, because LiteRT 2.x provides neither. For the GPU on Android, use [`CompiledModel`](#compiledmodel-litert-next) with `Accelerator.gpu`.
 
 #### XNNPACK (all native platforms)
 
@@ -852,54 +872,6 @@ options.addDelegate(XNNPackDelegate(
   ),
 ));
 ```
-
-<details>
-<summary><strong>GPU delegate (Android)</strong></summary>
-
-> Prefer [`PerformanceConfig`](#performanceconfig) unless you need this level of control. [`CompiledModel`](#compiledmodel-litert-next) with `accelerators: {Accelerator.gpu, Accelerator.cpu}` is an alternative, but verify it with `verifyCompiledModel` first.
-
-The Android GPU delegate uses OpenGL ES or OpenCL for GPU-accelerated inference.
-
-```dart
-final options = InterpreterOptions();
-options.addDelegate(GpuDelegateV2());
-final interpreter = await Interpreter.fromAsset('model.tflite', options: options);
-```
-
-> **Note:** GPU delegate initialization on Android can take several seconds on first run as GPU kernels are compiled. Use serialization caching (below) to eliminate this overhead on subsequent runs.
-
-**GPU kernel serialization (Android)**
-
-Compiled GPU kernels can be cached to disk so initialization is near-instant after the first run:
-
-```dart
-final cacheDir = await getApplicationSupportDirectory();
-final options = InterpreterOptions();
-options.addDelegate(GpuDelegateV2(
-  options: GpuDelegateOptionsV2(
-    serializationDir: cacheDir.path,
-    modelToken: 'my_model_v1',
-    experimentalFlags: [
-      TfLiteGpuExperimentalFlags.TFLITE_GPU_EXPERIMENTAL_FLAGS_ENABLE_QUANT,
-      TfLiteGpuExperimentalFlags.TFLITE_GPU_EXPERIMENTAL_FLAGS_ENABLE_SERIALIZATION,
-    ],
-  ),
-));
-```
-
-GPU delegate options:
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `isPrecisionLossAllowed` | `bool` | `false` | Allow FP16 quantization for performance |
-| `inferencePreference` | `int` | `FAST_SINGLE_ANSWER` | `TfLiteGpuInferenceUsage` value |
-| `inferencePriority1/2/3` | `int` | `MAX_PRECISION, AUTO, AUTO` | Ordered `TfLiteGpuInferencePriority` values |
-| `experimentalFlags` | `List<int>` | `[ENABLE_QUANT]` | `TfLiteGpuExperimentalFlags` values |
-| `maxDelegatePartitions` | `int` | `1` | Max graph partitions delegated to GPU |
-| `serializationDir` | `String?` | `null` | Directory for kernel cache (requires `ENABLE_SERIALIZATION` flag) |
-| `modelToken` | `String?` | `null` | Unique model identifier for cache namespace |
-
-</details>
 
 <details>
 <summary><strong>Metal delegate (iOS and macOS)</strong></summary>
@@ -957,7 +929,7 @@ CoreML delegate options:
 
 | Platform | Recommended delegate | Notes |
 |----------|---------------------|-------|
-| Android | `XNNPackDelegate` | Safe default. `GpuDelegateV2` is faster for large models but has slow first-run init, use serialization caching to mitigate. |
+| Android | `XNNPackDelegate` | Safe default, and the only Interpreter accelerator on Android since 4.0.0. For the GPU, use `CompiledModel` with `Accelerator.gpu` and check it with `verifyCompiledModel`. |
 | iOS | `GpuDelegate` (Metal) | Best general performance. Add `CoreMlDelegate` for Neural Engine models. |
 | macOS | `GpuDelegate` (Apple Silicon) or `XNNPackDelegate` | Metal/CoreML delegate dylibs are arm64-only. Use XNNPACK on Intel Macs or use `PerformanceConfig.auto()`, which selects XNNPACK on macOS. |
 | Windows | `XNNPackDelegate` | XNNPACK symbols are bundled in the DLL. |
@@ -971,7 +943,7 @@ CoreML delegate options:
 Two persistence approaches are supported:
 
 1. **Lightweight (`get_weights`/`set_weights`)**: Weights are extracted via builtin ops and serialized in Dart. Works with the standard bundled native runtime, no Flex delegate or extra downloads required.
-2. **Checkpoint-based (`save`/`restore`)**: Google's standard approach using `tf.raw_ops.SaveV2`/`RestoreV2` with `SELECT_TF_OPS`. Writes TensorFlow checkpoint files directly from the model. Requires the [Flex delegate](#flexdelegate-for-complex-model-training).
+2. **Checkpoint-based (`save`/`restore`)**: Google's standard approach using `tf.raw_ops.SaveV2`/`RestoreV2` with `SELECT_TF_OPS`. Writes TensorFlow checkpoint files directly from the model. Requires the [Flex delegate](#flexdelegate-for-complex-model-training), so it is not available on Android since 4.0.0.
 
 #### Lightweight persistence (get_weights/set_weights)
 
@@ -1102,7 +1074,7 @@ Use `resetVariableTensors()` to reset all trainable weights to their initial val
 
 #### Checkpoint-based persistence (save/restore)
 
-Google's standard approach to on-device training persistence uses `tf.raw_ops.SaveV2` and `tf.raw_ops.RestoreV2` with `SELECT_TF_OPS`. This writes TensorFlow checkpoint files (`.index` + `.data-00000-of-00001`) directly from the model. This approach requires the Flex delegate.
+Google's standard approach to on-device training persistence uses `tf.raw_ops.SaveV2` and `tf.raw_ops.RestoreV2` with `SELECT_TF_OPS`. This writes TensorFlow checkpoint files (`.index` + `.data-00000-of-00001`) directly from the model. This approach requires the Flex delegate, which runs on iOS, macOS, Linux, and Windows but not on Android since 4.0.0.
 
 ##### Preparing a save/restore model (Python)
 
@@ -1178,7 +1150,7 @@ See `scripts/generate_training_model_flex.py` for a complete working example.
 ##### Save/restore in Dart
 
 ```dart
-// Requires flutter_litert_flex in pubspec.yaml
+// Requires flutter_litert_flex in pubspec.yaml (iOS, macOS, Windows, Linux)
 final flex = await FlexDelegate.create();
 final options = InterpreterOptions();
 options.addDelegate(flex);
@@ -1219,6 +1191,7 @@ restore.close();
 | | Lightweight (`get_weights`/`set_weights`) | Checkpoint (`save`/`restore`) |
 |---|---|---|
 | **Extra download** | None | Flex delegate (platform-dependent size) |
+| **Platforms** | All native platforms | iOS, macOS, Linux, Windows (not Android) |
 | **File format** | JSON, `.flwt`, or any Dart serialization | TF checkpoint (`.index` + `.data`) |
 | **Ops required** | `TFLITE_BUILTINS` only | `SELECT_TF_OPS` |
 | **Best for** | Simple models, size-constrained apps | Google-standard models, complex architectures |
@@ -1226,17 +1199,19 @@ restore.close();
 
 #### FlexDelegate for complex model training
 
-The weight persistence approach above works with models whose training graph uses only TFLite builtins. However, training models with layers like `Conv2D` or `BatchNormalization` can generate gradient ops (e.g., `Conv2DBackpropFilter`) that require `SELECT_TF_OPS`. For these models, you need the **Flex delegate**, a separate native package whose library size depends on the platform. The Flex delegate is not deprecated.
+The weight persistence approach above works with models whose training graph uses only TFLite builtins. However, training models with layers like `Conv2D` or `BatchNormalization` can generate gradient ops (e.g., `Conv2DBackpropFilter`) that require `SELECT_TF_OPS`. For these models, you need the **Flex delegate**, a separate native package whose library size depends on the platform. The Flex delegate is not deprecated, and it is supported on iOS, macOS, Linux, and Windows.
+
+> **Not on Android since 4.0.0.** LiteRT 2.x has no flex delegate (Select TF ops) for Android. There, `FlexDelegate.isAvailable` is false, `FlexDelegate()` and `FlexDelegate.create()` throw an `UnsupportedError`, and an Android build that includes `flutter_litert_flex` fails with a message saying so. For Android, reconvert the model to LiteRT built-in ops, or stay on `flutter_litert` 3.10.x with `flutter_litert_flex` 1.3.0.
 
 Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex) to your `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  flutter_litert: ^3.10.0
-  flutter_litert_flex: ^1.3.0
+  flutter_litert: ^4.0.0
+  flutter_litert_flex: ^2.0.0
 ```
 
-That's it. The native library is downloaded or linked automatically on the first build for supported native platforms. Then use the async constructor, which is required on Android and works everywhere else:
+That's it. The native library is downloaded or linked automatically on the first build for supported native platforms. Then create the delegate with the async constructor, which works on every supported platform:
 
 ```dart
 final flex = await FlexDelegate.create();
@@ -1414,6 +1389,8 @@ final config = PerformanceConfig.coreml();
 final config = PerformanceConfig.xnnpack(numThreads: 2);
 final config = PerformanceConfig.disabled; // no delegate
 ```
+
+`PerformanceConfig.gpu()` uses Metal on iOS and macOS. On Android it uses XNNPACK since 4.0.0, and prints a one-time warning, because the Android Interpreter has no GPU delegate there; for the GPU on Android, use `CompiledModel` with `Accelerator.gpu`. Other platforms run it on CPU.
 
 #### Auto mode platform selection
 
@@ -1878,21 +1855,21 @@ iOS 15. A clean iOS 27 simulator build completes the OpenCV CMake probe and the
 final Runner link. The published TensorFlow Lite simulator frameworks are
 arm64-only, so the example excludes x86_64 for simulator builds.
 
-flutter_litert ships two independent native runtimes, one per API. The classic `Interpreter` API runs on the TensorFlow Lite / LiteRT runtime, while the `CompiledModel` API (LiteRT Next, the recommended path for GPU and NPU) runs on a separate `libLiteRt` runtime. They are bundled side by side, so the two runtimes carry their own versions per platform.
+flutter_litert bundles one native runtime per API on most platforms. The classic `Interpreter` API runs on the TensorFlow Lite / LiteRT runtime, while the `CompiledModel` API (LiteRT Next, the recommended path for GPU and NPU) runs on the `libLiteRt` runtime. On Android both APIs share one `libLiteRt.so` since 4.0.0; elsewhere the two runtimes are bundled side by side and carry their own versions.
 
 | Platform | Interpreter runtime | CompiledModel runtime |
 |----------|---------------------|-----------------------|
-| Android | LiteRT 1.4.2 | LiteRT Next 2.2.0 (CPU / OpenCL/GL GPU / app-provided NPU) |
-| iOS | TensorFlow Lite 2.20.0 | LiteRT Next (CPU / Metal GPU / Core ML NPU) |
-| macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 (CPU / Metal GPU / Core ML NPU) |
+| Android | LiteRT 2.3.2 (CPU / XNNPACK) | LiteRT 2.3.2, the same library (CPU / OpenCL/GL GPU / app-provided NPU) |
+| iOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.x (CPU / Metal GPU / Core ML NPU) |
+| macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.x (CPU / Metal GPU / Core ML NPU) |
 | Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.0 |
 | Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.0 |
 | Web | LiteRT.js 2.6.0 / TFLite.js (WASM) | LiteRT.js 2.6.0 (WASM / WebGPU) |
 
 Bundling:
-- Android: both runtimes come from Google's official Maven AARs (`com.google.ai.edge.litert`), built automatically via Gradle. The Interpreter uses `litert:1.4.2`; CompiledModel extracts `libLiteRt.so` for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, plus `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64`, from the `2.2.0` AAR. SoC-specific NPU runtimes remain app-provided.
+- Android: the runtime comes from Google's official Maven AARs (`com.google.ai.edge.litert`), extracted automatically by Gradle. The plugin takes `libLiteRt.so` for `arm64-v8a`, `armeabi-v7a`, and `x86_64` from the `litert` 2.3.2 AAR, and `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64` from the `litert-gpu` 2.3.2 AAR. The `Interpreter` and `CompiledModel` both load that one `libLiteRt.so`. 32-bit `x86` is not packaged, and `minSdk` is 24. The AARs' Java classes are not added to the app. SoC-specific NPU runtimes remain app-provided.
 - iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` xcframework (release `litert-ios-v1.0.1` for SPM, `litert-ios-v1.0.0` for CocoaPods; both the same commit-pinned LiteRT Next build, commit `1adc2475`).
-- macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` wheel (2.3.0 on Windows and Linux, 2.1.5 on macOS), bundled via CMake on Windows and Linux and via CocoaPods on macOS.
+- macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` wheel (2.3.0 on Windows and Linux, 2.3.x on macOS), bundled via CMake on Windows and Linux and via CocoaPods on macOS.
 - Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.6.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).
 
 > Intel Macs only: the iOS simulator is not supported under Swift Package Manager on x86_64. You have two options: test using a real iOS device or switch to CocoaPods to use the simulator. This applies to Intel Macs only.
