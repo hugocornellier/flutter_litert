@@ -1886,7 +1886,7 @@ flutter_litert ships two independent native runtimes, one per API. The classic `
 | iOS | TensorFlow Lite 2.20.0 | LiteRT Next (CPU / Metal GPU / Core ML NPU) |
 | macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 (CPU / Metal GPU / Core ML NPU) |
 | Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
-| Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.1.5 |
+| Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.0 |
 | Web | LiteRT.js 2.5.3 / TFLite.js (WASM) | LiteRT.js 2.5.3 (WASM / WebGPU) |
 
 Bundling:
