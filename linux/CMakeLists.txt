@@ -29,12 +29,22 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::GTK)
 # Build the TFLite custom ops library (e.g., Convolution2DTransposeBias for MediaPipe)
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_BINARY_DIR}/custom_ops")
 
-# The WebGPU GPU accelerator (~16 MB) is fetched at build time from a GitHub
+# The WebGPU GPU accelerator (~18 MB) is fetched at build time from a GitHub
 # release rather than bundled in the published pub.dev package, which must stay
-# under the 100 MiB limit. Downloaded (verified by SHA-256) only if not present.
+# under the 100 MiB limit. Downloaded (verified by SHA-256) only if it is not
+# already present with the pinned hash.
+# It is the unmodified file from the same ai-edge-litert wheel as libLiteRt.so
+# and must match it: the runtime/accelerator ABI changed between 2.1.5 and 2.3.0.
 function(flutter_litert_fetch_lib path url sha)
+  # A file left by an older flutter_litert (a different pinned version) is
+  # replaced, not reused: the accelerator must match the bundled runtime.
   if(EXISTS "${path}")
-    return()
+    file(SHA256 "${path}" existing_sha)
+    if(existing_sha STREQUAL sha)
+      return()
+    endif()
+    message(STATUS "flutter_litert: ${path} does not match the pinned SHA-256; replacing it")
+    file(REMOVE "${path}")
   endif()
   foreach(attempt RANGE 1 3)
     message(STATUS "flutter_litert: downloading ${url} (attempt ${attempt})")
@@ -55,14 +65,14 @@ endfunction()
 
 flutter_litert_fetch_lib(
   "${CMAKE_CURRENT_SOURCE_DIR}/lib/libLiteRtWebGpuAccelerator.so"
-  "https://github.com/hugocornellier/flutter_litert/releases/download/litert-desktop-gpu-v1.0.0/libLiteRtWebGpuAccelerator.so"
-  "d732c738e5206dd3374d0496a3f00deb4e02aec37bf5678c5617bad422bb0249")
+  "https://github.com/hugocornellier/flutter_litert/releases/download/litert-desktop-gpu-v2.3.0/libLiteRtWebGpuAccelerator.so"
+  "b67f193ae6eb8ad3a15349f54aba696c97d6f981c92bc2eb1096cbe9e2835b25")
 
 set(flutter_tflite_bundled_libraries
   "$<TARGET_FILE:tflite_custom_ops>"
   "${CMAKE_CURRENT_SOURCE_DIR}/lib/libtensorflowlite_c-linux.so"
   # LiteRT Next runtime (CompiledModel API) + WebGPU/Vulkan GPU accelerator,
-  # x86_64; from the official ai-edge-litert 2.1.5 PyPI wheel. The runtime
+  # x86_64; from the official ai-edge-litert 2.3.0 PyPI wheel. The runtime
   # discovers the accelerator by scanning its own directory for the bare
   # soname, so both must land in the same bundled lib/ dir.
   "${CMAKE_CURRENT_SOURCE_DIR}/lib/libLiteRt.so"
@@ -76,7 +86,7 @@ set(flutter_litert_bundled_libraries
   "$<TARGET_FILE:tflite_custom_ops>"
   "${CMAKE_CURRENT_SOURCE_DIR}/lib/libtensorflowlite_c-linux.so"
   # LiteRT Next runtime (CompiledModel API) + WebGPU/Vulkan GPU accelerator,
-  # x86_64; from the official ai-edge-litert 2.1.5 PyPI wheel. The runtime
+  # x86_64; from the official ai-edge-litert 2.3.0 PyPI wheel. The runtime
   # discovers the accelerator by scanning its own directory for the bare
   # soname, so both must land in the same bundled lib/ dir.
   "${CMAKE_CURRENT_SOURCE_DIR}/lib/libLiteRt.so"
