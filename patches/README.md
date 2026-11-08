@@ -32,12 +32,12 @@ the CPU. It is separate from the classic Interpreter Core ML delegate, whose
 upstream `MLComputeUnitsAll` behavior is unchanged.
 
 The patch also carries the existing required-padding fix for global `MEAN`
-pooling and a protobuf `RepeatedField::Resize` compatibility fix needed to build
-LiteRT v2.1.5 with its resolved protobuf dependency. A thread-local diagnostic
+pooling. (The protobuf `RepeatedField::Resize` fix it carried for v2.1.5 is
+upstream since v2.3.0, so it was dropped.) A thread-local diagnostic
 counter records how many TFLite nodes the most recent Core ML delegate claimed,
 allowing mixed NPU+CPU compilation to reject a silent zero-op fallback. The
-matching workflow is `build-coreml-npu-macos.yml`; it pins LiteRT v2.1.5 at commit
-`9d26e89d88ef8785b6a1e54ec41ac8add215a125` and produces both the delegate and
+matching workflow is `build-coreml-npu-macos.yml`; it pins LiteRT v2.3.2 at commit
+`d30595a09f74b4c4c4f669eafeb26928a92deb5a` and produces both the delegate and
 the small LiteRT accelerator-registration bridge.
 
 ## gpu_transpose_conv_v4.patch
