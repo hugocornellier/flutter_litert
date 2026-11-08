@@ -140,7 +140,8 @@ class AndroidMatrixMode {
   };
 }
 
-// Interpreter exposes CPU, XNNPACK, Flex, and Android's GL/CL GPU delegate.
+// Interpreter exposes CPU and XNNPACK. Android has no Interpreter GPU or flex
+// delegate since 4.0.0, so its GPU is measured through CompiledModel.
 // CompiledModel exposes three accelerators; every non-empty accelerator set is
 // represented, plus the GPU-only fp16 precision variant used in production.
 const androidMatrixModes = <AndroidMatrixMode>[
@@ -157,30 +158,6 @@ const androidMatrixModes = <AndroidMatrixMode>[
     label: 'interpreter_xnnpack_4t',
     delegate: 'xnnpack',
     accelerators: 'cpu_xnnpack',
-    precision: 'fp32',
-    asyncSupported: false,
-  ),
-  AndroidMatrixMode(
-    engine: 'interpreter',
-    label: 'interpreter_flex',
-    delegate: 'flex_select_tf_ops',
-    accelerators: 'cpu_flex',
-    precision: 'fp32',
-    asyncSupported: false,
-  ),
-  AndroidMatrixMode(
-    engine: 'interpreter',
-    label: 'interpreter_gpu_v2_gl_cl_fp16',
-    delegate: 'gpu_v2_gl_cl',
-    accelerators: 'gpu',
-    precision: 'fp16',
-    asyncSupported: false,
-  ),
-  AndroidMatrixMode(
-    engine: 'interpreter',
-    label: 'interpreter_gpu_v2_gl_cl_fp32',
-    delegate: 'gpu_v2_gl_cl',
-    accelerators: 'gpu',
     precision: 'fp32',
     asyncSupported: false,
   ),
