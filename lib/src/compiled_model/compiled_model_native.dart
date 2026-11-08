@@ -1758,9 +1758,9 @@ void _checkFloat32Tensor(
 
 void _checkStructLayouts() {
   // LiteRtLayout/LiteRtRankedTensorType are opaque on the Dart side because
-  // their ABI differs per compiler (MSVC vs clang/gcc bitfield packing); both
-  // layouts are pinned by static_asserts in litert/c/litert_layout.h and
-  // sized here via kLiteRtLayoutByteSize/kLiteRtRankedTensorTypeByteSize.
+  // they hold bitfields; their layout is pinned by static_asserts in
+  // litert/c/litert_layout.h and sized via
+  // kLiteRtLayoutByteSize/kLiteRtRankedTensorTypeByteSize.
   if (sizeOf<LiteRtAny>() != _kLiteRtAnySize) {
     throw StateError(
       'LiteRtAny size ${sizeOf<LiteRtAny>()} != $_kLiteRtAnySize.',
