@@ -13,6 +13,18 @@ on:
         required: true
         default: '35'
         type: string
+      abi:
+        description: >-
+          ABI the physical shards package. armeabi-v7a runs the 32-bit build,
+          which has no GPU accelerator or NPU runtime, so only the CPU modes
+          can pass; it needs a device that still runs 32-bit apps. The virtual
+          smoke and the instrumentation APK stay arm64-v8a.
+        required: true
+        default: arm64-v8a
+        type: choice
+        options:
+          - arm64-v8a
+          - armeabi-v7a
       single_execution:
         description: >-
           Run all 29 models in one Test Lab execution instead of five shards.
@@ -88,6 +100,7 @@ jobs:
       FIREBASE_PROJECT_ID: flutter-litert
       DEVICE_MODEL: ${{ inputs.device_model || 'dm1q' }}
       ANDROID_VERSION: ${{ inputs.android_version || '35' }}
+      MATRIX_ABI: ${{ inputs.abi || 'arm64-v8a' }}
       MATRIX_ITERATIONS: ${{ inputs.iterations || '15' }}
       MATRIX_WARMUP: ${{ inputs.warmup || '5' }}
       # "all" is one execution covering every model; the numeric list is the
@@ -309,6 +322,24 @@ jobs:
           cp build/app/outputs/apk/debug/app-debug.apk \
             "$APK_OUTPUT_ROOT/virtual-smoke.apk"
 
+          # The 32-bit shards build only the android-arm Dart snapshot and
+          # carry no NPU runtime, whose libraries are arm64-v8a only.
+          case "$MATRIX_ABI" in
+            arm64-v8a)
+              SHARD_ABI_ARGS=(
+                -PflutterLitert.testLabAbi=arm64-v8a
+                "-PflutterLitert.qualcommNpuRuntimeDir=$NPU_RUNTIME_DIR"
+              )
+              ;;
+            armeabi-v7a)
+              SHARD_ABI_ARGS=(
+                -PflutterLitert.testLabAbi=armeabi-v7a
+                -Ptarget-platform=android-arm
+              )
+              ;;
+            *) echo "Unknown ABI '$MATRIX_ABI'" >&2; exit 1 ;;
+          esac
+
           for shard in $MATRIX_SHARDS; do
             dart run tool/stage_android_model_matrix_assets.dart \
               --repositories-root "$MODEL_REPOSITORIES_ROOT" \
@@ -317,13 +348,12 @@ jobs:
             # The manifest's all-models sentinel is -1; "all" is only the
             # human-readable token used for file and results-directory names.
             if [ "$shard" = all ]; then SHARD_INDEX=-1; else SHARD_INDEX="$shard"; fi
-            DART_DEFINES="$(printf %s "MATRIX_SHARD_INDEX=$SHARD_INDEX" | base64 -w 0),$(printf %s "MATRIX_ITERS=$MATRIX_ITERATIONS" | base64 -w 0),$(printf %s "MATRIX_WARMUP=$MATRIX_WARMUP" | base64 -w 0),$(printf %s "MATRIX_MODE_FILTER=$MATRIX_MODE_FILTER" | base64 -w 0),$(printf %s "MATRIX_MODEL_FILTER=$MATRIX_MODEL_FILTER" | base64 -w 0),$(printf %s "MATRIX_MODEL_FILTER=$MATRIX_MODEL_FILTER" | base64 -w 0),$(printf %s 'MATRIX_ENFORCE_ACCURACY=false' | base64 -w 0),$(printf %s 'MATRIX_REQUIRE_PHYSICAL=true' | base64 -w 0),$(printf %s "LITERT_COMMIT=$GITHUB_SHA" | base64 -w 0)"
+            DART_DEFINES="$(printf %s "MATRIX_SHARD_INDEX=$SHARD_INDEX" | base64 -w 0),$(printf %s "MATRIX_ITERS=$MATRIX_ITERATIONS" | base64 -w 0),$(printf %s "MATRIX_WARMUP=$MATRIX_WARMUP" | base64 -w 0),$(printf %s "MATRIX_MODE_FILTER=$MATRIX_MODE_FILTER" | base64 -w 0),$(printf %s "MATRIX_MODEL_FILTER=$MATRIX_MODEL_FILTER" | base64 -w 0),$(printf %s "MATRIX_EXPECT_ABI=$MATRIX_ABI" | base64 -w 0),$(printf %s 'MATRIX_ENFORCE_ACCURACY=false' | base64 -w 0),$(printf %s 'MATRIX_REQUIRE_PHYSICAL=true' | base64 -w 0),$(printf %s "LITERT_COMMIT=$GITHUB_SHA" | base64 -w 0)"
             cd android
             ./gradlew app:assembleDebug \
               -Ptarget="$GITHUB_WORKSPACE/example/integration_test/android_model_matrix_test.dart" \
               -Pdart-defines="$DART_DEFINES" \
-              -PflutterLitert.testLabAbi=arm64-v8a \
-              -PflutterLitert.qualcommNpuRuntimeDir="$NPU_RUNTIME_DIR" \
+              "${SHARD_ABI_ARGS[@]}" \
               --rerun-tasks \
               --stacktrace
             cd ..
@@ -359,16 +389,21 @@ jobs:
             APK_LISTING="$RUNNER_TEMP/android-model-matrix-shard-$shard.txt"
             zipinfo -1 "$APK" > "$APK_LISTING"
             PACKAGED_ABIS="$(grep '^lib/' "$APK_LISTING" | cut -d/ -f2 | sort -u)"
-            test "$PACKAGED_ABIS" = arm64-v8a
-            grep -q '^lib/arm64-v8a/libLiteRt[.]so$' "$APK_LISTING"
-            grep -q '^lib/arm64-v8a/libLiteRtClGlAccelerator[.]so$' "$APK_LISTING"
-            if grep -Eq '^lib/arm64-v8a/libtensorflowlite(_gpu|_flex)?_jni[.]so$' "$APK_LISTING"; then
+            test "$PACKAGED_ABIS" = "$MATRIX_ABI"
+            grep -q "^lib/$MATRIX_ABI/libLiteRt[.]so$" "$APK_LISTING"
+            grep -q "^lib/$MATRIX_ABI/libflutter[.]so$" "$APK_LISTING"
+            if grep -Eq '^lib/[^/]+/libtensorflowlite(_gpu|_flex)?_jni[.]so$' "$APK_LISTING"; then
               echo "A LiteRT 1.x library is packaged in shard $shard" >&2
               exit 1
             fi
-            grep -q '^lib/arm64-v8a/libLiteRtCompilerPlugin_Qualcomm[.]so$' "$APK_LISTING"
-            grep -q '^lib/arm64-v8a/libLiteRtDispatch_Qualcomm[.]so$' "$APK_LISTING"
-            grep -q "^lib/arm64-v8a/libQnnHtpV${QUALCOMM_HTP_VERSION}Skel[.]so$" "$APK_LISTING"
+            # The GPU accelerator and the Qualcomm NPU runtime exist for
+            # arm64-v8a only.
+            if [ "$MATRIX_ABI" = arm64-v8a ]; then
+              grep -q '^lib/arm64-v8a/libLiteRtClGlAccelerator[.]so$' "$APK_LISTING"
+              grep -q '^lib/arm64-v8a/libLiteRtCompilerPlugin_Qualcomm[.]so$' "$APK_LISTING"
+              grep -q '^lib/arm64-v8a/libLiteRtDispatch_Qualcomm[.]so$' "$APK_LISTING"
+              grep -q "^lib/arm64-v8a/libQnnHtpV${QUALCOMM_HTP_VERSION}Skel[.]so$" "$APK_LISTING"
+            fi
             MODEL_COUNT="$(grep -Ec 'flutter_assets/assets/models/model_matrix/.+[.]tflite$' "$APK_LISTING")"
             case "$shard" in
               0|2) EXPECTED_MODEL_COUNT=5 ;;
@@ -400,6 +435,14 @@ jobs:
           test "${PHYSICAL_FORM^^}" = PHYSICAL
           gcloud firebase test android models describe "$DEVICE_MODEL" \
             --project "$FIREBASE_PROJECT_ID"
+          # Several current phones run 64-bit apps only, and the 32-bit shards
+          # would then fail to install after using the physical runs.
+          SUPPORTED_ABIS="$(gcloud firebase test android models describe "$DEVICE_MODEL" --project "$FIREBASE_PROJECT_ID" --format='value(supportedAbis)')"
+          echo "supportedAbis: $SUPPORTED_ABIS"
+          if ! grep -Eq "(^|[;, ])${MATRIX_ABI}($|[;, ])" <<< "$SUPPORTED_ABIS"; then
+            echo "$DEVICE_MODEL does not list $MATRIX_ABI" >&2
+            exit 1
+          fi
           VIRTUAL_FORM="$(gcloud firebase test android models describe MediumPhone.arm --project "$FIREBASE_PROJECT_ID" --format='value(form)')"
           test "${VIRTUAL_FORM^^}" = VIRTUAL
 

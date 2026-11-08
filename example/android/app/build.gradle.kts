@@ -48,12 +48,20 @@ android {
         versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Physical Test Lab devices are arm64. Keep normal example/emulator
-        // builds multi-ABI, but avoid uploading a several-hundred-MB fat debug
-        // APK for the dedicated cloud test.
+        // Test Lab builds package one ABI: arm64-v8a, or armeabi-v7a for the
+        // 32-bit run of the model matrix. Keep normal example/emulator builds
+        // multi-ABI, but avoid uploading a several-hundred-MB fat debug APK for
+        // the dedicated cloud test.
         if (testLabAbi != null) {
-            require(testLabAbi == "arm64-v8a") {
-                "flutterLitert.testLabAbi only supports arm64-v8a"
+            require(testLabAbi == "arm64-v8a" || testLabAbi == "armeabi-v7a") {
+                "flutterLitert.testLabAbi only supports arm64-v8a or armeabi-v7a"
+            }
+            // The Qualcomm NPU libraries are arm64-v8a only.
+            require(
+                testLabAbi == "arm64-v8a" ||
+                    (qualcommNpuRuntimeDir == null && qualcommNpuFeatureRoot == null)
+            ) {
+                "The Qualcomm NPU runtime needs flutterLitert.testLabAbi=arm64-v8a"
             }
             ndk {
                 abiFilters.clear()
