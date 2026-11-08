@@ -82,10 +82,17 @@ void main() {
 
   testWidgets('the APK packages the bundled runtime too', (tester) async {
     expect(() => DynamicLibrary.open('libLiteRt.so'), returnsNormally);
-    expect(
-      () => DynamicLibrary.open('libtensorflowlite_jni.so'),
-      throwsArgumentError,
-    );
+    // LiteRT 1.x is gone: the Interpreter runs on libLiteRt.so too.
+    for (final library in [
+      'libtensorflowlite_jni.so',
+      'libtensorflowlite_gpu_jni.so',
+    ]) {
+      expect(
+        () => DynamicLibrary.open(library),
+        throwsArgumentError,
+        reason: '$library should not be packaged',
+      );
+    }
   });
 
   testWidgets('Interpreter and CompiledModel run', (tester) async {

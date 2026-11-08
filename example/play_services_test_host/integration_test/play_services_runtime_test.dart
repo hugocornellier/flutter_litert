@@ -237,7 +237,6 @@ void main() {
         contains('Google Play services'),
       );
       expect(() => XNNPackDelegate(), throwsA(playServicesError));
-      expect(() => GpuDelegateV2(), throwsA(playServicesError));
       final options = InterpreterOptions();
       addTearDown(options.delete);
       expect(options.addMediaPipeCustomOps, throwsA(playServicesError));
