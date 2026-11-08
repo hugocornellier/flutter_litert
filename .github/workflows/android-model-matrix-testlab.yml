@@ -205,12 +205,14 @@ jobs:
             -d "$NPU_RUNTIME_DIR"
 
           # The version LiteRT v2.3.2 pins in third_party/qairt/workspace.bzl.
-          # That file has no checksum, so this one is printed, not checked.
+          # Neither that file nor Qualcomm publishes a checksum; this is the
+          # one the first CI download printed (run 42260592655).
           QAIRT_ZIP="$RUNNER_TEMP/qairt-${QAIRT_VERSION}.zip"
           curl --fail --location --retry 3 --silent --show-error \
             "https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/${QAIRT_VERSION}/v${QAIRT_VERSION}.zip" \
             --output "$QAIRT_ZIP"
-          sha256sum "$QAIRT_ZIP"
+          echo "a346ea0e2c8631b46d57261a4969994cd9cc34124a8355bbc7b08b2c8bd859a5  $QAIRT_ZIP" \
+            | sha256sum --check -
           unzip -jo "$QAIRT_ZIP" \
             "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnHtp.so" \
             "qairt/${QAIRT_VERSION}/lib/aarch64-android/libQnnSystem.so" \
