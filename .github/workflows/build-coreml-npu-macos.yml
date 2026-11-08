@@ -8,11 +8,11 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 300
     env:
-      LITERT_VERSION: v2.1.5
-      BAZEL_VERSION: 7.4.1
+      LITERT_VERSION: v2.3.2
+      BAZEL_VERSION: 7.7.0
 
     steps:
       - uses: actions/checkout@v4
@@ -34,7 +34,7 @@ jobs:
           git clone --depth 1 --branch "$LITERT_VERSION" \
             https://github.com/google-ai-edge/LiteRT.git "$RUNNER_TEMP/litert-src"
           test "$(git -C "$RUNNER_TEMP/litert-src" rev-parse HEAD)" = \
-            "9d26e89d88ef8785b6a1e54ec41ac8add215a125"
+            "d30595a09f74b4c4c4f669eafeb26928a92deb5a"
 
       - name: Apply macOS NPU delegate patch
         run: |
