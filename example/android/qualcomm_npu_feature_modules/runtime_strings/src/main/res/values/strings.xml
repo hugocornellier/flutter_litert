@@ -1,0 +1,5 @@
+<resources>
+    <string name="title_qualcomm_runtime_v73">Qualcomm NPU Runtime v73</string>
+    <string name="title_qualcomm_runtime_v75">Qualcomm NPU Runtime v75</string>
+    <string name="title_qualcomm_runtime_v79">Qualcomm NPU Runtime v79</string>
+</resources>
