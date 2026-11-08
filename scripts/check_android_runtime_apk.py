@@ -7,17 +7,26 @@
 
 For flutterLitert.runtime=playServices, every Flutter ABI in the APK must carry
 the runtime shim and the two Play services client libraries, and none of the
-LiteRT runtimes the bundled mode packages. The shim must export each LiteRt
+LiteRT libraries the bundled mode packages. The shim must export each LiteRt
 function lib/src/bindings/litert_ffi.dart binds, and nothing else beyond its
 own API, and depend on the Play services client.
 
-For the bundled default, the APK must carry the bundled runtimes and a shim
-that neither forwards LiteRt nor links Play services.
+For the bundled default, the APK must carry libLiteRt.so, which serves both
+Interpreter and CompiledModel, the GPU accelerator on arm64-v8a and x86_64 and
+not on armeabi-v7a (pass --no-gpu-accelerator for an app built with
+flutterLitert.bundleGpuAccelerator=false), and a shim that neither forwards
+LiteRt nor links Play services.
 
 For auto, the APK must carry both: the Play services shim and clients, and the
-bundled runtimes. It must not carry the litert AAR's Java, which does not fit
-the litert-api that play-services-litert brings. R8 can hide that Java in a
-release APK, so check a debug APK as well.
+bundled libraries.
+
+In every mode the APK must not carry a LiteRT 1.x library
+(libtensorflowlite_jni.so, libtensorflowlite_gpu_jni.so,
+libtensorflowlite_flex_jni.so) or the Java of the litert 1.x AARs, which does
+not fit the litert-api that play-services-litert brings. In bundled mode no
+org.tensorflow.lite class may be packaged at all, since nothing in that mode
+brings one. R8 can hide that Java in a release APK, so check a debug APK as
+well.
 
 Only reads the APK; nothing in it is executed.
 """
@@ -37,20 +46,33 @@ PLAY_SERVICES_CLIENTS = (
     "liblitert_compiledmodel_gms_client.so",
     "libtensorflowlite_jni_gms_client.so",
 )
-BUNDLED_RUNTIMES = (
-    "libLiteRt.so",
-    "libtensorflowlite_jni.so",
-    "libtensorflowlite_gpu_jni.so",
-)
-# Accelerators that only the bundled mode downloads and packages.
-BUNDLED_ONLY = BUNDLED_RUNTIMES + (
-    "libLiteRtClGlAccelerator.so",
+# The bundled runtime: one library for Interpreter and CompiledModel.
+BUNDLED_RUNTIME = "libLiteRt.so"
+GPU_ACCELERATOR = "libLiteRtClGlAccelerator.so"
+# The ABIs the bundled GPU accelerator is packaged for. litert-gpu also ships
+# one for armeabi-v7a, which the plugin leaves out on purpose.
+GPU_ACCELERATOR_ABIS = ("arm64-v8a", "x86_64")
+# Libraries that only the bundled mode downloads and packages.
+BUNDLED_ONLY = (
+    BUNDLED_RUNTIME,
+    GPU_ACCELERATOR,
     "libLiteRtOpenClAccelerator.so",
     "libLiteRtWebGpuAccelerator.so",
+)
+# LiteRT 1.x libraries, which no runtime mode packages any more.
+LITERT_1X_LIBRARIES = (
+    "libtensorflowlite_jni.so",
+    "libtensorflowlite_gpu_jni.so",
     "libtensorflowlite_flex_jni.so",
 )
-# A class only the litert AAR has, as dex stores its name.
-LITERT_AAR_JAVA_CLASS = b"Lorg/tensorflow/lite/NativeInterpreterWrapper;"
+# Classes only the litert and litert-gpu 1.x AARs have, as dex stores their
+# names. The litert-api interfaces that play-services-litert brings share
+# their package, so playServices and auto check these names only.
+LITERT_1X_JAVA_CLASSES = (
+    b"Lorg/tensorflow/lite/NativeInterpreterWrapper;",
+    b"Lorg/tensorflow/lite/gpu/GpuDelegate;",
+)
+LITERT_JAVA_PACKAGE = b"Lorg/tensorflow/lite/"
 SHIM_EXPORTS = (
     "FlutterLiteRtRuntimeMode",
     "FlutterLiteRtRuntimeSelected",
@@ -131,18 +153,27 @@ def main():
     parser.add_argument(
         "--runtime", choices=("bundled", "playServices", "auto"), required=True
     )
+    parser.add_argument(
+        "--no-gpu-accelerator",
+        action="store_true",
+        help="the app was built with flutterLitert.bundleGpuAccelerator=false",
+    )
     parser.add_argument("apk", type=pathlib.Path)
     args = parser.parse_args()
     # Whether the Play services client is linked, and LiteRT itself packaged.
     play = args.runtime != "bundled"
     bundled = args.runtime != "playServices"
+    if args.no_gpu_accelerator and not bundled:
+        parser.error("--no-gpu-accelerator only applies to bundled and auto")
 
     with zipfile.ZipFile(args.apk) as apk:
         libs = {}
-        for name in apk.namelist():
-            parts = name.split("/")
+        sizes = {}
+        for info in apk.infolist():
+            parts = info.filename.split("/")
             if len(parts) == 3 and parts[0] == "lib" and parts[2].endswith(".so"):
-                libs.setdefault(parts[1], {})[parts[2]] = name
+                libs.setdefault(parts[1], {})[parts[2]] = info.filename
+                sizes[info.filename] = info.file_size
         # Dependencies can ship ABIs Flutter does not build for (x86); only
         # the ones holding the Flutter engine are part of the app.
         libs = {abi: files for abi, files in libs.items() if "libflutter.so" in files}
@@ -150,28 +181,42 @@ def main():
             sys.exit(f"{args.apk}: no Flutter native libraries")
 
         errors = []
-        if play and bundled:
-            for name in apk.namelist():
-                if name.endswith(".dex") and LITERT_AAR_JAVA_CLASS in apk.read(name):
-                    errors.append(f"{name}: must not link the litert AAR's Java")
+        for name in apk.namelist():
+            if not name.endswith(".dex"):
+                continue
+            dex = apk.read(name)
+            for java_class in LITERT_1X_JAVA_CLASSES:
+                if java_class in dex:
+                    errors.append(
+                        f"{name}: must not link the litert 1.x Java "
+                        f"({java_class.decode()})"
+                    )
+            if not play and LITERT_JAVA_PACKAGE in dex:
+                errors.append(f"{name}: bundled must not package org.tensorflow.lite Java")
         litert_functions = dart_bound_litert_functions()
         for abi, files in sorted(libs.items()):
             present = set(files)
             required = {SHIM}
-            forbidden = set()
+            forbidden = set(LITERT_1X_LIBRARIES)
             if play:
                 required |= set(PLAY_SERVICES_CLIENTS)
             else:
                 forbidden |= set(PLAY_SERVICES_CLIENTS)
             if bundled:
-                required |= set(BUNDLED_RUNTIMES)
+                required.add(BUNDLED_RUNTIME)
+                if not args.no_gpu_accelerator and abi in GPU_ACCELERATOR_ABIS:
+                    required.add(GPU_ACCELERATOR)
+                else:
+                    forbidden.add(GPU_ACCELERATOR)
             else:
                 forbidden |= set(BUNDLED_ONLY)
             for lib in sorted(required - present):
                 errors.append(f"{abi}: missing {lib}")
             for lib in sorted(forbidden & present):
                 errors.append(f"{abi}: must not package {lib}")
+            total = sum(sizes[files[lib]] for lib in present)
             print(f"{abi}: {', '.join(sorted(present))}")
+            print(f"{abi}: {total} bytes of native libraries, uncompressed")
 
             if SHIM not in present or abi not in ("arm64-v8a", "x86_64"):
                 continue
