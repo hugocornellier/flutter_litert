@@ -63,6 +63,13 @@ jobs:
             -PflutterLitert.testLabAbi=arm64-v8a \
             --stacktrace
 
+      # Before any Test Lab quota is used: libLiteRt.so and the bundled GPU
+      # accelerator are packaged, and no LiteRT 1.x library or Java is.
+      - name: Check the APK packages the bundled runtime
+        run: >-
+          python3 -I scripts/check_android_runtime_apk.py --runtime bundled
+          example/build/app/outputs/apk/debug/app-debug.apk
+
       - name: Authenticate to Firebase Test Lab
         uses: google-github-actions/auth@v3
         with:
