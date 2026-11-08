@@ -102,9 +102,9 @@ Interpreter modes:
 - Metal with precision loss allowed (fp16-capable)
 - Metal with precision loss disabled (fp32)
 - Core ML with `AllDevices`
-- the GL/CL `GpuDelegateV2` API (expected to report unsupported on both Apple
-  platforms, where Metal is the GPU path; the row is kept so the Apple and
-  Android tables stay column-comparable)
+- the GL/CL `GpuDelegateV2` API (removed in 4.0.0; historical rows only. It
+  reported unsupported on both Apple platforms, where Metal is the GPU path,
+  and was kept so the Apple and Android tables stayed column-comparable)
 - Flex / Select TF Ops, with the optional `flutter_litert_flex` addon bundled
   into the matrix host (Flex is a compatibility delegate, not an accelerator)
 

@@ -1,5 +1,7 @@
 # Android physical-device model matrix
 
+> Historical 3.x run on a Pixel 9 Pro; the "Galaxy S23" in the generated line below was hardcoded in the merge tool at the time. The `interpreter_flex` and `interpreter_gpu_v2_*` modes were removed in 4.0.0; their rows are kept as recorded.
+
 Generated 2026-08-04T00:16:15.527594Z from five Firebase Test Lab Galaxy S23 shards.
 
 - Rows: 261/261 (rectangular: true)
