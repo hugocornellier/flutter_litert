@@ -106,8 +106,6 @@ typedef LiteRtStatus (*LiteRtCreateDelegateCallback)(
     LiteRtRuntimeContext* runtime_context, LiteRtEnvironment environment,
     LiteRtAccelerator accelerator, LiteRtOptions options,
     LiteRtDelegateWrapper* delegate);
-typedef void (*LiteRtDestroyDelegateCallback)(
-    LiteRtRuntimeContext* runtime_context, LiteRtDelegateWrapper delegate);
 typedef LiteRtStatus (*LiteRtSetAcceleratorGetNameFn)(
     LiteRtAccelerator accelerator, LiteRtGetNameCallback get_name);
 typedef LiteRtStatus (*LiteRtSetAcceleratorGetVersionFn)(
@@ -119,40 +117,64 @@ typedef LiteRtStatus (*LiteRtSetIsJitFn)(
     LiteRtAccelerator accelerator, LiteRtIsJitCallback is_jit);
 typedef LiteRtStatus (*LiteRtSetDelegateFunctionFn)(
     LiteRtAccelerator accelerator,
-    LiteRtCreateDelegateCallback create_delegate,
-    LiteRtDestroyDelegateCallback destroy_delegate);
+    LiteRtCreateDelegateCallback create_delegate);
+typedef void (*TfLiteDelegateDeleter)(void* tflite_delegate);
 typedef LiteRtStatus (*LiteRtWrapDelegateFn)(
-    void* tflite_delegate, LiteRtDelegateWrapper* wrapper);
-typedef LiteRtStatus (*LiteRtUnwrapDelegateFn)(
-    LiteRtDelegateWrapper wrapper, void** tflite_delegate);
+    void* tflite_delegate, TfLiteDelegateDeleter deleter,
+    LiteRtDelegateWrapper* wrapper);
 
-// Prefix of LiteRtAcceleratorDefV1 through the delegate callbacks. The shipped
-// LiteRT runtime exports its static XNNPACK definition; registering that
-// definition after Core ML preserves NPU-first ordering while still giving
-// mixed {npu, cpu} models XNNPACK for any remaining graph.
+// Mirrors LiteRtAbiHeader (litert/c/internal/litert_abi_header.h), the first
+// member of every ABI-stable LiteRT struct since v2.3.0.
 typedef struct {
-  int version;
+  uint16_t struct_size;
+  uint16_t major_version;
+  uint16_t minor_version;
+  uint16_t reserved;
+} LiteRtAbiHeaderShim;
+
+enum {
+  kLiteRtAcceleratorDefMajorVersion = 1,
+};
+
+// Prefix of LiteRtAcceleratorDefV1 through the delegate callback. Since LiteRT
+// v2.3.0 the definition starts with an ABI header, there is no separate
+// destroy-delegate callback, and LiteRtWrapDelegate takes the deleter that
+// owns the wrapped delegate. The shipped LiteRT runtime exports its static
+// XNNPACK definition; registering that definition after Core ML preserves
+// NPU-first ordering while still giving mixed {npu, cpu} models XNNPACK for
+// any remaining graph.
+typedef struct {
+  LiteRtAbiHeaderShim abi_header;
   LiteRtGetNameCallback get_name;
   LiteRtGetVersionCallback get_version;
   LiteRtGetHardwareSupportCallback get_hardware_support;
   LiteRtIsJitCallback is_jit;
   LiteRtCreateDelegateCallback create_delegate;
-  LiteRtDestroyDelegateCallback destroy_delegate;
 } LiteRtAcceleratorDefV1Prefix;
 
-// Keep the two hand-mirrored ABI prefixes honest. LiteRT v2.1.5 publishes the
-// accelerator offsets below as its version-1 ABI, and Core ML's public options
-// contain four consecutive 32-bit values in non-debug builds.
+// Keep the two hand-mirrored ABI prefixes honest. LiteRT v2.3.x publishes the
+// accelerator offsets below as its version-1 ABI (litert_accelerator_def.h
+// static_asserts), and Core ML's public options contain four consecutive
+// 32-bit values in non-debug builds.
+_Static_assert(sizeof(LiteRtAbiHeaderShim) == 8,
+               "LiteRt ABI header size mismatch");
 _Static_assert(sizeof(TfLiteCoreMlDelegateOptionsShim) == 16,
                "TfLite Core ML options ABI mismatch");
 _Static_assert(offsetof(LiteRtAcceleratorDefV1Prefix, get_name) == 8,
                "LiteRt accelerator get_name offset mismatch");
 _Static_assert(offsetof(LiteRtAcceleratorDefV1Prefix, create_delegate) == 40,
                "LiteRt accelerator create_delegate offset mismatch");
-_Static_assert(offsetof(LiteRtAcceleratorDefV1Prefix, destroy_delegate) == 48,
-               "LiteRt accelerator destroy_delegate offset mismatch");
-_Static_assert(sizeof(LiteRtAcceleratorDefV1Prefix) == 56,
+_Static_assert(sizeof(LiteRtAcceleratorDefV1Prefix) == 48,
                "LiteRt accelerator prefix size mismatch");
+
+// Mirrors LITERT_ABI_IS_COMPATIBLE(def, 1, 0) and also requires the definition
+// to be large enough to hold every callback this bridge reads.
+static bool IsCompatibleAcceleratorDef(
+    const LiteRtAcceleratorDefV1Prefix* def) {
+  return def != NULL &&
+         def->abi_header.major_version == kLiteRtAcceleratorDefMajorVersion &&
+         def->abi_header.struct_size >= sizeof(LiteRtAcceleratorDefV1Prefix);
+}
 
 typedef void* (*TfLiteCoreMlDelegateCreateFn)(
     const TfLiteCoreMlDelegateOptionsShim* options);
@@ -170,7 +192,6 @@ typedef struct {
   LiteRtSetIsJitFn set_is_jit;
   LiteRtSetDelegateFunctionFn set_delegate_function;
   LiteRtWrapDelegateFn wrap_delegate;
-  LiteRtUnwrapDelegateFn unwrap_delegate;
   const LiteRtAcceleratorDefV1Prefix* cpu_accelerator_def;
   LiteRtStatus load_status;
 } LiteRtSymbols;
@@ -276,14 +297,13 @@ static void LoadLiteRtSymbols(void) {
       "LiteRtSetIsAcceleratorDelegateResponsibleForJitCompilation");
   LOAD_LITERT(set_delegate_function, "LiteRtSetDelegateFunction");
   LOAD_LITERT(wrap_delegate, "LiteRtWrapDelegate");
-  LOAD_LITERT(unwrap_delegate, "LiteRtUnwrapDelegate");
 
 #undef LOAD_LITERT
 
   const LiteRtAcceleratorDefV1Prefix* const* cpu_def =
       (const LiteRtAcceleratorDefV1Prefix* const*)ResolveRequired(
           g_litert.handle, "LiteRtStaticLinkedAcceleratorCpuDef");
-  if (cpu_def == NULL || *cpu_def == NULL || (*cpu_def)->version != 1) {
+  if (cpu_def == NULL || !IsCompatibleAcceleratorDef(*cpu_def)) {
     return;
   }
   g_litert.cpu_accelerator_def = *cpu_def;
@@ -399,40 +419,21 @@ static LiteRtStatus CreateDelegate(
     return kLiteRtStatusErrorUnsupported;
   }
 
+  // The wrapper owns the delegate from here on: LiteRT calls the deleter
+  // (TfLiteCoreMlDelegateDelete) when it destroys the wrapper.
   const LiteRtStatus wrap_status =
-      g_litert.wrap_delegate(delegate, delegate_wrapper);
+      g_litert.wrap_delegate(delegate, g_coreml.destroy, delegate_wrapper);
   if (wrap_status != kLiteRtStatusOk) {
     g_coreml.destroy(delegate);
   }
   return wrap_status;
 }
 
-static void DestroyDelegate(LiteRtRuntimeContext* runtime_context,
-                            LiteRtDelegateWrapper delegate_wrapper) {
-  (void)runtime_context;
-  if (delegate_wrapper == NULL) {
-    return;
-  }
-  pthread_once(&g_litert_once, LoadLiteRtSymbols);
-  pthread_once(&g_coreml_once, LoadCoreMlSymbols);
-  if (g_litert.load_status != kLiteRtStatusOk ||
-      g_coreml.load_status != kLiteRtStatusOk) {
-    return;
-  }
-
-  void* delegate = NULL;
-  if (g_litert.unwrap_delegate(delegate_wrapper, &delegate) ==
-          kLiteRtStatusOk &&
-      delegate != NULL) {
-    g_coreml.destroy(delegate);
-  }
-}
-
 static LiteRtStatus RegisterCpuFallback(LiteRtEnvironment environment) {
   const LiteRtAcceleratorDefV1Prefix* def = g_litert.cpu_accelerator_def;
   if (def == NULL || def->get_name == NULL || def->get_version == NULL ||
       def->get_hardware_support == NULL || def->is_jit == NULL ||
-      def->create_delegate == NULL || def->destroy_delegate == NULL) {
+      def->create_delegate == NULL) {
     return kLiteRtStatusErrorUnsupported;
   }
 
@@ -457,8 +458,8 @@ static LiteRtStatus RegisterCpuFallback(LiteRtEnvironment environment) {
   SET_CPU_OR_DESTROY(g_litert.set_get_hardware_support(
       accelerator, def->get_hardware_support));
   SET_CPU_OR_DESTROY(g_litert.set_is_jit(accelerator, def->is_jit));
-  SET_CPU_OR_DESTROY(g_litert.set_delegate_function(
-      accelerator, def->create_delegate, def->destroy_delegate));
+  SET_CPU_OR_DESTROY(
+      g_litert.set_delegate_function(accelerator, def->create_delegate));
 
 #undef SET_CPU_OR_DESTROY
 
@@ -501,8 +502,8 @@ LiteRtStatus FlutterLiteRtRegisterCoreMlNpuAccelerator(
       g_litert.set_get_hardware_support(accelerator, GetHardwareSupport));
   SET_OR_DESTROY(
       g_litert.set_is_jit(accelerator, IsDelegateResponsibleForJit));
-  SET_OR_DESTROY(g_litert.set_delegate_function(
-      accelerator, CreateDelegate, DestroyDelegate));
+  SET_OR_DESTROY(
+      g_litert.set_delegate_function(accelerator, CreateDelegate));
 
 #undef SET_OR_DESTROY
 
