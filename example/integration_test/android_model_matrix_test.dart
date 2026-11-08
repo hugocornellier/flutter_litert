@@ -45,6 +45,17 @@ const _litertCommit = String.fromEnvironment(
   'LITERT_COMMIT',
   defaultValue: 'unknown',
 );
+// The ABI this APK is meant to run as. A 32-bit-only device runs the
+// armeabi-v7a build, so the matrix checks the ABI it got, not the device list.
+const _expectedAbi = String.fromEnvironment(
+  'MATRIX_EXPECT_ABI',
+  defaultValue: 'arm64-v8a',
+);
+const _abiByAndroidName = <String, Abi>{
+  'arm64-v8a': Abi.androidArm64,
+  'armeabi-v7a': Abi.androidArm,
+  'x86_64': Abi.androidX64,
+};
 
 // y ~= x when |y-x| <= absTolerance + relativeTolerance * outputScale.
 // This is intentionally the same order of magnitude as
@@ -1276,8 +1287,20 @@ void main() {
           reason: 'GPU/NPU matrix results require physical vendor hardware.',
         );
       }
-      expect(device.version.sdkInt, greaterThanOrEqualTo(31));
-      expect(device.supportedAbis, contains('arm64-v8a'));
+      // The plugin's floor is API 24. The Qualcomm NPU needs API 31, but the
+      // NPU modes already report unsupported below that, so the whole matrix
+      // must not stop.
+      expect(device.version.sdkInt, greaterThanOrEqualTo(24));
+      expect(
+        _abiByAndroidName[_expectedAbi],
+        isNotNull,
+        reason: 'Unknown MATRIX_EXPECT_ABI "$_expectedAbi".',
+      );
+      expect(
+        Abi.current(),
+        _abiByAndroidName[_expectedAbi],
+        reason: 'MATRIX_EXPECT_ABI is $_expectedAbi.',
+      );
 
       final selectedModeLabels = {
         ..._selectedInterpModes.map((mode) => mode.label),
