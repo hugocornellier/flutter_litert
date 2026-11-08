@@ -8,7 +8,7 @@ import java.util.Map;
 /**
  * Bundled-runtime counterpart of the Play services PlayServicesRuntime (flutterLitert.runtime
  * defaults to bundled). The bundled LiteRT runtime is packaged in the APK and needs no
- * initialization, so this reports both runtimes as ready.
+ * initialization, so this reports the Interpreter and CompiledModel APIs as ready.
  */
 final class PlayServicesRuntime {
   static final String MODE = "bundled";
