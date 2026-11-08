@@ -1,6 +1,7 @@
 #!/bin/bash
-# Wraps the prebuilt LiteRT Next iOS dylibs into conventional .framework
-# bundles and assembles framework-type xcframeworks.
+# Wraps the LiteRT iOS dylibs (runtime built from source, Metal accelerator
+# from Google's release; see .github/workflows/build-litert-ios.yml) into
+# conventional .framework bundles and assembles framework-type xcframeworks.
 #
 # Both distribution channels ship these framework-wrapped variants: CocoaPods
 # rejects vendored xcframeworks that contain bare dynamic libraries, and App
@@ -25,7 +26,11 @@ set -euo pipefail
 
 PREBUILT=$1
 OUT=$2
-VERSION=1.0.0
+# Bundle version: the LiteRT release the runtime is built from.
+VERSION=2.3.2
+# Google builds LiteRT (including the closed-source Metal accelerator) for
+# iOS 15.0 and later.
+MIN_IOS=15.0
 
 make_framework() { # dylib name out_dir [universal_sim]
   local dylib=$1 name=$2 out_dir=$3 universal_sim=${4:-}
@@ -41,7 +46,7 @@ make_framework() { # dylib name out_dir [universal_sim]
     local stub="$out_dir/$name.x86_64-stub"
     echo "static int litert_unavailable_on_x86_64_simulator;" |
       xcrun --sdk iphonesimulator clang -x c - -dynamiclib \
-        -target x86_64-apple-ios14.0-simulator \
+        -target x86_64-apple-ios$MIN_IOS-simulator \
         -install_name "@rpath/$name.framework/$name" -o "$stub"
     lipo -create "$dylib" "$stub" -output "$fw/$name"
     rm "$stub"
@@ -57,7 +62,7 @@ make_framework() { # dylib name out_dir [universal_sim]
     -c "Add :CFBundlePackageType string FMWK" \
     -c "Add :CFBundleShortVersionString string $VERSION" \
     -c "Add :CFBundleVersion string $VERSION" \
-    -c "Add :MinimumOSVersion string 14.0" \
+    -c "Add :MinimumOSVersion string $MIN_IOS" \
     "$fw/Info.plist"
   codesign --force --sign - "$fw"
 }

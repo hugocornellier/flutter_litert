@@ -1,32 +1,31 @@
-name: Build LiteRT Next iOS xcframeworks
+name: Build LiteRT iOS xcframeworks
 
-# Repackages Google's prebuilt LiteRT Next iOS binaries (litert/prebuilt in
-# google-ai-edge/LiteRT, stored as Git LFS) into the two xcframework variants
-# the plugin ships:
+# Builds the LiteRT CompiledModel runtime for iOS from a pinned
+# google-ai-edge/LiteRT source tag and pairs it with Google's prebuilt Metal
+# GPU accelerator, then wraps both into the framework-type xcframeworks the
+# plugin ships on both channels (CocoaPods and SwiftPM):
 #
-# - SwiftPM: library-type (bare dylib) xcframeworks. Xcode embeds the dylibs
-#   under their original file names, so LiteRT's GPU-plugin discovery, a
-#   dlopen of `libLiteRtMetalAccelerator.dylib` from the RuntimeLibraryDir,
-#   works as designed.
-# - CocoaPods: conventional framework-wrapped xcframeworks (CocoaPods rejects
-#   vendored bare-dylib xcframeworks). The framework rename breaks the
-#   file-name scan, so ios/Classes/litert_gpu_accelerator_shim.c registers
-#   the Metal accelerator via the runtime's RTLD_DEFAULT probe instead.
-#   Built by scripts/wrap_litert_ios_frameworks.sh, which also lipos an
-#   empty x86_64 stub into the simulator slice so CocoaPods' slice-arch
-#   matching succeeds.
+# - libLiteRt: built from source with
+#   //litert/c:build_litert_runtime_c_api_framework, LiteRT's own iOS
+#   runtime-only target (export list
+#   litert/build_common/export_litert_runtime_only_darwin.lds: _LiteRt* and
+#   _kLiteRtRuntimeBuiltin). Google's release CLiteRT.xcframework is not used:
+#   it also exports the TfLite C API and thousands of C++ symbols, which would
+#   collide with TensorFlowLiteC (the Interpreter) because the plugin resolves
+#   the Interpreter through dlsym(RTLD_DEFAULT, ...).
+# - libLiteRtMetalAccelerator: the Metal plugin is closed source and exists
+#   only as Google's release LiteRtMetalAccelerator.xcframework, pinned by
+#   sha256. It imports no LiteRt or TfLite symbols.
+#
+# scripts/wrap_litert_ios_frameworks.sh does the framework wrapping (and lipos
+# an empty x86_64 stub into the simulator slice for CocoaPods' slice matching).
+# The framework rename breaks LiteRT's GPU-plugin file-name scan, so
+# ios/Classes/litert_gpu_accelerator_shim.c registers the Metal accelerator
+# through the runtime's RTLD_DEFAULT probe instead.
 
 on:
   workflow_dispatch:
     inputs:
-      litert_ref:
-        description: >-
-          google-ai-edge/LiteRT git ref to package. The default is the last
-          prebuilt update whose C API matches the v2.1.5 bindings used on all
-          other platforms (newer prebuilts add a LiteRtEnvironment parameter
-          to LiteRtCreateModelFromFile/FromBuffer and need binding updates).
-        required: true
-        default: '1adc2475829fbe52d5670873821a45bea8779532'
       release_tag:
         description: 'Existing release tag to upload assets to (empty = artifacts only)'
         required: false
@@ -35,64 +34,89 @@ on:
 permissions:
   contents: write
 
+env:
+  LITERT_VERSION: v2.3.2
+  LITERT_COMMIT: d30595a09f74b4c4c4f669eafeb26928a92deb5a
+  BAZEL_VERSION: 7.7.0
+  METAL_RELEASE: v2.3.0
+  METAL_SHA256: e564e6678959098a35c1dbcffc60041afac25a845abcee998a53f958e342aeec
+
 jobs:
   build:
-    runs-on: macos-14
-    timeout-minutes: 30
+    runs-on: macos-15
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
-      - name: Checkout LiteRT prebuilts (Git LFS)
-        uses: actions/checkout@v4
-        with:
-          repository: google-ai-edge/LiteRT
-          ref: ${{ github.event.inputs.litert_ref }}
-          lfs: true
-          sparse-checkout: |
-            litert/prebuilt
-          path: LiteRT
+      - name: Install Bazelisk
+        run: brew install bazelisk
 
-      - name: Stage prebuilt dylibs
+      - name: Clone pinned LiteRT source
         run: |
-          PREBUILT=LiteRT/litert/prebuilt
-          # The repo stores LFS files with a literal .lfs suffix; strip it.
-          for f in $PREBUILT/ios_arm64/*.lfs $PREBUILT/ios_sim_arm64/*.lfs; do
-            [ -e "$f" ] && mv "$f" "${f%.lfs}"
+          git clone --depth 1 --branch "$LITERT_VERSION" \
+            https://github.com/google-ai-edge/LiteRT.git "$RUNNER_TEMP/litert-src"
+          test "$(git -C "$RUNNER_TEMP/litert-src" rev-parse HEAD)" = "$LITERT_COMMIT"
+
+      - name: Build iOS runtime (device and simulator)
+        run: |
+          cd "$RUNNER_TEMP/litert-src"
+          for cfg in ios_arm64 ios_sim_arm64; do
+            USE_BAZEL_VERSION="$BAZEL_VERSION" bazelisk build \
+              --config="$cfg" \
+              --compilation_mode=opt \
+              --copt=-fembed-bitcode-marker \
+              --repo_env=USE_PYWRAP_RULES=True \
+              //litert/c:build_litert_runtime_c_api_framework
+            mkdir -p "$RUNNER_TEMP/prebuilt/$cfg" "$RUNNER_TEMP/fw-$cfg"
+            unzip -qo bazel-bin/litert/c/build_litert_runtime_c_api_framework.zip \
+              -d "$RUNNER_TEMP/fw-$cfg"
+            cp "$RUNNER_TEMP/fw-$cfg/libLiteRt.dylib.framework/libLiteRt.dylib" \
+              "$RUNNER_TEMP/prebuilt/$cfg/libLiteRt.dylib"
           done
-          ls -la $PREBUILT/ios_arm64 $PREBUILT/ios_sim_arm64
 
-      - name: Create SwiftPM (bare dylib) xcframeworks
+      - name: Fetch pinned Metal accelerator
         run: |
-          PREBUILT=LiteRT/litert/prebuilt
-          mkdir -p spm
-          xcodebuild -create-xcframework \
-            -library $PREBUILT/ios_arm64/libLiteRt.dylib \
-            -library $PREBUILT/ios_sim_arm64/libLiteRt.dylib \
-            -output spm/LiteRt.xcframework
-          xcodebuild -create-xcframework \
-            -library $PREBUILT/ios_arm64/libLiteRtMetalAccelerator.dylib \
-            -library $PREBUILT/ios_sim_arm64/libLiteRtMetalAccelerator.dylib \
-            -output spm/LiteRtMetalAccelerator.xcframework
+          zip="$RUNNER_TEMP/LiteRtMetalAccelerator.xcframework.zip"
+          curl -sSfL --retry 3 -o "$zip" \
+            "https://github.com/google-ai-edge/LiteRT/releases/download/$METAL_RELEASE/LiteRtMetalAccelerator.xcframework.zip"
+          echo "$METAL_SHA256  $zip" | shasum -a 256 -c -
+          unzip -qo "$zip" -d "$RUNNER_TEMP/metal"
+          x="$RUNNER_TEMP/metal/LiteRtMetalAccelerator.xcframework"
+          cp "$x/ios-arm64/LiteRtMetalAccelerator.framework/LiteRtMetalAccelerator" \
+            "$RUNNER_TEMP/prebuilt/ios_arm64/libLiteRtMetalAccelerator.dylib"
+          cp "$x/ios-arm64-simulator/LiteRtMetalAccelerator.framework/LiteRtMetalAccelerator" \
+            "$RUNNER_TEMP/prebuilt/ios_sim_arm64/libLiteRtMetalAccelerator.dylib"
+          chmod u+w "$RUNNER_TEMP/prebuilt"/*/libLiteRtMetalAccelerator.dylib
 
-      - name: Create CocoaPods (framework-wrapped) xcframeworks
+      - name: Verify runtime exports
         run: |
-          mkdir -p pods
-          ./scripts/wrap_litert_ios_frameworks.sh LiteRT/litert/prebuilt pods
+          for cfg in ios_arm64 ios_sim_arm64; do
+            lib="$RUNNER_TEMP/prebuilt/$cfg/libLiteRt.dylib"
+            exports=$(xcrun dyld_info -exports "$lib")
+            echo "$cfg: $(echo "$exports" | grep -c '_LiteRt') LiteRt exports"
+            echo "$exports" | grep -q '_LiteRtCreateEnvironment$'
+            echo "$exports" | grep -q '_LiteRtStaticLinkedAcceleratorCpuDef$'
+            if echo "$exports" | grep -q '_TfLite'; then
+              echo "::error::$cfg libLiteRt.dylib exports TfLite symbols"
+              exit 1
+            fi
+            if nm -u "$RUNNER_TEMP/prebuilt/$cfg/libLiteRtMetalAccelerator.dylib" \
+                | grep -q '_LiteRt\|_TfLite'; then
+              echo "::error::$cfg Metal accelerator imports LiteRt/TfLite symbols"
+              exit 1
+            fi
+          done
 
-      - name: Zip assets
+      - name: Create framework-wrapped xcframeworks
         run: |
-          # Single zip for the podspec download block (framework-wrapped).
-          (cd pods && zip -qry ../litert-ios-frameworks.zip \
+          mkdir -p out
+          ./scripts/wrap_litert_ios_frameworks.sh "$RUNNER_TEMP/prebuilt" out
+          # Single zip for the podspec download block.
+          (cd out && zip -qry ../litert-ios-frameworks.zip \
             LiteRt.xcframework LiteRtMetalAccelerator.xcframework)
-          # Per-framework zips for SPM binaryTarget(url:checksum:). Use ditto
-          # so the zip layout matches what SPM expects.
-          ditto -c -k --keepParent spm/LiteRt.xcframework \
-            LiteRt-spm.xcframework.zip
-          ditto -c -k --keepParent spm/LiteRtMetalAccelerator.xcframework \
-            LiteRtMetalAccelerator-spm.xcframework.zip
-          echo "SPM checksums (paste into ios/flutter_litert/Package.swift):"
-          swift package compute-checksum LiteRt-spm.xcframework.zip
-          swift package compute-checksum LiteRtMetalAccelerator-spm.xcframework.zip
+          cp out/LiteRt-spm.xcframework.zip out/LiteRtMetalAccelerator-spm.xcframework.zip .
+          shasum -a 256 litert-ios-frameworks.zip \
+            LiteRt-spm.xcframework.zip LiteRtMetalAccelerator-spm.xcframework.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
