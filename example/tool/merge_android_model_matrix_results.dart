@@ -106,6 +106,34 @@ String _reportCell(Map<String, Object?>? row) {
   return code == null ? status.toUpperCase() : '${status.toUpperCase()} $code';
 }
 
+/// Describes where a merged run came from, for the report's opening line.
+///
+/// The device comes from the shard metadata records rather than a fixed name,
+/// because the workflow runs on whichever device model it was given. When no
+/// shard recorded a device, the description names only Test Lab.
+String matrixReportSource(List<Map<String, Object?>> shardMeta) {
+  final devices = <String>{};
+  for (final meta in shardMeta) {
+    String field(String name) {
+      final value = meta[name]?.toString().trim() ?? '';
+      return value == 'unknown' ? '' : value;
+    }
+
+    final model = field('device_model');
+    if (model.isEmpty) continue;
+    final manufacturer = field('device_manufacturer');
+    final alreadyNamed =
+        manufacturer.isEmpty ||
+        model.toLowerCase().startsWith(manufacturer.toLowerCase());
+    devices.add(alreadyNamed ? model : '$manufacturer $model');
+  }
+  final count = shardMeta.length;
+  final shards = count == 1 ? 'shard' : 'shards';
+  final from = count == 0 ? '' : '$count ';
+  if (devices.isEmpty) return '${from}Firebase Test Lab $shards.';
+  return '${from}Firebase Test Lab ${devices.join(', ')} $shards.';
+}
+
 String _markdownReport(
   List<Map<String, Object?>> rows,
   Map<String, Object?> summary,
@@ -122,8 +150,8 @@ String _markdownReport(
     ..writeln('# Android physical-device model matrix')
     ..writeln()
     ..writeln(
-      'Generated ${DateTime.now().toUtc().toIso8601String()} from five '
-      'Firebase Test Lab Galaxy S23 shards.',
+      'Generated ${DateTime.now().toUtc().toIso8601String()} from '
+      '${matrixReportSource(shardMeta)}',
     )
     ..writeln()
     ..writeln(
