@@ -17,11 +17,18 @@
 import 'dart:ffi';
 import 'dart:io';
 
-import 'package:flutter/services.dart' hide Size;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:quiver/check.dart';
 import '../bindings/tensorflow_lite_bindings_generated.dart';
 import '../native/delegate.dart';
 import 'delegate_library_loader.dart';
+
+/// The guidance given when flex is requested on Android.
+const String _androidRemovedMessage =
+    'FlexDelegate is not available on Android: Android flex was removed in '
+    'flutter_litert 4.0.0 because LiteRT 2.x has no flex delegate (Select TF '
+    'ops). Reconvert the model to LiteRT built-in ops, or stay on '
+    'flutter_litert 3.10.x with flutter_litert_flex 1.3.0.';
 
 /// Flex delegate for running models that use `SELECT_TF_OPS`.
 ///
@@ -29,18 +36,24 @@ import 'delegate_library_loader.dart';
 /// TFLite builtins. This is required for training models whose gradient ops
 /// cannot be expressed as builtins (e.g., Conv2D, BatchNormalization).
 ///
+/// Supported on iOS, macOS, Linux and Windows. Not on Android: Android flex
+/// was removed in flutter_litert 4.0.0 because LiteRT 2.x has no flex
+/// delegate. There [isAvailable] is false and [create] throws. Reconvert the
+/// model to LiteRT built-in ops, or stay on flutter_litert 3.10.x with
+/// flutter_litert_flex 1.3.0.
+///
 /// Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex)
-/// to your `pubspec.yaml` to bundle the native library on supported native
+/// to your `pubspec.yaml` to bundle the native library on supported
 /// platforms:
 ///
 /// ```yaml
 /// dependencies:
-///   flutter_litert: ^3.10.0
-///   flutter_litert_flex: ^1.3.0
+///   flutter_litert: ^4.0.0
+///   flutter_litert_flex: ^2.0.0
 /// ```
 ///
-/// Then use the async constructor, which is required on Android and also works
-/// on the other supported native platforms:
+/// Then create the delegate. The async [create] works on every supported
+/// platform:
 ///
 /// ```dart
 /// final flex = await FlexDelegate.create();
@@ -61,33 +74,29 @@ class FlexDelegate implements Delegate {
 
   static void Function(Pointer<TfLiteDelegate>)? _destroyFn;
 
-  /// Method channel for Android delegate creation via Java API.
-  static const _channel = MethodChannel('flutter_litert_flex');
+  /// Overrides the Android check in tests. Null uses [Platform.isAndroid].
+  @visibleForTesting
+  static bool? debugIsAndroidOverride;
+
+  static bool get _isAndroid => debugIsAndroidOverride ?? Platform.isAndroid;
 
   Pointer<TfLiteDelegate> _delegate;
   bool _deleted = false;
-  bool _isAndroid = false;
 
   @override
   Pointer<TfLiteDelegate> get base => _delegate;
 
-  FlexDelegate._(this._delegate, {bool isAndroid = false})
-    : _isAndroid = isAndroid;
+  FlexDelegate._(this._delegate);
 
   /// Creates a [FlexDelegate] for SELECT_TF_OPS support.
   ///
   /// Requires `flutter_litert_flex` in your `pubspec.yaml`.
   ///
-  /// On Android this constructor throws because delegate creation uses a
-  /// method channel. Use [FlexDelegate.create] for cross-platform code.
-  ///
-  /// Throws [UnsupportedError] if the library cannot be loaded.
+  /// Throws [UnsupportedError] on Android, where flex was removed in
+  /// flutter_litert 4.0.0, and if the library cannot be loaded.
   factory FlexDelegate() {
-    if (Platform.isAndroid) {
-      throw UnsupportedError(
-        'On Android, call FlexDelegate.create() instead of FlexDelegate().\n'
-        'The Android FlexDelegate requires async initialization via method channel.',
-      );
+    if (_isAndroid) {
+      throw UnsupportedError(_androidRemovedMessage);
     }
     _loadLibrary();
     final delegate = _createFn!(nullptr, nullptr, 0, nullptr);
@@ -100,35 +109,16 @@ class FlexDelegate implements Delegate {
 
   /// Creates a [FlexDelegate] asynchronously.
   ///
-  /// This is required on Android where the delegate is created via a method
-  /// channel to the Java FlexDelegate API. On other platforms this behaves
-  /// identically to the synchronous constructor.
-  static Future<FlexDelegate> create() async {
-    if (Platform.isAndroid) {
-      final handle = await _channel.invokeMethod<int>('createFlexDelegate');
-      if (handle == null || handle == 0) {
-        throw UnsupportedError(
-          'FlexDelegate not available on Android.\n'
-          'Add flutter_litert_flex to your pubspec.yaml.',
-        );
-      }
-      return FlexDelegate._(
-        Pointer<TfLiteDelegate>.fromAddress(handle),
-        isAndroid: true,
-      );
-    }
-    return FlexDelegate();
-  }
+  /// Behaves like the synchronous constructor, including throwing
+  /// [UnsupportedError] on Android, where flex was removed in flutter_litert
+  /// 4.0.0.
+  static Future<FlexDelegate> create() async => FlexDelegate();
 
   /// Releases native Flex delegate resources.
   @override
   void delete() {
     checkState(!_deleted, message: 'FlexDelegate already deleted.');
-    if (_isAndroid) {
-      _channel.invokeMethod<void>('deleteFlexDelegate', _delegate.address);
-    } else {
-      _destroyFn!(_delegate);
-    }
+    _destroyFn!(_delegate);
     _deleted = true;
   }
 
@@ -139,18 +129,12 @@ class FlexDelegate implements Delegate {
   /// Whether the Flex delegate library is available.
   ///
   /// Returns `true` if the library can be loaded, i.e., `flutter_litert_flex`
-  /// is in the project's dependencies.
+  /// is in the project's dependencies. Always `false` on Android, where flex
+  /// was removed in flutter_litert 4.0.0.
   static bool get isAvailable {
-    if (_flexLib != null) return true;
+    if (_isAndroid) return false;
 
-    if (Platform.isAndroid) {
-      try {
-        DynamicLibrary.open('libtensorflowlite_flex_jni.so');
-        return true;
-      } catch (_) {
-        return false;
-      }
-    }
+    if (_flexLib != null) return true;
 
     // iOS: statically linked at build time by flutter_litert_flex podspec.
     if (Platform.isIOS) {
@@ -169,7 +153,7 @@ class FlexDelegate implements Delegate {
   }
 
   // ---------------------------------------------------------------------------
-  // Library loading (non-Android)
+  // Library loading
   // ---------------------------------------------------------------------------
 
   /// Paths where the library may exist inside a built app bundle.
