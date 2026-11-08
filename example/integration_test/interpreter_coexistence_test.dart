@@ -5,23 +5,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:flutter_litert/native.dart';
 
-/// On-device coverage for the classic [Interpreter], and for both native
-/// runtimes being live in one process at the same time.
+/// On-device coverage for the classic [Interpreter], and for [Interpreter] and
+/// [CompiledModel] being live in one process at the same time.
 ///
-/// The package ships two independent runtimes: classic TFLite
-/// (libtensorflowlite_c on desktop, libtensorflowlite_jni on Android, the
-/// TensorFlowLiteC framework on iOS) and LiteRT Next (libLiteRt). They export
+/// How many runtimes that means depends on the platform. On desktop and iOS
+/// there are still two: classic TFLite (libtensorflowlite_c on desktop, the
+/// TensorFlowLiteC framework on iOS) and LiteRT (libLiteRt). They export
 /// overlapping TFLite symbols, so whichever one is dlopen'd first can end up
-/// satisfying the other's relocations. Host unit tests cannot catch that: they
-/// run on macOS and Linux only, and each suite touches a single runtime per
-/// process. Everything here runs inside a real app process, brings the two
-/// runtimes up in both orders, and asserts each keeps producing its own
-/// correct results afterwards.
+/// satisfying the other's relocations. On bundled Android, since 4.0.0, there is
+/// one: both APIs share the libLiteRt.so handle, so the risk there is shared
+/// state (op resolvers, XNNPACK caches, environments) rather than symbol
+/// clashes. Either way, host unit tests cannot catch it: they run on macOS and
+/// Linux only, and each suite touches a single API per process. Everything here
+/// runs inside a real app process, brings the two APIs up in both orders, and
+/// asserts each keeps producing its own correct results afterwards.
 ///
-/// simple_model is y = 2*x + 1, so the cross-runtime comparisons are exact
-/// rather than a tolerance on a real network's output. The real-network case
-/// below deliberately asserts structure and finiteness instead of numeric
-/// parity: the two runtimes use different kernel libraries, so a tight
+/// android_shared_runtime_test.dart adds the Android-only checks: that the
+/// Interpreter really resolves from libLiteRt.so with no LiteRT 1.x library in
+/// the APK, and that the two APIs run concurrently and across isolates.
+///
+/// simple_model is y = 2*x + 1, so the cross-API comparisons are exact rather
+/// than a tolerance on a real network's output. The real-network case below
+/// deliberately asserts structure and finiteness instead of numeric parity: on
+/// desktop and iOS the two runtimes use different kernel libraries, so a tight
 /// tolerance there would be measuring kernel accuracy, not coexistence.
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
