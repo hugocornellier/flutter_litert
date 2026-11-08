@@ -183,8 +183,8 @@ jobs:
       # Windows has no committed classic TFLite library for host tests, so
       # only the CompiledModel suite runs here, loading the bundled
       # windows/libLiteRt.dll via the loader's package-path fallback. This
-      # job also guards the MSVC LiteRtLayout ABI handling (72/76-byte
-      # struct sizes).
+      # job also guards the LiteRtLayout ABI on an MSVC build (68/72-byte
+      # struct sizes since LiteRT 2.3.0).
       - name: Run CompiledModel smoke tests
         run: flutter test test/compiled_model_smoke_test.dart
 

@@ -34,31 +34,30 @@ const int kLiteRtEnvOptionTagContext = 28;
 const int kLiteRtEnvOptionTagSystemGpuAcceleratorHandle = 30;
 
 /// LiteRtLayout:
-/// { uint rank:7; bool has_strides:1; int32 dims[8]; uint32 strides[8]; }
+/// { uint rank:7; uint has_strides:1; int32 dims[8]; uint32 strides[8]; }
 ///
-/// Opaque because the ABI differs per compiler: clang/gcc pack both bitfields
-/// into one 4-byte unit (size 68, dims at 4, strides at 36) while MSVC gives
-/// each bitfield its own storage unit (size 72, dims at 8, strides at 40).
-/// Both layouts are pinned by static_asserts in the LiteRT header
-/// `litert/c/litert_layout.h`. Dart never reads the fields; it only
-/// allocates, copies, and passes these structs through the C API, so sizing
-/// via [kLiteRtLayoutByteSize] is sufficient.
+/// Opaque because Dart FFI has no bitfields. Since LiteRT 2.3.0 both
+/// bitfields share one 4-byte unit on every compiler, MSVC included (size
+/// 68, dims at 4, strides at 36; pinned by static_asserts in
+/// `litert/c/litert_layout.h`, see google-ai-edge/LiteRT#7459). Before 2.3.0
+/// MSVC used 72 bytes. Dart never reads the fields; it only allocates,
+/// copies, and passes these structs through the C API, so sizing via
+/// [kLiteRtLayoutByteSize] is sufficient.
 final class LiteRtLayout extends Opaque {}
 
 /// LiteRtRankedTensorType:
 /// { int32 element_type; LiteRtLayout layout; }
 ///
-/// Opaque for the same reason as [LiteRtLayout]: 72 bytes with clang/gcc,
-/// 76 bytes with MSVC. The element type is an int32 at offset 0 and the
-/// layout starts at [kLiteRtRankedTensorTypeLayoutOffset] on every supported
-/// ABI.
+/// Opaque for the same reason as [LiteRtLayout]: 72 bytes on every platform
+/// (76 with MSVC before LiteRT 2.3.0). The element type is an int32 at
+/// offset 0 and the layout starts at [kLiteRtRankedTensorTypeLayoutOffset].
 final class LiteRtRankedTensorType extends Opaque {}
 
-/// ABI size of [LiteRtLayout] for the current platform.
-final int kLiteRtLayoutByteSize = Platform.isWindows ? 72 : 68;
+/// ABI size of [LiteRtLayout].
+const int kLiteRtLayoutByteSize = 68;
 
-/// ABI size of [LiteRtRankedTensorType] for the current platform.
-final int kLiteRtRankedTensorTypeByteSize = Platform.isWindows ? 76 : 72;
+/// ABI size of [LiteRtRankedTensorType].
+const int kLiteRtRankedTensorTypeByteSize = 72;
 
 /// Byte offset of the layout field within [LiteRtRankedTensorType].
 const int kLiteRtRankedTensorTypeLayoutOffset = 4;
