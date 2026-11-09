@@ -163,6 +163,11 @@ dependencies {
 // Dart binds these libraries directly and never needs the AAR's Java, and
 // flutterLitert.runtime=auto cannot link that Java alongside
 // play-services-litert.
+//
+// Only the .so files are extracted, so the AARs' LICENSE and
+// THIRD_PARTY_NOTICE.txt (identical in litert and litert-gpu 2.3.2) ship
+// byte-for-byte in android/licenses/litert-<version>/ instead. When this
+// version changes, replace that folder with the new AAR's two files.
 val litertNextVersion = "2.3.2"
 
 // The GPU accelerator is bundled by default. Apps that do not use it can set

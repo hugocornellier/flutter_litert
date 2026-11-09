@@ -105,6 +105,15 @@ before upgrading an Android app.
 * The Play services runtime (`play-services-litert` 17.0.0) is unchanged.
 * The example app builds with Kotlin 2.4.0.
 
+### Fixes
+
+* Android: the plugin now ships the `LICENSE` and `THIRD_PARTY_NOTICE.txt`
+  from Google's `litert` and `litert-gpu` 2.3.2 AARs, unchanged, in
+  `android/licenses/litert-2.3.2/`. Only the AARs' `.so` files are extracted
+  at build time, so these notices were not reaching apps before. Apps that
+  bundle the runtime should include them in their open-source notices; see
+  "Open-source notices for the Android runtime" in the README.
+
 ### Performance
 
 Measured with the 29-model matrix on Firebase Test Lab (Pixel 9 Pro, Galaxy

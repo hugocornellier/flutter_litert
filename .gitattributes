@@ -1,0 +1,4 @@
+# Google's licence notices are kept byte-identical to the files in the
+# LiteRT AARs. THIRD_PARTY_NOTICE.txt has some CRLF lines, so never let Git
+# convert line endings here.
+android/licenses/** -text
