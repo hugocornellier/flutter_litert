@@ -2,7 +2,7 @@
 
 ## Scope
 
-`Accelerator.npu` is implemented for macOS 13+ on Apple Silicon. This document
+`Accelerator.npu` is implemented for macOS 14+ on Apple Silicon. This document
 covers the macOS implementation; the separate iOS path is documented in
 [`ios_compiled_model_npu.md`](ios_compiled_model_npu.md).
 
@@ -106,6 +106,6 @@ iPhone performance.
 sets stable install names, signs both artifacts ad hoc, verifies their exported
 symbols, and uploads the pair.
 
-The packaged files require macOS 13 and arm64. The rest of the plugin retains
+The packaged files require macOS 14 and arm64. The rest of the plugin retains
 its existing macOS deployment target because these dylibs are loaded only after
 an explicit NPU request.

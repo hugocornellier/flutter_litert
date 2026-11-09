@@ -94,6 +94,14 @@ before upgrading an Android app.
   `CompiledModel` needs iOS 15.0 or later.
 * Core ML NPU acceleration on iOS and macOS is now registered so that LiteRT
   2.3.x applies it to regular `.tflite` models.
+* The Core ML NPU path (`Accelerator.npu`) needs iOS 16 or newer and macOS 14
+  or newer. iOS 16 is when Apple added `MLComputeUnitsCPUAndNeuralEngine`, and
+  the macOS LiteRT 2.3 runtime needs macOS 14. The docs said iOS 13 and
+  macOS 13. The iOS bridge now checks the OS before it registers the
+  accelerator, so on iOS 15 strict `{npu}` throws an `UnsupportedError` and
+  `{npu, cpu}` drops the NPU and runs on CPU. Before, an iOS 15 device passed
+  the Core ML framework's iOS 13 check. The general iOS deployment target is
+  unchanged.
 * The Play services runtime (`play-services-litert` 17.0.0) is unchanged.
 * The example app builds with Kotlin 2.4.0.
 

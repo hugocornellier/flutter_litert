@@ -23,8 +23,8 @@ library;
 /// Hardware accelerator requested for LiteRT Next compilation.
 ///
 /// On the web, [cpu] maps to the LiteRT.js WASM backend and [gpu] to WebGPU.
-/// [npu] uses Core ML's CPU-and-Neural-Engine policy on iOS 13 or newer and
-/// Apple Silicon Macs running macOS 13 or newer. On Android, [npu] uses a
+/// [npu] uses Core ML's CPU-and-Neural-Engine policy on iOS 16 or newer and
+/// Apple Silicon Macs running macOS 14 or newer. On Android, [npu] uses a
 /// packaged vendor runtime on supported API 31+ arm64 devices.
 enum Accelerator { cpu, gpu, npu }
 

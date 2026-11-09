@@ -69,6 +69,10 @@ enum {
   kLiteRtStatusErrorInvalidArgument = 1,
   kLiteRtStatusErrorRuntimeFailure = 3,
   kLiteRtStatusErrorUnsupported = 5,
+  // Returned by FlutterLiteRtRegisterCoreMlNpuAccelerator when the OS is older
+  // than the Core ML NPU floor, so Dart can tell that case apart from a
+  // framework that lacks the NPU entry points (kLiteRtStatusErrorUnsupported).
+  kLiteRtStatusErrorUnsupportedRuntimeVersion = 4000,
   kLiteRtHwAcceleratorNone = 0,
 };
 
@@ -403,10 +407,32 @@ static LiteRtStatus RegisterCpuFallback(LiteRtEnvironment environment) {
       environment, accelerator, NULL, NULL);
 }
 
+// The patched delegate selects MLComputeUnitsCPUAndNeuralEngine, which Apple's
+// SDK marks API_AVAILABLE(ios(16.0)). The Core ML framework shipped in
+// coreml-ios-v1.1.0 guards that value with @available(iOS 13.0, *), and the
+// LiteRT runtime itself loads from iOS 15.0, so an iOS 15 device would pass
+// the framework's own check and hand Core ML a compute-unit value it does not
+// define. Gating registration here fixes that without rebuilding the
+// framework: nothing can create the delegate unless the accelerator was
+// registered, and a refused registration takes the existing Dart fallback.
+static bool IsCoreMlNpuOsSupported(void) {
+  if (__builtin_available(iOS 16.0, *)) {
+    return true;
+  }
+  return false;
+}
+
 __attribute__((visibility("default"))) LiteRtStatus
 FlutterLiteRtRegisterCoreMlNpuAccelerator(LiteRtEnvironment environment) {
   if (environment == NULL) {
     return kLiteRtStatusErrorInvalidArgument;
+  }
+  if (!IsCoreMlNpuOsSupported()) {
+    fprintf(stderr,
+            "[flutter_litert] CoreML NPU: Accelerator.npu needs iOS 16.0 or "
+            "newer (MLComputeUnitsCPUAndNeuralEngine); not registering the "
+            "Core ML NPU accelerator.\n");
+    return kLiteRtStatusErrorUnsupportedRuntimeVersion;
   }
 
   pthread_once(&g_litert_once, LoadLiteRtSymbols);

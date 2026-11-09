@@ -307,7 +307,7 @@ model.close();
   mantissa and these graphs emit pixel-space coordinates. Treat `fp16` as a
   per-model opt-in you have validated on the target GPU. See
   [GPU vendor matrix](test/benchmark/GPU_VENDOR_MATRIX.md).
-- On iOS 13+ and macOS 13+ Apple Silicon, `Accelerator.npu` uses a dedicated
+- On iOS 16+ and macOS 14+ Apple Silicon, `Accelerator.npu` uses a dedicated
   Core ML `CPUAndNeuralEngine` backend, validated on physical hardware for both.
   Strict `{npu}` places a full graph for only 1 of 29 published models, so
   `{npu, cpu}` is the practical request; about half its models match a CPU
@@ -374,8 +374,8 @@ NPU maturity differs sharply by platform. Treat this table as the contract:
 
 | Platform | Status | Backend | Notes |
 |---|---|---|---|
-| **macOS** | **Works; accuracy is model-specific** | Core ML, Apple Neural Engine | Apple Silicon, macOS 13+. Strict `{npu}` places a full graph for 1 of 29 published models; `{npu, cpu}` runs 24 of 29 with 12 matching a CPU reference. Working does not mean safe to enable blindly: validate each model. |
-| **iOS** | **Works; accuracy is model-specific** | Core ML, Apple Neural Engine | iOS 13+, from `coreml-ios-v1.1.0`. Earlier releases shipped a Core ML framework predating the NPU entry points, so registration failed on device with `kLiteRtStatusErrorUnsupported`. Measured on a physical iPhone 15 Pro: strict `{npu}` places a full graph for 1 of 29 published models, and `{npu, cpu}` runs 24 of 29 with 12 matching a CPU reference. Identical to macOS on both counts. |
+| **macOS** | **Works; accuracy is model-specific** | Core ML, Apple Neural Engine | Apple Silicon, macOS 14+. Strict `{npu}` places a full graph for 1 of 29 published models; `{npu, cpu}` runs 24 of 29 with 12 matching a CPU reference. Working does not mean safe to enable blindly: validate each model. |
+| **iOS** | **Works; accuracy is model-specific** | Core ML, Apple Neural Engine | iOS 16+, from `coreml-ios-v1.1.0`. Earlier releases shipped a Core ML framework predating the NPU entry points, so registration failed on device with `kLiteRtStatusErrorUnsupported`. Measured on a physical iPhone 15 Pro: strict `{npu}` places a full graph for 1 of 29 published models, and `{npu, cpu}` runs 24 of 29 with 12 matching a CPU reference. Identical to macOS on both counts. |
 | **Android** | **Qualcomm only** | Qualcomm HTP | Qualcomm Hexagon is the one vendor implemented so far. LiteRT also documents MediaTek, Google Tensor, and Samsung Exynos NPUs; those are not wired up here yet. The vendor runtime is app-provided and never bundled, so a default build packages no NPU libraries and a request without one fails with an actionable error. Validated on SM8550/v73, SM8650/v75, and SM8750/v79: strict `{npu}` places 21 of 29 published models entirely on the NPU, 11 of which match a CPU reference. |
 | **Windows** | **Not implemented** | - | LiteRT supports Intel NPUs through an [OpenVINO backend](https://developers.google.com/edge/litert/next/intel), which covers Intel Core Ultra. flutter_litert has no bindings for it yet. Qualcomm Snapdragon X and AMD XDNA have no LiteRT path at all. |
 | **Linux** | **Not implemented** | - | Same Intel OpenVINO path as Windows, same absence of bindings. |
@@ -504,7 +504,7 @@ before enabling NPU in production.
 
 ### CompiledModel NPU on Apple platforms
 
-iOS 13 or newer and macOS 13 or newer on Apple Silicon can request the Apple
+iOS 16 or newer and macOS 14 or newer on Apple Silicon can request the Apple
 Neural Engine:
 
 ```dart
@@ -522,7 +522,10 @@ final mixed = CompiledModel.fromFile(
 ```
 
 The backend uses `MLComputeUnitsCPUAndNeuralEngine`, which excludes the GPU.
-Apple does not expose a Neural-Engine-only compute-unit mode, so Core ML may
+Apple added it in iOS 16 and macOS 13, and the macOS LiteRT runtime itself
+needs macOS 14. On iOS 15, strict `{npu}` throws an `UnsupportedError` and
+`{npu, cpu}` drops the NPU and runs on CPU (check `accelerators` on the
+result). Apple does not expose a Neural-Engine-only compute-unit mode, so Core ML may
 still place unsupported layers on the CPU internally. Strict `{npu}` means the
 whole TFLite graph was accepted by the Core ML delegate; it cannot promise that
 every Core ML layer ran on the ANE.
