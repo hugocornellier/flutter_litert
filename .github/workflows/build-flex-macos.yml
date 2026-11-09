@@ -1,0 +1,187 @@
+name: Build TFLiteFlex macOS dylib
+
+# Builds the TensorFlow Lite Flex delegate (SELECT_TF_OPS) for macOS arm64
+# from a pinned TensorFlow tag as a self-contained external delegate plugin:
+#
+# - libtensorflowlite_flex-mac.dylib: monolithic dylib that exports only
+#   tflite_plugin_create_delegate / tflite_plugin_destroy_delegate.
+#   flutter_litert_flex's CocoaPods podspec downloads it.
+# - flutter_litert_flex-macos-spm.xcframework.zip: the SwiftPM binary target
+#   (stub framework carrying the dylib as a resource), see
+#   scripts/flex/make_flex_macos_spm.sh.
+#
+# Then verifies the dylib against the previous release and runs a train step
+# of test/assets/training_model_flex.tflite through it with the committed
+# TFLite C library. Outputs are Actions artifacts with a .sha256 next to each
+# file; nothing is uploaded to a release. Recipe:
+# scripts/build_flex_delegate_macos.md.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: v2.21.0
+  TF_COMMIT: a481b10260dfdf833a1b16007eead49c1d7febf3
+  USE_BAZEL_VERSION: 7.7.0
+  EXPECT_VERSION: 2.21.0
+  # TF's release_macos_arm64 config uses 12.0. The 2.20.0 dylib had no
+  # explicit minimum and came out as 15.2 (the SDK of the machine it was
+  # built on).
+  MACOS_MIN: '12.0'
+  REF_DYLIB_URL: https://github.com/hugocornellier/flutter_litert/releases/download/flex-v1.0.0/libtensorflowlite_flex-mac.dylib
+  REF_DYLIB_SHA256: 8e08e2a9c7e1042b5ba0d309c0180e8d8d2b8a92bb65ec5164344dafd170d2e2
+  REF_SPM_URL: https://github.com/hugocornellier/flutter_litert/releases/download/flex-v1.1.0/flutter_litert_flex-macos-spm.xcframework.zip
+  REF_SPM_SHA256: 36b1a080a0f9be92aa2eb85fcebff49a63957f84c2f64f4b0464320cdf72bcfc
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: bash scripts/flex/free_macos_runner_disk.sh
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install numpy
+          command -v bazelisk || brew install bazelisk
+          command -v bazel
+          bazel --version
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          sysctl -n hw.ncpu hw.memsize
+
+      - name: Clone pinned TensorFlow
+        run: |
+          git clone --depth 1 --branch "$TF_VERSION" \
+            https://github.com/tensorflow/tensorflow.git "$HOME/tf-src"
+          test "$(git -C "$HOME/tf-src" rev-parse HEAD)" = "$TF_COMMIT"
+          cat "$HOME/tf-src/.bazelversion"
+
+      - name: Configure TensorFlow
+        run: |
+          cd "$HOME/tf-src"
+          PYTHON_BIN_PATH="$(which python3)" USE_DEFAULT_PYTHON_LIB_PATH=1 \
+          TF_NEED_CUDA=0 TF_NEED_ROCM=0 TF_NEED_TENSORRT=0 \
+          TF_SET_ANDROID_WORKSPACE=0 TF_CONFIGURE_IOS=0 \
+          CC_OPT_FLAGS="-Wno-sign-compare" \
+            python3 configure.py < /dev/null
+
+      - name: Add flex plugin dylib target
+        run: |
+          cd "$HOME/tf-src"
+          cp "$GITHUB_WORKSPACE/scripts/flex/flex_delegate_plugin.cc" \
+            tensorflow/lite/delegates/flex/flex_delegate_plugin.cc
+          cat "$GITHUB_WORKSPACE/scripts/flex/flex_BUILD_macos.append" \
+            >> tensorflow/lite/delegates/flex/BUILD
+
+      - name: Seed Bazel repository cache
+        run: bash scripts/flex/seed_bazel_repo_cache.sh "$HOME/bazel-repo-cache"
+
+      - name: Build libtensorflowlite_flex-mac.dylib
+        run: |
+          cd "$HOME/tf-src"
+          bazelisk build -c opt \
+            --repository_cache="$HOME/bazel-repo-cache" \
+            --config=monolithic \
+            --macos_minimum_os="$MACOS_MIN" \
+            --define=tflite_convert_with_select_tf_ops=true \
+            --define=with_select_tf_ops=true \
+            --repo_env=HERMETIC_PYTHON_VERSION=3.11 \
+            --local_ram_resources=HOST_RAM*0.7 \
+            --jobs=4 \
+            --verbose_failures \
+            //tensorflow/lite/delegates/flex:libtensorflowlite_flex-mac.dylib
+          df -h /
+
+      - name: Strip, set install name, sign
+        run: |
+          mkdir -p out
+          cp "$HOME/tf-src/bazel-bin/tensorflow/lite/delegates/flex/libtensorflowlite_flex-mac.dylib" out/
+          chmod u+w out/libtensorflowlite_flex-mac.dylib
+          ls -l out/libtensorflowlite_flex-mac.dylib
+          # Local symbols only; the two exports stay. Same shape as 2.20.0.
+          strip -x out/libtensorflowlite_flex-mac.dylib
+          # Same install name as the 2.20.0 dylib (it is dlopen'ed by path).
+          install_name_tool -id @rpath/libtensorflowlite_flex.dylib out/libtensorflowlite_flex-mac.dylib
+          codesign -f -s - out/libtensorflowlite_flex-mac.dylib
+          codesign -v out/libtensorflowlite_flex-mac.dylib
+          (cd out && shasum -a 256 libtensorflowlite_flex-mac.dylib > libtensorflowlite_flex-mac.dylib.sha256)
+          ls -l out
+          cat out/*.sha256
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtensorflowlite_flex-mac
+          path: |
+            out/libtensorflowlite_flex-mac.dylib
+            out/libtensorflowlite_flex-mac.dylib.sha256
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Create flutter_litert_flex-macos-spm.xcframework.zip
+        run: |
+          bash scripts/flex/make_flex_macos_spm.sh out/libtensorflowlite_flex-mac.dylib spm
+          echo "== previous release listing (flex-v1.1.0)"
+          curl -sSfL --retry 3 "$REF_SPM_URL" -o "$RUNNER_TEMP/ref-spm.zip"
+          echo "$REF_SPM_SHA256  $RUNNER_TEMP/ref-spm.zip" | shasum -a 256 -c -
+          zipinfo "$RUNNER_TEMP/ref-spm.zip"
+          mkdir -p report
+          # Files and symlinks only; directory entries depend on the zip tool.
+          zipinfo -1 "$RUNNER_TEMP/ref-spm.zip" | grep -v '/$' | sort > report/macos-spm-listing-ref.txt
+          zipinfo -1 spm/flutter_litert_flex-macos-spm.xcframework.zip | grep -v '/$' | sort > report/macos-spm-listing-new.txt
+          if diff report/macos-spm-listing-ref.txt report/macos-spm-listing-new.txt; then
+            echo "macOS SPM zip file list matches flex-v1.1.0"
+          else
+            echo "::warning::macOS SPM zip file list differs from flex-v1.1.0 (see diff above)"
+          fi
+
+      - name: Upload macOS SPM xcframework
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter_litert_flex-macos-spm-xcframework
+          path: |
+            spm/flutter_litert_flex-macos-spm.xcframework.zip
+            spm/flutter_litert_flex-macos-spm.xcframework.zip.sha256
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Verify dylib
+        env:
+          EXPECT_MINOS: ${{ env.MACOS_MIN }}
+        run: bash scripts/flex/verify_flex_macos.sh out/libtensorflowlite_flex-mac.dylib report
+
+      - name: Smoke test (train step with the committed TFLite C library)
+        continue-on-error: true
+        run: |
+          xcrun clang -O1 -Wall -o "$RUNNER_TEMP/flex_smoke_test" scripts/flex/flex_smoke_test.c
+          C_LIB=macos/flutter_litert/Sources/flutter_litert/Resources/libtensorflowlite_c-mac.dylib
+          MODEL=test/assets/training_model_flex.tflite
+          echo "== control, no flex delegate (informative)"
+          "$RUNNER_TEMP/flex_smoke_test" "$C_LIB" out/libtensorflowlite_flex-mac.dylib "$MODEL" --no-flex \
+            2>&1 | tee report/smoke-control.txt || true
+          echo "== with flex delegate"
+          set -o pipefail
+          "$RUNNER_TEMP/flex_smoke_test" "$C_LIB" out/libtensorflowlite_flex-mac.dylib "$MODEL" \
+            2>&1 | tee report/smoke-flex.txt
+
+      - name: Upload verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flex-macos-verify-report
+          path: report
+          retention-days: 90
+          if-no-files-found: warn

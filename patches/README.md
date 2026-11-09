@@ -291,5 +291,6 @@ patch into the checkout's `third_party/` and adds it as `patch_file` to the
 patches `apple_support` when it fetches it. The archive's SHA-256 is still
 checked, and the script fails if the checkout does not fetch `apple_support`
 1.24.5 at the pinned SHA-256. It runs after the TensorFlow clone in
-`build-tflite-ios.yml`, `build-coreml-ios.yml`, `build-metal-macos.yml` and
-`build-coreml-macos.yml`, which all compile Objective-C(++) sources.
+`build-tflite-ios.yml`, `build-coreml-ios.yml`, `build-metal-macos.yml`,
+`build-coreml-macos.yml` and `build-flex-ios.yml`, which all compile
+Objective-C(++) sources.

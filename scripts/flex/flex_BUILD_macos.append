@@ -1,0 +1,32 @@
+
+# ---------------------------------------------------------------------------
+# flutter_litert: Flex delegate external plugin shared library for macOS.
+# Appended to tensorflow/lite/delegates/flex/BUILD by build-flex-macos.yml.
+#
+# Exports only the two external delegate plugin entry points; everything else
+# (TF runtime, TFLite, all TF ops and kernels) is linked in statically with
+# --config=monolithic and kept internal, so the dylib cannot clash with the
+# TFLite C library the app loads next to it.
+#
+# Build with:
+#   bazel build -c opt --config=monolithic --macos_minimum_os=12.0 \
+#     --define=tflite_convert_with_select_tf_ops=true \
+#     --define=with_select_tf_ops=true \
+#     //tensorflow/lite/delegates/flex:libtensorflowlite_flex-mac.dylib
+# ---------------------------------------------------------------------------
+cc_binary(
+    name = "libtensorflowlite_flex-mac.dylib",
+    srcs = ["flex_delegate_plugin.cc"],
+    linkopts = [
+        "-Wl,-exported_symbol,_tflite_plugin_create_delegate",
+        "-Wl,-exported_symbol,_tflite_plugin_destroy_delegate",
+    ],
+    linkshared = True,
+    deps = [
+        ":delegate",
+        "//tensorflow/lite:framework",
+        "//tensorflow/lite/core:framework",
+        "//tensorflow/lite/delegates/external:external_delegate_interface",
+        "//tensorflow/lite/delegates/utils:simple_delegate",
+    ],
+)
