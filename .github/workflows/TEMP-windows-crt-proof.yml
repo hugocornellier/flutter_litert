@@ -1,9 +1,12 @@
 name: TEMPORARY Windows CRT proof (remove before merge)
 
-# TEMPORARY, feat/4.1.0-desktop only. Delete this file (and .github/proof/)
+# TEMPORARY, feat/4.1.0-desktop only. Delete this file and .github/proof/
 # before merging. It proves the 4.1.0 Windows runtime fix on a GitHub runner:
-#   redist: uploads the VS app-local redist vcruntime140_threads.dll so its
-#           hash can be checked against the copy committed in windows/.
+# the example app, built in release mode, runs Interpreter (static-CRT
+# libtensorflowlite_c-win.dll) and CompiledModel (libLiteRt.dll) on CPU with
+# the system vcruntime140_threads.dll removed, using only the copy the plugin
+# bundles; then, with the bundled copy deleted too, CompiledModel must fail to
+# load while the Interpreter still works.
 
 on:
   push:
@@ -13,37 +16,150 @@ permissions:
   contents: read
 
 jobs:
-  redist:
+  proof:
     runs-on: windows-2022
-    timeout-minutes: 15
+    timeout-minutes: 90
+    env:
+      THREADS_SHA256: 219915cf20822f34d5e7c1fdd4e21ae7f3396881096c51036225fb8f84b47afa
+      TFLITE_SHA256: 44d5d07fef8a4d5b7c58b8e8b283ec1e900081eb60464ee7ed96a18b662c1476
+      REL: example\build\windows\x64\runner\Release
+      PROOF: proof-out
+      MIN_PATH: C:\Windows\System32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0
     steps:
-      - name: Set up MSVC
+      - uses: actions/checkout@v4
+
+      - name: Check the committed DLLs against their pinned hashes
+        shell: pwsh
+        run: |
+          $t = (Get-FileHash windows/vcruntime140_threads.dll -Algorithm SHA256).Hash.ToLower()
+          $l = (Get-FileHash windows/libtensorflowlite_c-win.dll -Algorithm SHA256).Hash.ToLower()
+          Write-Host "windows/vcruntime140_threads.dll   $t"
+          Write-Host "windows/libtensorflowlite_c-win.dll $l"
+          if ($t -ne $env:THREADS_SHA256) { Write-Error "threads DLL hash mismatch"; exit 1 }
+          if ($l -ne $env:TFLITE_SHA256) { Write-Error "TFLite DLL hash mismatch"; exit 1 }
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Build the example proof app (release)
+        shell: pwsh
+        run: |
+          flutter --version
+          flutter pub get
+          Copy-Item .github/proof/desktop_runtime_proof_main.dart.txt example/lib/desktop_runtime_proof_main.dart
+          Set-Location example
+          flutter pub get
+          flutter build windows --release -t lib/desktop_runtime_proof_main.dart
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Set up MSVC (dumpbin)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: Find the redist vcruntime140_threads.dll
+      - name: Inspect the build output
         shell: pwsh
         run: |
-          Write-Host "VCToolsRedistDir=$env:VCToolsRedistDir"
-          Get-ChildItem "$env:VSINSTALLDIR\VC\Redist\MSVC" | ForEach-Object { Write-Host "redist folder: $($_.Name)" }
-          Get-ChildItem "$env:VSINSTALLDIR\VC\Redist" -Recurse -Filter vcruntime140_threads.dll -ErrorAction SilentlyContinue |
-            ForEach-Object { "{0}  {1}  {2}  {3}" -f $_.FullName, $_.VersionInfo.FileVersion, $_.Length, (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() }
-          $f = Join-Path $env:VCToolsRedistDir 'x64\Microsoft.VC143.CRT\vcruntime140_threads.dll'
-          if (-not (Test-Path $f)) { Write-Error "missing $f"; exit 1 }
-          New-Item -ItemType Directory -Force -Path out | Out-Null
-          Copy-Item $f out/
-          $i = Get-Item $f
-          "path: $f" | Tee-Object -FilePath out/info.txt
-          "FileVersion: $($i.VersionInfo.FileVersion)" | Tee-Object -FilePath out/info.txt -Append
-          "ProductVersion: $($i.VersionInfo.ProductVersion)" | Tee-Object -FilePath out/info.txt -Append
-          "size: $($i.Length)" | Tee-Object -FilePath out/info.txt -Append
-          "sha256: $((Get-FileHash $f -Algorithm SHA256).Hash.ToLower())" | Tee-Object -FilePath out/info.txt -Append
-          dumpbin /nologo /dependents $f | Tee-Object -FilePath out/info.txt -Append
-          Get-AuthenticodeSignature $f | Format-List Status, SignerCertificate | Out-String | Tee-Object -FilePath out/info.txt -Append
+          New-Item -ItemType Directory -Force -Path $env:PROOF | Out-Null
+          Write-Host "=== DLLs next to the executable ==="
+          Get-ChildItem $env:REL -Filter *.dll | ForEach-Object {
+            "{0,-40} {1,10} {2}" -f $_.Name, $_.Length, (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+          } | Tee-Object -FilePath "$env:PROOF/release-dlls.txt"
+          $b = Join-Path $env:REL 'vcruntime140_threads.dll'
+          if (-not (Test-Path $b)) { Write-Error "bundled vcruntime140_threads.dll missing from the build output"; exit 1 }
+          if ((Get-FileHash $b -Algorithm SHA256).Hash.ToLower() -ne $env:THREADS_SHA256) { Write-Error "bundled threads DLL hash mismatch"; exit 1 }
+          if ((Get-FileHash (Join-Path $env:REL 'libtensorflowlite_c-win.dll') -Algorithm SHA256).Hash.ToLower() -ne $env:TFLITE_SHA256) { Write-Error "bundled TFLite DLL hash mismatch"; exit 1 }
+          $redist = Join-Path $env:VCToolsRedistDir 'x64\Microsoft.VC143.CRT\vcruntime140_threads.dll'
+          if (Test-Path $redist) {
+            $i = Get-Item $redist
+            Write-Host "runner redist copy: $redist $($i.VersionInfo.FileVersion) $((Get-FileHash $redist -Algorithm SHA256).Hash.ToLower())"
+          }
+          foreach ($n in 'libtensorflowlite_c-win.dll', 'libLiteRt.dll', 'vcruntime140_threads.dll', 'flutter_litert_example.exe') {
+            Write-Host "=== dumpbin /dependents $n ==="
+            dumpbin /nologo /dependents (Join-Path $env:REL $n) | Tee-Object -FilePath "$env:PROOF/dependents-$n.txt"
+          }
+          Write-Host "=== libLiteRt.dll imports from VCRUNTIME140_THREADS.dll ==="
+          $imp = dumpbin /nologo /imports (Join-Path $env:REL 'libLiteRt.dll') | Out-String
+          $sec = [regex]::Match($imp, '(?is)VCRUNTIME140_THREADS\.dll.*?(?=\r?\n\s*\r?\n\s+\S+\.dll|\r?\n\s+Summary)')
+          Write-Host $sec.Value
 
-      - uses: actions/upload-artifact@v4
+      - name: Baseline (system vcruntime140_threads.dll still present)
+        shell: pwsh
+        run: |
+          Get-Item C:\Windows\System32\vcruntime140_threads.dll -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "system copy: $($_.FullName) $($_.VersionInfo.FileVersion)" }
+          $env:PATH = $env:MIN_PATH
+          & "$PSHOME\pwsh.exe" -File .github/proof/run_proof.ps1 interpreter baseline $env:REL $env:PROOF
+          $a = $LASTEXITCODE
+          & "$PSHOME\pwsh.exe" -File .github/proof/run_proof.ps1 compiled baseline $env:REL $env:PROOF
+          $b = $LASTEXITCODE
+          Write-Host "baseline: interpreter=$a compiled=$b"
+
+      - name: (a) Remove the system vcruntime140_threads.dll
+        shell: pwsh
+        run: |
+          $orig = $env:PATH
+          foreach ($d in 'C:\Windows\System32', 'C:\Windows\SysWOW64') {
+            $f = Join-Path $d 'vcruntime140_threads.dll'
+            if (Test-Path $f) {
+              Write-Host "found $f ($((Get-Item $f).VersionInfo.FileVersion))"
+              takeown /f $f
+              icacls $f /grant '*S-1-5-32-544:F'
+              Rename-Item $f 'vcruntime140_threads.dll.proof-removed'
+            } else {
+              Write-Host "not present: $f"
+            }
+          }
+          foreach ($d in 'C:\Windows\System32', 'C:\Windows\SysWOW64') {
+            $f = Join-Path $d 'vcruntime140_threads.dll'
+            Write-Host "Test-Path $f -> $(Test-Path $f)"
+            if (Test-Path $f) { Write-Error "still present: $f"; exit 1 }
+          }
+          Write-Host "=== copies in the runner's full PATH (not used by the proof runs) ==="
+          foreach ($d in $orig.Split(';')) {
+            if ($d -and (Test-Path (Join-Path $d 'vcruntime140_threads.dll'))) { Write-Host "  $d" }
+          }
+          $env:PATH = $env:MIN_PATH
+          Write-Host "=== where.exe with the proof PATH ($env:PATH) ==="
+          where.exe vcruntime140_threads.dll
+          Write-Host "where.exe exit code: $LASTEXITCODE (1 = not found)"
+          if ($LASTEXITCODE -eq 0) { Write-Error "vcruntime140_threads.dll is still on the proof PATH"; exit 1 }
+          exit 0
+
+      - name: (b) Interpreter and CompiledModel CPU with only the bundled copy
+        shell: pwsh
+        run: |
+          $env:PATH = $env:MIN_PATH
+          & "$PSHOME\pwsh.exe" -File .github/proof/run_proof.ps1 interpreter bundled $env:REL $env:PROOF
+          $a = $LASTEXITCODE
+          & "$PSHOME\pwsh.exe" -File .github/proof/run_proof.ps1 compiled bundled $env:REL $env:PROOF
+          $b = $LASTEXITCODE
+          Write-Host "(b) interpreter=$a compiled=$b (both must be 0)"
+          if ($a -ne 0 -or $b -ne 0) { exit 1 }
+
+      - name: (c) Negative control, bundled copy deleted too
+        shell: pwsh
+        run: |
+          Remove-Item (Join-Path $env:REL 'vcruntime140_threads.dll')
+          Write-Host "bundled copy present: $(Test-Path (Join-Path $env:REL 'vcruntime140_threads.dll'))"
+          $env:PATH = $env:MIN_PATH
+          & "$PSHOME\pwsh.exe" -File .github/proof/run_proof.ps1 interpreter nothreads $env:REL $env:PROOF
+          $a = $LASTEXITCODE
+          & "$PSHOME\pwsh.exe" -File .github/proof/run_proof.ps1 compiled nothreads $env:REL $env:PROOF
+          $b = $LASTEXITCODE
+          Write-Host "(c) interpreter=$a (must be 0) compiled=$b (must be non-zero)"
+          $log = Get-Content (Join-Path $env:PROOF 'proof-nothreads-compiled.txt') -Raw
+          if ($a -ne 0) { Write-Error "Interpreter failed without vcruntime140_threads.dll"; exit 1 }
+          if ($b -eq 0) { Write-Error "CompiledModel loaded without vcruntime140_threads.dll: the negative control did not bite"; exit 1 }
+          if ($log -notmatch 'libLiteRt\.dll\) FAILED') { Write-Error "CompiledModel failed, but not at loading libLiteRt.dll"; exit 1 }
+          Write-Host "negative control OK: CompiledModel cannot load libLiteRt.dll, Interpreter unaffected"
+
+      - name: Upload proof logs
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: vcruntime140_threads-redist
-          path: out/
+          name: windows-crt-proof
+          path: proof-out/
           retention-days: 30

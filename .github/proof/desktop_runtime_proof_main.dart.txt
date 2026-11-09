@@ -1,0 +1,168 @@
+// TEMPORARY (feat/4.1.0-desktop only, remove before merge).
+// Copied to example/lib/desktop_runtime_proof_main.dart by
+// .github/workflows/TEMP-windows-crt-proof.yml and built in release mode.
+//
+// Usage: example.exe <interpreter|compiled> <output file>
+// Runs one engine on simple_model (y = 2x + 1) on CPU, writes a log to the
+// output file and exits 0 on success, 1 on failure. For the Interpreter it
+// also records which modules the process loaded while bringing up
+// libtensorflowlite_c-win.dll (4 threads, XNNPack, so pthreadpool starts C11
+// threads).
+import 'dart:ffi';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:ffi/ffi.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_litert/native.dart';
+
+final _log = StringBuffer();
+
+void log(String s) => _log.writeln(s);
+
+typedef _EnumNative =
+    Int32 Function(IntPtr, Pointer<IntPtr>, Uint32, Pointer<Uint32>);
+typedef _EnumDart = int Function(int, Pointer<IntPtr>, int, Pointer<Uint32>);
+typedef _NameNative = Uint32 Function(IntPtr, Pointer<Utf16>, Uint32);
+typedef _NameDart = int Function(int, Pointer<Utf16>, int);
+typedef _CurNative = IntPtr Function();
+typedef _CurDart = int Function();
+
+List<String> loadedModules() {
+  final k32 = DynamicLibrary.open('kernel32.dll');
+  final enumMods = k32.lookupFunction<_EnumNative, _EnumDart>(
+    'K32EnumProcessModules',
+  );
+  final getName = k32.lookupFunction<_NameNative, _NameDart>(
+    'GetModuleFileNameW',
+  );
+  final cur = k32.lookupFunction<_CurNative, _CurDart>('GetCurrentProcess');
+  const cap = 2048;
+  final mods = calloc<IntPtr>(cap);
+  final needed = calloc<Uint32>();
+  final name = calloc<Uint16>(1024).cast<Utf16>();
+  try {
+    if (enumMods(cur(), mods, cap * sizeOf<IntPtr>(), needed) == 0) {
+      return ['<K32EnumProcessModules failed>'];
+    }
+    final n = needed.value ~/ sizeOf<IntPtr>();
+    final out = <String>[];
+    for (var i = 0; i < n && i < cap; i++) {
+      final len = getName(mods[i], name, 1024);
+      out.add(name.toDartString(length: len));
+    }
+    return out;
+  } finally {
+    calloc.free(mods);
+    calloc.free(needed);
+    calloc.free(name);
+  }
+}
+
+String base(String p) => p.split(RegExp(r'[\\/]')).last.toLowerCase();
+
+Future<bool> runInterpreter(Uint8List model, Uint8List seg) async {
+  final before = loadedModules().toSet();
+  final options = InterpreterOptions()..threads = 4;
+  final xnn = XNNPackDelegate(options: XNNPackDelegateOptions(numThreads: 4));
+  options.addDelegate(xnn);
+  final interpreter = Interpreter.fromBuffer(model, options: options);
+  interpreter.getInputTensor(0).asFloat32View()[0] = 3.0;
+  interpreter.invoke();
+  final y = interpreter.getOutputTensor(0).asFloat32View()[0];
+  log('Interpreter version: ${Interpreter.version}');
+  log('Interpreter simple_model(3.0) = $y (expected 7.0)');
+  // A real network on 4 threads, so the XNNPack thread pool does real work.
+  final segOptions = InterpreterOptions()..threads = 4;
+  final segInterp = Interpreter.fromBuffer(seg, options: segOptions);
+  final input = segInterp.getInputTensor(0).asFloat32View();
+  for (var i = 0; i < input.length; i++) {
+    input[i] = (i % 255) / 255.0;
+  }
+  segInterp.invoke();
+  final out = segInterp.getOutputTensor(0).asFloat32View();
+  var finite = true;
+  for (final v in out) {
+    if (!v.isFinite) finite = false;
+  }
+  log('Interpreter selfie_multiclass 4 threads: ${out.length} outputs, all finite: $finite');
+  final after = loadedModules();
+  final added = after.where((m) => !before.contains(m)).toList();
+  log('modules loaded by bringing up the Interpreter (${added.length}):');
+  for (final m in added) {
+    log('  + $m');
+  }
+  log('all modules in process (${after.length}):');
+  for (final m in after) {
+    log('  $m');
+  }
+  final threadsLoaded = after.any(
+    (m) => base(m) == 'vcruntime140_threads.dll',
+  );
+  final vcAdded = added.where(
+    (m) => RegExp(r'^(vcruntime|msvcp|ucrtbase|api-ms-win-crt)').hasMatch(base(m)),
+  );
+  log('vcruntime140_threads.dll loaded in process: $threadsLoaded');
+  log('VC++/UCRT modules added by the Interpreter: ${vcAdded.isEmpty ? '(none)' : vcAdded.join(', ')}');
+  final tflite = after.where((m) => base(m) == 'libtensorflowlite_c-win.dll');
+  log('libtensorflowlite_c-win.dll loaded from: ${tflite.join(', ')}');
+  segInterp.close();
+  interpreter.close();
+  xnn.delete();
+  final ok = (y - 7.0).abs() < 1e-3 && finite && !threadsLoaded && vcAdded.isEmpty;
+  return ok;
+}
+
+Future<bool> runCompiled(Uint8List model) async {
+  final execDir = File(Platform.resolvedExecutable).parent.path;
+  final direct = '$execDir\\libLiteRt.dll';
+  try {
+    DynamicLibrary.open(direct);
+    log('DynamicLibrary.open($direct): OK');
+  } catch (e) {
+    log('DynamicLibrary.open($direct) FAILED: $e');
+  }
+  final cm = CompiledModel.fromBuffer(model, accelerators: {Accelerator.cpu});
+  final input = Float32List(cm.inputByteSizes[0] ~/ 4);
+  input[0] = 3.0;
+  final y = cm.run([input])[0][0];
+  log('CompiledModel CPU simple_model(3.0) = $y (expected 7.0)');
+  cm.close();
+  final mods = loadedModules();
+  log('libLiteRt.dll loaded from: ${mods.where((m) => base(m) == 'liblitert.dll').join(', ')}');
+  log('vcruntime140_threads.dll loaded from: ${mods.where((m) => base(m) == 'vcruntime140_threads.dll').join(', ')}');
+  return (y - 7.0).abs() < 1e-3;
+}
+
+Future<void> main(List<String> args) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final mode = args.isNotEmpty ? args[0] : 'interpreter';
+  final outPath = args.length > 1 ? args[1] : 'proof-$mode.txt';
+  var ok = false;
+  try {
+    log('mode: $mode');
+    log('executable: ${Platform.resolvedExecutable}');
+    log('cwd: ${Directory.current.path}');
+    final model = (await rootBundle.load(
+      'assets/simple_model.tflite',
+    )).buffer.asUint8List();
+    if (mode == 'interpreter') {
+      final seg = (await rootBundle.load(
+        'assets/selfie_multiclass.tflite',
+      )).buffer.asUint8List();
+      ok = await runInterpreter(model, seg);
+    } else if (mode == 'compiled') {
+      ok = await runCompiled(model);
+    } else {
+      log('unknown mode $mode');
+    }
+  } catch (e, st) {
+    log('EXCEPTION: $e');
+    log('$st');
+    ok = false;
+  }
+  log(ok ? 'RESULT: PASS' : 'RESULT: FAIL');
+  File(outPath).writeAsStringSync(_log.toString());
+  exit(ok ? 0 : 1);
+}
