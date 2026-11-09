@@ -48,8 +48,8 @@ const String _androidRemovedMessage =
 ///
 /// ```yaml
 /// dependencies:
-///   flutter_litert: ^4.0.0
-///   flutter_litert_flex: ^2.0.0
+///   flutter_litert: ^4.1.0
+///   flutter_litert_flex: ^2.1.0
 /// ```
 ///
 /// Then create the delegate. The async [create] works on every supported

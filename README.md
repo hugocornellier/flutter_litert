@@ -174,7 +174,7 @@ lines.
 ```yaml
 dependencies:
   # tflite_flutter: ^0.11.0
-  flutter_litert: ^4.0.0
+  flutter_litert: ^4.1.0
 ```
 
 **2. Change the import.**
@@ -809,7 +809,7 @@ await isolateInterpreter.run(input, output);
 To check which TFLite runtime version is loaded:
 
 ```dart
-print('TFLite version: ${Interpreter.version}'); // e.g. "2.20.0"
+print('TFLite version: ${Interpreter.version}'); // e.g. "2.21.0"
 ```
 
 ### Delegates
@@ -1212,15 +1212,16 @@ Add [`flutter_litert_flex`](https://pub.dev/packages/flutter_litert_flex) to you
 
 ```yaml
 dependencies:
-  flutter_litert: ^4.0.0
-  flutter_litert_flex: ^2.0.0
+  flutter_litert: ^4.1.0
+  flutter_litert_flex: ^2.1.0
 ```
 
 Use the matching versions:
 
 | flutter_litert | flutter_litert_flex | Flex platforms |
 | --- | --- | --- |
-| 4.0.0 or newer | 2.0.0 | iOS 15+, macOS, Linux, Windows |
+| 4.1.0 or newer | 2.1.0 | iOS 15+, macOS, Linux, Windows |
+| 4.0.x | 2.0.0 | iOS 15+, macOS, Linux, Windows |
 | 3.10.x | 1.3.0 | Android, iOS, macOS, Linux, Windows |
 
 That's it. The native library is downloaded or linked automatically on the first build for supported native platforms. Then create the delegate with the async constructor, which works on every supported platform:
@@ -1873,10 +1874,10 @@ flutter_litert bundles one native runtime per API on most platforms. The classic
 | Platform | Interpreter runtime | CompiledModel runtime |
 |----------|---------------------|-----------------------|
 | Android | LiteRT 2.3.2 (CPU / XNNPACK) | LiteRT 2.3.2, the same library (CPU / OpenCL/GL GPU / app-provided NPU) |
-| iOS | TensorFlow Lite 2.20.0 | LiteRT 2.3.2 (CPU / Metal GPU / Core ML NPU) |
-| macOS | TensorFlow Lite 2.20.0 | LiteRT 2.3.0 (CPU / Metal GPU / Core ML NPU) |
-| Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.0 |
-| Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.0 |
+| iOS | TensorFlow Lite 2.21.0 | LiteRT 2.3.2 (CPU / Metal GPU / Core ML NPU) |
+| macOS | TensorFlow Lite 2.21.0 | LiteRT 2.3.0 (CPU / Metal GPU / Core ML NPU) |
+| Windows | TensorFlow Lite 2.21.0 | LiteRT Next 2.3.0 |
+| Linux | TensorFlow Lite 2.21.0 | LiteRT Next 2.3.0 |
 | Web | LiteRT.js 2.6.0 / TFLite.js (WASM) | LiteRT.js 2.6.0 (WASM / WebGPU) |
 
 Bundling:
@@ -1884,6 +1885,7 @@ Bundling:
 - iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` and `LiteRtMetalAccelerator` xcframeworks (release `litert-ios-v2.0.0`, the same files for SPM and CocoaPods): the runtime is built from the LiteRT v2.3.2 source tag with LiteRT's runtime-only export list, and the Metal accelerator is Google's v2.3.0 release build. Both are built for iOS 15.0, which is the plugin's minimum.
 - macOS: the Interpreter is the prebuilt TensorFlow Lite C library; CompiledModel is the `libLiteRt` and `libLiteRtMetalAccelerator` pair from the official `ai-edge-litert` 2.3.0 wheel (LiteRT 2.3.2 ships no new macOS binaries), plus a Core ML NPU delegate built from the LiteRT v2.3.2 source; all bundled via CocoaPods or SPM.
 - Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake; CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.3.0 wheel, bundled via CMake.
+- Windows runtime DLLs: since 4.1.0 the Interpreter library (`libtensorflowlite_c-win.dll`) is built with the static C runtime (`/MT`). It imports only `KERNEL32.dll` and needs no Visual C++ redistributable. Google's `libLiteRt.dll` imports `vcruntime140_threads.dll`, which many machines do not have, so the plugin bundles that file next to it. It is Microsoft's unmodified redistributable file from the Visual C++ 2022 redistributable (`Microsoft.VC143.CRT`, version 14.44.35211.0). Without it, `CompiledModel` fails to load on those machines with error 126. `tflite_custom_ops.dll` still uses the dynamic C runtime.
 - Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.6.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).
 
 > Intel Macs only: the iOS simulator is not supported under Swift Package Manager on x86_64. You have two options: test using a real iOS device or switch to CocoaPods to use the simulator. This applies to Intel Macs only.

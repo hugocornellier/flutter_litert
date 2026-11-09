@@ -1,3 +1,51 @@
+## 4.1.0
+
+Moves the `Interpreter` on iOS, macOS, Linux, and Windows from TensorFlow Lite
+2.20.0 to TensorFlow v2.21.0, and fixes `CompiledModel` on Windows machines
+without a recent Visual C++ runtime. Android (LiteRT 2.3.2) and every
+`CompiledModel` runtime are unchanged. There are no breaking API changes.
+
+### Runtime updates
+
+* iOS, macOS, Linux, and Windows `Interpreter`: TensorFlow Lite 2.20.0 to
+  2.21.0, built from the TensorFlow v2.21.0 tag. `Interpreter.version` now
+  reports `2.21.0` on these platforms. 2.21.0 adds the int2, int4, and uint4
+  tensor types; int8 and int16x8 `SQRT`; int16x8 `EQUAL` and `NOT_EQUAL`; int2
+  and int4 in `CAST`, int4 in `SLICE`, and SRQ int2 in `FULLY_CONNECTED`; and a
+  newer XNNPACK. The C API is unchanged. Desktop and Apple op support now
+  matches Android's more closely.
+* iOS: the TensorFlow Lite frameworks are hosted at release
+  `tflite-ios-v2.21.0`. Swift Package Manager takes the Core ML delegate from
+  release `coreml-ios-v1.2.0`. CocoaPods replaces a cached framework bundle
+  from an older release on the next `pod install`.
+* macOS: the committed TensorFlow Lite C, Metal, and Core ML dylibs are rebuilt
+  at 2.21.0.
+* The minimum OS versions do not change: iOS 15.0, macOS 10.11 (x86_64) and
+  14.5 (arm64) for the TensorFlow Lite C library, macOS 12.0 for the Metal and
+  Core ML delegates, and glibc 2.38 on Linux.
+* Pairs with
+  [`flutter_litert_flex` 2.1.0](https://pub.dev/packages/flutter_litert_flex),
+  whose flex delegate is rebuilt at 2.21.0. Use `flutter_litert_flex` 2.0.0
+  with 4.0.x.
+
+### Fixes
+
+* Windows: `CompiledModel` failed to load (error 126) on machines without a
+  recent Visual C++ runtime, because Google's `libLiteRt.dll` imports
+  `vcruntime140_threads.dll`. This was the case since 3.1.1. The plugin now
+  bundles that file next to `libLiteRt.dll`. It is Microsoft's unmodified
+  redistributable file from the Visual C++ 2022 redistributable
+  (`Microsoft.VC143.CRT`, version 14.44.35211.0).
+* Windows: the `Interpreter` library `libtensorflowlite_c-win.dll` is now built
+  with the static C runtime (`/MT`). It imports only `KERNEL32.dll` and needs no
+  Visual C++ redistributable. Its 98 exports are the same as in 2.20.0.
+  TensorFlow 2.21's thread pool uses C11 threads, which with the dynamic
+  runtime would need `vcruntime140_threads.dll` too. `tflite_custom_ops.dll`
+  still uses the dynamic runtime.
+* iOS CocoaPods: the podspec now checks the SHA-256 of each framework zip it
+  downloads, and a download that cannot connect within 30 seconds or stalls
+  for 60 seconds fails and is retried instead of hanging `pod install`.
+
 ## 4.0.0
 
 Moves the Android `Interpreter` from LiteRT 1.4.2 to LiteRT 2.x, so both
