@@ -69,7 +69,7 @@ index dffcf168..89bae279 100644
 +TfLiteDelegate* FlutterTfLiteCoreMlNpuDelegateCreate(
 +    const TfLiteCoreMlDelegateOptions* options) {
 +  g_flutter_litert_last_delegated_node_count = 0;
-+  if (@available(iOS 13.0, *)) {
++  if (@available(iOS 16.0, *)) {
 +    if (options->enabled_devices ==
 +            TfLiteCoreMlDelegateDevicesWithNeuralEngine &&
 +        !IsNeuralEngineAvailable()) {
@@ -80,7 +80,7 @@ index dffcf168..89bae279 100644
 +    return tflite::CreateCoreMlDelegate(
 +        options, /*use_cpu_and_neural_engine=*/true);
 +  }
-+  NSLog(@"The flutter_litert Core ML NPU delegate requires iOS 13.0 or newer.");
++  NSLog(@"The flutter_litert Core ML NPU delegate requires iOS 16.0 or newer.");
 +  return nullptr;
 +}
 +
@@ -129,10 +129,10 @@ index 59aeb569..6dbfe312 100644
 @@ -211 +216,11 @@ - (bool)build:(NSURL*)modelUrl {
 -    config.computeUnits = MLComputeUnitsAll;
 +    if (useCpuAndNeuralEngine) {
-+      if (@available(iOS 13.0, *)) {
++      if (@available(iOS 16.0, *)) {
 +        config.computeUnits = MLComputeUnitsCPUAndNeuralEngine;
 +      } else {
-+        NSLog(@"CPU and Neural Engine Core ML execution requires iOS 13.0 "
++        NSLog(@"CPU and Neural Engine Core ML execution requires iOS 16.0 "
 +               "or newer.");
 +        return NO;
 +      }

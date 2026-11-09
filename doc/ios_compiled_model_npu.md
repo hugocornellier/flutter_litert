@@ -41,6 +41,13 @@ Engine and CPU.
 - A zero-node Core ML result is rejected rather than silently returning
   CPU-only inference.
 - NPU and GPU cannot currently be combined on Apple platforms.
+- The path needs iOS 16.0 or newer, because Apple's SDK marks
+  `MLComputeUnitsCPUAndNeuralEngine` as `API_AVAILABLE(ios(16.0))`. The
+  plugin's registration bridge checks this at runtime: below iOS 16 it refuses
+  to register the accelerator, so strict `{npu}` throws an `UnsupportedError`
+  and `{npu, cpu}` drops the NPU and runs on CPU. The `coreml-ios-v1.1.0`
+  framework's own check still says iOS 13.0; `patches/litert_coreml_npu_ios.patch`
+  now says iOS 16.0 for the next framework build.
 
 The iOS accelerator bridge mirrors the LiteRT 2.3.x accelerator ABI of the
 bundled runtime (built from the v2.3.2 source tag): accelerator definitions

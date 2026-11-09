@@ -99,7 +99,7 @@ int registerAppleCoreMlNpuAccelerator(Pointer<Void> environment) {
         throw UnsupportedError(
           'LiteRT CoreML NPU accelerator library not found. Attempted paths:\n'
           '${attemptedPaths.map((p) => '  - $p').join('\n')}\n\n'
-          'The accelerator requires macOS 13 or newer on Apple Silicon. For '
+          'The accelerator requires macOS 14 or newer on Apple Silicon. For '
           'local testing, set LITERT_NPU_LIB_PATH to the bridge dylib.',
         );
       }

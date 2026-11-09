@@ -32,6 +32,9 @@ import 'litert_status.dart';
 export 'compiled_model_types.dart';
 
 const int _kLiteRtStatusOk = 0;
+// The iOS Core ML NPU bridge returns this when the OS is below iOS 16, the
+// first release that defines MLComputeUnitsCPUAndNeuralEngine.
+const int _kLiteRtStatusErrorUnsupportedRuntimeVersion = 4000;
 const int _kLiteRtHwAcceleratorCpu = 1;
 const int _kLiteRtHwAcceleratorGpu = 2;
 const int _kLiteRtHwAcceleratorNpu = 4;
@@ -536,6 +539,15 @@ class CompiledModel {
         _appleCoreMlNpuUnsupported = true;
         // Strict placement has no fallback to fall back to.
         if (accelerators.length == 1) {
+          if (status == _kLiteRtStatusErrorUnsupportedRuntimeVersion) {
+            throw UnsupportedError(
+              'Accelerator.npu on iOS needs iOS 16.0 or newer: the Core ML '
+              'NPU path uses MLComputeUnitsCPUAndNeuralEngine, which Apple '
+              'added in iOS 16. Request {Accelerator.npu, Accelerator.cpu} '
+              'to fall back to CPU on older devices, or use Accelerator.gpu '
+              'or Accelerator.cpu.',
+            );
+          }
           _check('FlutterLiteRtRegisterCoreMlNpuAccelerator', status);
         }
         // This environment disabled auto-registration so Core ML could go
