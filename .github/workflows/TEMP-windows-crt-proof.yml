@@ -96,6 +96,7 @@ jobs:
           & "$PSHOME\pwsh.exe" -File .github/proof/run_proof.ps1 compiled baseline $env:REL $env:PROOF
           $b = $LASTEXITCODE
           Write-Host "baseline: interpreter=$a compiled=$b"
+          exit 0
 
       - name: (a) Remove the system vcruntime140_threads.dll
         shell: pwsh
@@ -138,6 +139,7 @@ jobs:
           $b = $LASTEXITCODE
           Write-Host "(b) interpreter=$a compiled=$b (both must be 0)"
           if ($a -ne 0 -or $b -ne 0) { exit 1 }
+          exit 0
 
       - name: (c) Negative control, bundled copy deleted too
         shell: pwsh
@@ -155,6 +157,7 @@ jobs:
           if ($b -eq 0) { Write-Error "CompiledModel loaded without vcruntime140_threads.dll: the negative control did not bite"; exit 1 }
           if ($log -notmatch 'libLiteRt\.dll\) FAILED') { Write-Error "CompiledModel failed, but not at loading libLiteRt.dll"; exit 1 }
           Write-Host "negative control OK: CompiledModel cannot load libLiteRt.dll, Interpreter unaffected"
+          exit 0
 
       - name: Upload proof logs
         if: always()

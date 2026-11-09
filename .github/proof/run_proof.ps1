@@ -13,7 +13,7 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $out = Join-Path (Resolve-Path $OutDir).Path "proof-$Tag-$Mode.txt"
 if (Test-Path $out) { Remove-Item $out }
 $exe = Join-Path $ReleaseDir 'flutter_litert_example.exe'
-Write-Host "== $Tag / $Mode: $exe (PATH=$env:PATH)"
+Write-Host "== ${Tag} / ${Mode}: $exe (PATH=$env:PATH)"
 $p = Start-Process -FilePath $exe -ArgumentList $Mode, $out -WorkingDirectory $ReleaseDir -PassThru
 $null = $p.Handle
 if (-not $p.WaitForExit(300000)) {
@@ -29,5 +29,5 @@ if (Test-Path $out) {
   "no log written (exit code $code)" | Set-Content $out
   if ($code -eq 0) { $code = 98 }
 }
-Write-Host "== $Tag / $Mode exit code: $code"
+Write-Host "== ${Tag} / ${Mode} exit code: $code"
 exit $code
