@@ -1,0 +1,66 @@
+--- a/crosstool/cc_toolchain_config.bzl
++++ b/crosstool/cc_toolchain_config.bzl
+@@ -35,7 +35,26 @@
+ load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
+ load("@rules_cc//cc/toolchains:cc_toolchain_config_info.bzl", "CcToolchainConfigInfo")
+ 
+-_DYNAMIC_LINK_ACTIONS = ACTION_NAME_GROUPS.cc_link_executable_actions + ACTION_NAME_GROUPS.dynamic_library_link_actions
++# flutter_litert: rules_cc before 0.2 leaves objc-compile and objc++-compile out
++# of all_cc_compile_actions, and TensorFlow's WORKSPACE resolves such a rules_cc.
++# Without them the Objective-C(++) compiles get no "-c <source>", no "-target"
++# and no XCODE_VERSION_OVERRIDE, so Bazel never sets DEVELOPER_DIR and
++# wrapped_clang fails with "DEVELOPER_DIR not set". Add them back, as rules_cc
++# 0.2.13 (the version apple_support 1.24.5 requires) does.
++_ALL_CC_COMPILE_ACTIONS = ACTION_NAME_GROUPS.all_cc_compile_actions + [
++    a
++    for a in [ACTION_NAMES.objc_compile, ACTION_NAMES.objcpp_compile]
++    if a not in ACTION_NAME_GROUPS.all_cc_compile_actions
++]
++
++# Likewise rules_cc 0.2 lists objc-executable (the ObjcLink of macos_dylib and
++# friends) in cc_link_executable_actions; older ones do not, so that link got
++# no Xcode env either.
++_DYNAMIC_LINK_ACTIONS = ACTION_NAME_GROUPS.cc_link_executable_actions + [
++    a
++    for a in [ACTION_NAMES.objc_executable]
++    if a not in ACTION_NAME_GROUPS.cc_link_executable_actions
++] + ACTION_NAME_GROUPS.dynamic_library_link_actions
+ _STATIC_LINK_ACTIONS = [
+     ACTION_NAMES.objc_fully_link,
+     ACTION_NAMES.cpp_link_static_library,
+@@ -721,7 +740,7 @@
+         enabled = True,
+         flag_sets = [
+             flag_set(
+-                actions = ACTION_NAME_GROUPS.all_cc_compile_actions,
++                actions = _ALL_CC_COMPILE_ACTIONS,
+                 flag_groups = [
+                     flag_group(
+                         flags = ["-c", "%{source_file}"],
+@@ -911,7 +930,7 @@
+         enabled = True,
+         flag_sets = [
+             flag_set(
+-                actions = ACTION_NAME_GROUPS.all_cc_compile_actions + _DYNAMIC_LINK_ACTIONS,
++                actions = _ALL_CC_COMPILE_ACTIONS + _DYNAMIC_LINK_ACTIONS,
+                 flag_groups = [
+                     flag_group(
+                         flags = [
+@@ -925,7 +944,7 @@
+         ],
+         env_sets = [
+             env_set(
+-                actions = ACTION_NAME_GROUPS.all_cc_compile_actions + _DYNAMIC_LINK_ACTIONS + _STATIC_LINK_ACTIONS,
++                actions = _ALL_CC_COMPILE_ACTIONS + _DYNAMIC_LINK_ACTIONS + _STATIC_LINK_ACTIONS,
+                 env_entries = [
+                     env_entry(key = key, value = value)
+                     for key, value in (apple_env | ctx.attr.extra_env).items()
+@@ -1453,7 +1472,7 @@
+         name = "unfiltered_compile_flags",
+         flag_sets = [
+             flag_set(
+-                actions = ACTION_NAME_GROUPS.all_cc_compile_actions,
++                actions = _ALL_CC_COMPILE_ACTIONS,
+                 flag_groups = [
+                     flag_group(
+                         flags = [
