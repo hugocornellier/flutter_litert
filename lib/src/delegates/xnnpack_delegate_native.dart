@@ -82,6 +82,10 @@ class XNNPackDelegateOptions {
     options.ref.flags = flags != 0
         ? flags
         : TFLITE_XNNPACK_DELEGATE_FLAG_QS8 | TFLITE_XNNPACK_DELEGATE_FLAG_QU8;
+    // LiteRT 2.3.2 (the Android runtime) appended this field, growing the
+    // struct from 56 to 64 bytes on 64-bit hosts, and its delegate copies the
+    // whole struct. Older desktop and Apple runtimes stop reading before it.
+    options.ref.weight_cache_lock_memory = false;
 
     Pointer<Utf8>? nativePath;
     if (weightCacheFilePath != null) {
