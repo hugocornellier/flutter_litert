@@ -1,0 +1,49 @@
+name: TEMPORARY Windows CRT proof (remove before merge)
+
+# TEMPORARY, feat/4.1.0-desktop only. Delete this file (and .github/proof/)
+# before merging. It proves the 4.1.0 Windows runtime fix on a GitHub runner:
+#   redist: uploads the VS app-local redist vcruntime140_threads.dll so its
+#           hash can be checked against the copy committed in windows/.
+
+on:
+  push:
+    branches: [feat/4.1.0-desktop]
+
+permissions:
+  contents: read
+
+jobs:
+  redist:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Find the redist vcruntime140_threads.dll
+        shell: pwsh
+        run: |
+          Write-Host "VCToolsRedistDir=$env:VCToolsRedistDir"
+          Get-ChildItem "$env:VSINSTALLDIR\VC\Redist\MSVC" | ForEach-Object { Write-Host "redist folder: $($_.Name)" }
+          Get-ChildItem "$env:VSINSTALLDIR\VC\Redist" -Recurse -Filter vcruntime140_threads.dll -ErrorAction SilentlyContinue |
+            ForEach-Object { "{0}  {1}  {2}  {3}" -f $_.FullName, $_.VersionInfo.FileVersion, $_.Length, (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() }
+          $f = Join-Path $env:VCToolsRedistDir 'x64\Microsoft.VC143.CRT\vcruntime140_threads.dll'
+          if (-not (Test-Path $f)) { Write-Error "missing $f"; exit 1 }
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item $f out/
+          $i = Get-Item $f
+          "path: $f" | Tee-Object -FilePath out/info.txt
+          "FileVersion: $($i.VersionInfo.FileVersion)" | Tee-Object -FilePath out/info.txt -Append
+          "ProductVersion: $($i.VersionInfo.ProductVersion)" | Tee-Object -FilePath out/info.txt -Append
+          "size: $($i.Length)" | Tee-Object -FilePath out/info.txt -Append
+          "sha256: $((Get-FileHash $f -Algorithm SHA256).Hash.ToLower())" | Tee-Object -FilePath out/info.txt -Append
+          dumpbin /nologo /dependents $f | Tee-Object -FilePath out/info.txt -Append
+          Get-AuthenticodeSignature $f | Format-List Status, SignerCertificate | Out-String | Tee-Object -FilePath out/info.txt -Append
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vcruntime140_threads-redist
+          path: out/
+          retention-days: 30
