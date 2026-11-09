@@ -29,7 +29,7 @@ runtimes, classic delegates, and the CompiledModel API.
   s.frameworks = 'Metal', 'CoreML', 'Accelerate'
   s.weak_frameworks = 'CoreML'
 
-  s.platform = :ios, '13.0'
+  s.platform = :ios, '15.0'
   s.static_framework = true
 
   # Common xcconfig shared between local and published builds
