@@ -52,7 +52,8 @@ before upgrading an Android app.
   `FlexDelegate()` and `FlexDelegate.create()` throw an `UnsupportedError`
   that explains what to do. An Android build that still includes
   `flutter_litert_flex` fails at Gradle configuration with the same advice.
-  `flutter_litert_flex` 2.0.0 supports iOS, macOS, Linux, and Windows only.
+  [`flutter_litert_flex` 2.0.0](https://pub.dev/packages/flutter_litert_flex/versions/2.0.0),
+  released with this version, supports iOS, macOS, Linux, and Windows only.
   Without flex, Android cannot run `SELECT_TF_OPS` models, including training
   models that need TensorFlow ops (such as some `Conv2D` training graphs) and
   checkpoint save and restore through `SaveV2`/`RestoreV2`. Weight persistence
@@ -195,6 +196,10 @@ benchmarks.
 5. **Android code that imported `org.tensorflow.lite` classes** adds its own
    `com.google.ai.edge.litert:litert` dependency.
 6. **Re-check exact-output tests** on Android, as described above.
+7. **Raise the iOS deployment target to 15.0** if it is lower: set
+   `IPHONEOS_DEPLOYMENT_TARGET` for every build configuration, and for
+   CocoaPods `platform :ios, '15.0'` in `ios/Podfile`, then run `pod install`.
+   If the app must support iOS 13 or 14, stay on 3.10.x.
 
 ## 3.10.0
 

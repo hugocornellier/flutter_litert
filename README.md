@@ -1216,6 +1216,13 @@ dependencies:
   flutter_litert_flex: ^2.0.0
 ```
 
+Use the matching versions:
+
+| flutter_litert | flutter_litert_flex | Flex platforms |
+| --- | --- | --- |
+| 4.0.0 or newer | 2.0.0 | iOS 15+, macOS, Linux, Windows |
+| 3.10.x | 1.3.0 | Android, iOS, macOS, Linux, Windows |
+
 That's it. The native library is downloaded or linked automatically on the first build for supported native platforms. Then create the delegate with the async constructor, which works on every supported platform:
 
 ```dart
