@@ -113,6 +113,11 @@ before upgrading an Android app.
   at build time, so these notices were not reaching apps before. Apps that
   bundle the runtime should include them in their open-source notices; see
   "Open-source notices for the Android runtime" in the README.
+* Docs: `Interpreter.resetVariableTensors()` sets every variable tensor to
+  zero (an int8 tensor to its zero point), as LiteRT implements it. The README
+  and the API docs said it restored the initial values from the `.tflite`
+  file, which LiteRT does not do. Recreate the `Interpreter` to get the
+  model's values back.
 
 ### Performance
 

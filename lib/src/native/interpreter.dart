@@ -465,7 +465,13 @@ class Interpreter {
   int getOutputIndex(String opName) =>
       _findTensorIndex(opName, getOutputTensors(), 'Output');
 
-  /// Resets all variable tensors to their default values.
+  /// Sets every variable tensor to zero (an int8 tensor to its quantization
+  /// zero point), the same state [allocateTensors] leaves them in.
+  ///
+  /// This does not restore values from the `.tflite` file: LiteRT's
+  /// `TfLiteInterpreterResetVariableTensors` only zeroes the memory. To get
+  /// the model's values back, close this interpreter and create a new one
+  /// from the model.
   void resetVariableTensors() {
     checkState(
       !_deleted,
