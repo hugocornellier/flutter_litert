@@ -18,9 +18,20 @@
 //
 // Apple does not ship a LiteRT dispatch backend for the Neural Engine. This
 // bridge registers flutter_litert's patched TensorFlow Lite Core ML delegate
-// as an accelerator advertising kLiteRtHwAcceleratorNpu. The patched delegate
-// has a dedicated entry point that selects MLComputeUnitsCPUAndNeuralEngine;
-// its ordinary TfLiteCoreMlDelegateCreate entry point remains unchanged.
+// as a LiteRT accelerator. The patched delegate has a dedicated entry point
+// that selects MLComputeUnitsCPUAndNeuralEngine; its ordinary
+// TfLiteCoreMlDelegateCreate entry point remains unchanged.
+//
+// The accelerator advertises no hardware class and no JIT responsibility.
+// LiteRT 2.3.x skips every accelerator that advertises
+// kLiteRtHwAcceleratorNpu when the model has no AOT-compiled NPU dispatch ops,
+// and skips a JIT accelerator whose hardware class was not requested, so an
+// NPU-advertising Core ML accelerator would never be applied to a regular
+// .tflite model. Advertising none makes LiteRT apply it whenever it is
+// registered. The bridge is only registered in the dedicated Apple NPU
+// environment (accelerator auto-registration off), which flutter_litert uses
+// for NPU requests only, and LiteRT still fails compilation when CPU was not
+// requested and nodes remain undelegated, so strict NPU semantics hold.
 //
 // LiteRT and TensorFlowLiteCCoreML are framework-wrapped in iOS apps, so their
 // C APIs are resolved from the already-loaded process image. This avoids
@@ -58,7 +69,7 @@ enum {
   kLiteRtStatusErrorInvalidArgument = 1,
   kLiteRtStatusErrorRuntimeFailure = 3,
   kLiteRtStatusErrorUnsupported = 5,
-  kLiteRtHwAcceleratorNpu = 4,
+  kLiteRtHwAcceleratorNone = 0,
 };
 
 // Mirrors TfLiteCoreMlDelegateOptions without importing TensorFlow Lite
@@ -288,7 +299,9 @@ static LiteRtStatus GetHardwareSupport(LiteRtAccelerator accelerator,
   if (supported_hardware == NULL) {
     return kLiteRtStatusErrorInvalidArgument;
   }
-  *supported_hardware = kLiteRtHwAcceleratorNpu;
+  // Not kLiteRtHwAcceleratorNpu: LiteRT 2.3.x reserves that class for AOT
+  // dispatch ops and would skip this accelerator. See the file header.
+  *supported_hardware = kLiteRtHwAcceleratorNone;
   return kLiteRtStatusOk;
 }
 
@@ -298,7 +311,10 @@ static LiteRtStatus IsDelegateResponsibleForJit(
   if (does_jit_compilation == NULL) {
     return kLiteRtStatusErrorInvalidArgument;
   }
-  *does_jit_compilation = true;
+  // The Core ML delegate still converts each partition when it is applied, but
+  // reporting JIT would make LiteRT 2.3.x match the (empty) hardware class
+  // against the requested accelerators and skip it. See the file header.
+  *does_jit_compilation = false;
   return kLiteRtStatusOk;
 }
 

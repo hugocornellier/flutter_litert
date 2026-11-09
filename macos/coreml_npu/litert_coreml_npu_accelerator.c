@@ -18,8 +18,18 @@
 //
 // LiteRT's built-in NPU accelerator is a vendor-dispatch backend. Apple does
 // not provide a LiteRT dispatch implementation for the Neural Engine, so this
-// bridge registers the TensorFlow Lite CoreML delegate as a LiteRT accelerator
-// advertising kLiteRtHwAcceleratorNpu.
+// bridge registers the TensorFlow Lite CoreML delegate as a LiteRT accelerator.
+//
+// The accelerator advertises no hardware class and no JIT responsibility.
+// LiteRT 2.3.x skips every accelerator that advertises
+// kLiteRtHwAcceleratorNpu when the model has no AOT-compiled NPU dispatch ops,
+// and skips a JIT accelerator whose hardware class was not requested, so an
+// NPU-advertising CoreML accelerator would never be applied to a regular
+// .tflite model. Advertising none makes LiteRT apply it whenever it is
+// registered. The bridge is only registered in the dedicated Apple NPU
+// environment (accelerator auto-registration off), which flutter_litert uses
+// for NPU requests only, and LiteRT still fails compilation when CPU was not
+// requested and nodes remain undelegated, so strict NPU semantics hold.
 //
 // The sibling libtensorflowlite_coreml_npu-mac.dylib is a dedicated build of
 // the upstream CoreML delegate whose MLModelConfiguration is restricted to
@@ -68,7 +78,7 @@ enum {
   kLiteRtStatusErrorInvalidArgument = 1,
   kLiteRtStatusErrorRuntimeFailure = 3,
   kLiteRtStatusErrorUnsupported = 5,
-  kLiteRtHwAcceleratorNpu = 4,
+  kLiteRtHwAcceleratorNone = 0,
 };
 
 // Mirrors TfLiteCoreMlDelegateOptions without depending on TensorFlow Lite
@@ -371,7 +381,9 @@ static LiteRtStatus GetHardwareSupport(LiteRtAccelerator accelerator,
   if (supported_hardware == NULL) {
     return kLiteRtStatusErrorInvalidArgument;
   }
-  *supported_hardware = kLiteRtHwAcceleratorNpu;
+  // Not kLiteRtHwAcceleratorNpu: LiteRT 2.3.x reserves that class for AOT
+  // dispatch ops and would skip this accelerator. See the file header.
+  *supported_hardware = kLiteRtHwAcceleratorNone;
   return kLiteRtStatusOk;
 }
 
@@ -381,9 +393,10 @@ static LiteRtStatus IsDelegateResponsibleForJit(
   if (does_jit_compilation == NULL) {
     return kLiteRtStatusErrorInvalidArgument;
   }
-  // The CoreML delegate converts and compiles each delegated partition while
-  // the LiteRT compiled model applies it.
-  *does_jit_compilation = true;
+  // The CoreML delegate still converts each partition when it is applied, but
+  // reporting JIT would make LiteRT 2.3.x match the (empty) hardware class
+  // against the requested accelerators and skip it. See the file header.
+  *does_jit_compilation = false;
   return kLiteRtStatusOk;
 }
 
