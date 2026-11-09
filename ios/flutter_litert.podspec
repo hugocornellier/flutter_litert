@@ -88,10 +88,19 @@ runtimes, classic delegates, and the CompiledModel API.
                                    'ios-arm64', 'LiteRt.framework', 'LiteRt')
   litert_sim_marker = File.join(framework_dir, 'LiteRt.xcframework',
                                 'ios-arm64_x86_64-simulator', 'LiteRt.framework', 'LiteRt')
-  unless File.exist?(litert_device_marker) && File.exist?(litert_sim_marker)
+  # The Dart bindings use the LiteRT 2.3.x ABI (environment-aware model
+  # loaders, versioned accelerator definitions), so a cached 2.1.x runtime
+  # must be replaced too, not only an incomplete one.
+  litert_version = '2.3.2'
+  litert_plist = File.join(framework_dir, 'LiteRt.xcframework', 'ios-arm64',
+                           'LiteRt.framework', 'Info.plist')
+  litert_current = File.exist?(litert_plist) &&
+                   `/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' '#{litert_plist}' 2>/dev/null`
+                     .strip == litert_version
+  unless File.exist?(litert_device_marker) && File.exist?(litert_sim_marker) && litert_current
     puts '[flutter_litert] Downloading LiteRT Next iOS frameworks...'
     zip = File.join(framework_dir, '_litert_ios.zip')
-    system("curl -sL 'https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v1.0.0/litert-ios-frameworks.zip' -o '#{zip}'")
+    system("curl -sL 'https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v2.0.0/litert-ios-frameworks.zip' -o '#{zip}'")
     abort '[flutter_litert] ERROR: Failed to download LiteRT Next iOS frameworks. Check your internet connection.' unless $?.success?
     # Remove any stale slices first so an old arm64-only simulator slice can't
     # linger alongside the freshly downloaded universal one.

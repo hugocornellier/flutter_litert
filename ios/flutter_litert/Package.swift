@@ -61,13 +61,13 @@ let package = Package(
         // RTLD_DEFAULT registration probe instead.
         .binaryTarget(
             name: "LiteRt",
-            url: "https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v1.0.1/LiteRt-spm.xcframework.zip",
-            checksum: "766be1c952263f698845616b117e00a15090876588689301706430fbbe2e67c5"
+            url: "https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v2.0.0/LiteRt-spm.xcframework.zip",
+            checksum: "8cb7f1412c78481aa3cd942e0f99c63cc1bc7c97ff3ff8f114d08811e4a384cb"
         ),
         .binaryTarget(
             name: "LiteRtMetalAccelerator",
-            url: "https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v1.0.1/LiteRtMetalAccelerator-spm.xcframework.zip",
-            checksum: "4dc00b21b3afba1210ff6bfa6d68b3d03cf95c3dc704aac2d108c871888e9b37"
+            url: "https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v2.0.0/LiteRtMetalAccelerator-spm.xcframework.zip",
+            checksum: "cb6cdab2109fd1a256ff848126bf6bb768f6c564c03e008cce77cf07e2af61f0"
         ),
         .target(
             name: "flutter_litert",
