@@ -1,0 +1,133 @@
+name: Build TFLite C shared library (Linux x86_64)
+
+# Builds linux/lib/libtensorflowlite_c-linux.so from TensorFlow source with
+# CMake + Ninja + GCC on ubuntu-24.04 (GLIBC floor must stay at 2.38 or lower),
+# verifies it against the committed file and uploads it as an Actions
+# artifact. Nothing is released or committed.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      TF_VERSION: v2.21.0
+      TF_VERSION_NUMBER: 2.21.0
+      MAX_GLIBC: '2.38'
+      OLD_LIB: linux/lib/libtensorflowlite_c-linux.so
+      OLD_VERSION: 2.21.0
+      OUT: out
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          cmake --version
+          ninja --version
+          gcc --version
+          ldd --version | head -1
+
+      - name: Clone TensorFlow
+        run: |
+          git clone --depth 1 --branch "$TF_VERSION" \
+            https://github.com/tensorflow/tensorflow.git tf-src
+          git -C tf-src log -1 --format='%H %d'
+
+      - name: Patch TF version defines (TfLiteVersion must read the real version)
+        run: python3 scripts/patch_tflite_cmake_version.py tf-src "$TF_VERSION_NUMBER"
+
+      - name: Configure CMake
+        run: |
+          cmake -S tf-src/tensorflow/lite/c -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DTFLITE_ENABLE_XNNPACK=ON \
+            -DTENSORFLOW_SOURCE_DIR="$GITHUB_WORKSPACE/tf-src" \
+            2>&1 | tee configure.log
+          # Trap: without TENSORFLOW_SOURCE_DIR, v2.21.0 silently clones v2.19.0.
+          if grep -q "Downloading TensorFlow repository" configure.log; then
+            echo "::error::CMake fetched its own TensorFlow clone"; exit 1
+          fi
+          if [ -e build/tensorflow-lite/tensorflow-src ]; then
+            echo "::error::found a FetchContent TensorFlow clone"; exit 1
+          fi
+          grep '^TENSORFLOW_SOURCE_DIR' build/CMakeCache.txt
+
+      - name: Build
+        run: cmake --build build --target tensorflowlite_c -j "$(nproc)"
+
+      - name: Collect library
+        run: |
+          mkdir -p "$OUT"
+          ls -la build/*.so* || true
+          cp build/libtensorflowlite_c.so "$OUT/libtensorflowlite_c-linux.so"
+          file "$OUT/libtensorflowlite_c-linux.so"
+
+      - name: Verify version and run a model (new and committed library)
+        run: |
+          gcc -O1 -o tflite_c_check scripts/tflite_c_check.c -ldl
+          echo "=== new library ==="
+          ./tflite_c_check "$PWD/$OUT/libtensorflowlite_c-linux.so" "$TF_VERSION_NUMBER" test/assets/add.tflite \
+            | tee "$OUT/verify-run.txt"
+          echo "=== committed $OLD_VERSION library ==="
+          ./tflite_c_check "$PWD/$OLD_LIB" "$OLD_VERSION" test/assets/add.tflite
+          grep -a -o "2\.21\.0" "$OUT/libtensorflowlite_c-linux.so" | sort | uniq -c
+          if grep -a -q "2\.19\.0" "$OUT/libtensorflowlite_c-linux.so"; then
+            echo "::warning::the string 2.19.0 appears in the new library"
+          fi
+
+      - name: Compare with the committed library
+        run: |
+          NEW="$OUT/libtensorflowlite_c-linux.so"
+          R="$OUT/compare-linux.txt"
+          dyn_exports() { nm -D --defined-only "$1" | awk '{print $3}' | sort; }
+          dyn_exports "$OLD_LIB" > old-exports.txt
+          dyn_exports "$NEW" > "$OUT/exports-linux.txt"
+          glibc_max() { objdump -T "$1" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1; }
+          glibcxx_max() { objdump -T "$1" | grep -o 'GLIBCXX_[0-9.]*' | sort -uV | tail -1; }
+          {
+            echo "# Linux TFLite C: new $TF_VERSION_NUMBER vs committed $OLD_VERSION"
+            echo "size old: $(stat -c %s "$OLD_LIB")  new: $(stat -c %s "$NEW")"
+            echo "sha256 old: $(sha256sum "$OLD_LIB" | cut -d' ' -f1)"
+            echo "sha256 new: $(sha256sum "$NEW" | cut -d' ' -f1)"
+            echo "file old: $(file -b "$OLD_LIB")"
+            echo "file new: $(file -b "$NEW")"
+            echo "GLIBC max old: $(glibc_max "$OLD_LIB")  new: $(glibc_max "$NEW")"
+            echo "GLIBCXX max old: $(glibcxx_max "$OLD_LIB")  new: $(glibcxx_max "$NEW")"
+            echo "exports old: $(wc -l < old-exports.txt)  new: $(wc -l < "$OUT/exports-linux.txt")"
+            echo "## exports removed (-) / added (+)"
+            diff old-exports.txt "$OUT/exports-linux.txt" | grep '^[<>]' | sed 's/^</-/; s/^>/+/' || echo "(none)"
+            echo "## NEEDED old"
+            objdump -p "$OLD_LIB" | grep -E 'NEEDED|SONAME'
+            echo "## NEEDED new"
+            objdump -p "$NEW" | grep -E 'NEEDED|SONAME'
+            echo "## GLIBC versions referenced by new"
+            objdump -T "$NEW" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tr '\n' ' '; echo
+          } | tee "$R"
+          NEW_MAX=$(glibc_max "$NEW" | sed 's/GLIBC_//')
+          if [ "$(printf '%s\n%s\n' "$NEW_MAX" "$MAX_GLIBC" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
+            echo "::error::GLIBC floor $NEW_MAX is above $MAX_GLIBC"; exit 1
+          fi
+          if diff old-exports.txt "$OUT/exports-linux.txt" | grep -q '^<'; then
+            echo "::warning::exports were removed compared with $OLD_VERSION (see compare-linux.txt)"
+          fi
+
+      - name: Write sha256
+        run: |
+          cd "$OUT"
+          sha256sum libtensorflowlite_c-linux.so > libtensorflowlite_c-linux.so.sha256
+          cat libtensorflowlite_c-linux.so.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtensorflowlite_c-linux-${{ env.TF_VERSION }}
+          path: out/
+          retention-days: 30

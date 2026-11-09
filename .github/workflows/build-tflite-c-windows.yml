@@ -1,17 +1,30 @@
 name: Build TFLite C DLL (Windows x64)
 
+# Builds windows/libtensorflowlite_c-win.dll from TensorFlow source with
+# CMake + Ninja + MSVC, verifies it against the committed DLL it replaces and
+# uploads it as an Actions artifact with a sha256 file. Hosting the DLL (a
+# GitHub release) is a separate, manual step.
+#
+# The DLL is built with the static CRT (/MT) so it imports only KERNEL32 and
+# needs no VC++ runtime. From TF 2.21.0 on, XNNPack's pthreadpool uses C11
+# threads, which a /MD build imports from vcruntime140_threads.dll (VC++ 14.38+,
+# not part of the CRT set Flutter documents for app-local deployment).
+
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     runs-on: windows-2022
     timeout-minutes: 180
     env:
-      TF_VERSION: v2.20.0
+      TF_VERSION: v2.21.0
+      TF_VERSION_NUMBER: 2.21.0
+      OLD_DLL: windows/libtensorflowlite_c-win.dll
+      OLD_VERSION: 2.21.0
 
     steps:
       - uses: actions/checkout@v4
@@ -33,31 +46,39 @@ jobs:
         run: |
           git clone --depth 1 --branch $env:TF_VERSION `
             https://github.com/tensorflow/tensorflow.git tf-src
+          git -C tf-src log -1 --format='%H %d'
+
+      - name: Patch TF version defines (TfLiteVersion must read the real version)
+        run: python scripts/patch_tflite_cmake_version.py tf-src $env:TF_VERSION_NUMBER
 
       - name: Patch TF sources for MSVC/Windows compatibility
         shell: python
         run: |
           import pathlib
+          import sys
+
+          def replace_once(path, old, new):
+              p = pathlib.Path(path)
+              src = p.read_text()
+              if src.count(old) != 1:
+                  sys.exit(f'{path}: patch anchor found {src.count(old)} times, expected 1')
+              p.write_text(src.replace(old, new))
 
           # 1. MSVC bug: friend class Tensor declaration in Buffer doesn't
           #    grant access to private members. Make them accessible.
-          p = pathlib.Path('tf-src/tensorflow/lite/core/model_building.h')
-          src = p.read_text()
-          src = src.replace(
+          replace_once(
+              'tf-src/tensorflow/lite/core/model_building.h',
               'friend class Tensor;\n\n  InterpreterInfo* builder_;\n  BufferIdx buffer_idx_;',
               'friend class Tensor;\n\n public:\n  InterpreterInfo* builder_;\n  BufferIdx buffer_idx_;'
           )
-          p.write_text(src)
 
           # 2. Remove TFL_STATIC_LIBRARY_BUILD so TFL_CAPI_EXPORT resolves to
           #    __declspec(dllexport) instead of nothing.
-          p2 = pathlib.Path('tf-src/tensorflow/lite/CMakeLists.txt')
-          src2 = p2.read_text()
-          src2 = src2.replace(
+          replace_once(
+              'tf-src/tensorflow/lite/CMakeLists.txt',
               '  list(APPEND TFLITE_TARGET_PUBLIC_OPTIONS "-DTFL_STATIC_LIBRARY_BUILD")',
               '  # Removed for shared DLL build: TFL_STATIC_LIBRARY_BUILD'
           )
-          p2.write_text(src2)
 
           # 3. Create a stub that references XNNPack functions, forcing the
           #    linker to pull them from the static library into the DLL.
@@ -84,17 +105,55 @@ jobs:
           src3 += 'endif()\n'
           p3.write_text(src3)
 
-      - name: Configure CMake
+      # The version comes from the patched version.h and CMakeLists.txt, so no
+      # -DTF_*_VERSION flags are passed here (they would clash with the
+      # PRIVATE defines TF 2.21.0 adds to the tensorflow-lite target).
+      # TENSORFLOW_SOURCE_DIR is required from TF 2.21.0 on: without it CMake
+      # silently clones and builds TF v2.19.0.
+      # Static CRT (/MT) for every target, including FetchContent subprojects
+      # with an old cmake_minimum_required (CMAKE_POLICY_DEFAULT_CMP0091=NEW
+      # makes them honour CMAKE_MSVC_RUNTIME_LIBRARY). ABSL_MSVC_STATIC_RUNTIME
+      # and CPUINFO_RUNTIME_TYPE are those projects' own switches.
+      - name: Configure CMake (static CRT)
+        shell: pwsh
         run: |
+          $src = (Resolve-Path tf-src).Path -replace '\\', '/'
           cmake -S tf-src/tensorflow/lite/c -B build `
             -DCMAKE_BUILD_TYPE=Release `
             -DTFLITE_ENABLE_XNNPACK=ON `
-            "-DCMAKE_CXX_FLAGS=-DTF_MAJOR_VERSION=2 -DTF_MINOR_VERSION=20 -DTF_PATCH_VERSION=0 -DTF_VERSION_SUFFIX=" `
-            "-DCMAKE_C_FLAGS=-DTF_MAJOR_VERSION=2 -DTF_MINOR_VERSION=20 -DTF_PATCH_VERSION=0 -DTF_VERSION_SUFFIX=" `
-            -G Ninja
+            "-DTENSORFLOW_SOURCE_DIR=$src" `
+            -DCMAKE_POLICY_DEFAULT_CMP0091=NEW `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+            -DABSL_MSVC_STATIC_RUNTIME=ON `
+            -DCPUINFO_RUNTIME_TYPE=static `
+            -G Ninja 2>&1 | Tee-Object -FilePath configure.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Select-String -Path configure.log -SimpleMatch "Downloading TensorFlow repository" -Quiet) {
+            Write-Error "CMake fetched its own TensorFlow clone"; exit 1
+          }
+          if (Test-Path build/tensorflow-lite/tensorflow-src) {
+            Write-Error "found a FetchContent TensorFlow clone"; exit 1
+          }
+          Select-String -Path build/CMakeCache.txt -Pattern '^(TENSORFLOW_SOURCE_DIR|CMAKE_MSVC_RUNTIME_LIBRARY|CMAKE_POLICY_DEFAULT_CMP0091|ABSL_MSVC_STATIC_RUNTIME|CPUINFO_RUNTIME_TYPE)\b'
+
+      - name: Check generated compile flags for /MD
+        shell: pwsh
+        run: |
+          $ninja = Get-ChildItem build -Recurse -Include build.ninja, *.ninja -File
+          $md = 0; $mt = 0
+          foreach ($f in $ninja) {
+            foreach ($l in Get-Content $f.FullName) {
+              if ($l -match '^\s*FLAGS\s*=') {
+                if ($l -match '(^|\s)[-/]MDd?(\s|$)') { $md++; if ($md -le 10) { Write-Host "MD: $l" } }
+                if ($l -match '(^|\s)[-/]MTd?(\s|$)') { $mt++ }
+              }
+            }
+          }
+          Write-Host "FLAGS lines with /MT: $mt   with /MD: $md"
+          if ($md -gt 0) { Write-Error "/MD in generated compile flags"; exit 1 }
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build build --target tensorflowlite_c
 
       - name: Find and rename DLL
         shell: pwsh
@@ -112,39 +171,98 @@ jobs:
             exit 1
           }
           Write-Host "Using: $($dll.FullName)"
-          Copy-Item $dll.FullName -Destination libtensorflowlite_c-win.dll
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item $dll.FullName -Destination out/libtensorflowlite_c-win.dll
+
+      - name: Check the DLL needs no VC++ runtime
+        shell: pwsh
+        run: |
+          dumpbin /nologo /dependents out\libtensorflowlite_c-win.dll
+          $deps = (dumpbin /nologo /dependents out\libtensorflowlite_c-win.dll) -join "`n"
+          if ($deps -match '(?i)vcruntime|msvcp|api-ms-win-crt|ucrtbase') {
+            Write-Error "the DLL depends on a VC++ or UCRT runtime DLL (expected a static /MT build)"; exit 1
+          }
 
       - name: Verify XNNPack symbols
         shell: cmd
         run: |
           echo === Exported XNNPack symbols ===
-          dumpbin /exports libtensorflowlite_c-win.dll | findstr /i "XNNPack"
+          dumpbin /exports out\libtensorflowlite_c-win.dll | findstr /i "XNNPack"
           if %ERRORLEVEL% neq 0 (
             echo.
             echo ERROR: XNNPack symbols not found in DLL
             echo.
             echo === All TfLite exports ===
-            dumpbin /exports libtensorflowlite_c-win.dll | findstr /i "TfLite"
+            dumpbin /exports out\libtensorflowlite_c-win.dll | findstr /i "TfLite"
             exit /b 1
           )
+
+      - name: Verify version and run a model (new and committed DLL)
+        shell: pwsh
+        run: |
+          cl /nologo /O1 scripts/tflite_c_check.c /Fe:tflite_c_check.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "=== new DLL ==="
+          ./tflite_c_check.exe "$PWD\out\libtensorflowlite_c-win.dll" $env:TF_VERSION_NUMBER test/assets/add.tflite |
+            Tee-Object -FilePath out/verify-run.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "=== committed $env:OLD_VERSION DLL ==="
+          ./tflite_c_check.exe "$PWD\$env:OLD_DLL" $env:OLD_VERSION test/assets/add.tflite
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compare with the committed DLL
+        shell: pwsh
+        run: |
+          $new = "out/libtensorflowlite_c-win.dll"
+          function Get-Exports($path) {
+            $lines = dumpbin /exports $path
+            $names = foreach ($l in $lines) {
+              if ($l -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]{8}\s+(\S+)') { $Matches[1] }
+            }
+            $names | Sort-Object
+          }
+          function Get-Deps($path) {
+            $lines = dumpbin /dependents $path
+            ($lines | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim().ToLower() }) | Sort-Object
+          }
+          $oldExp = @(Get-Exports $env:OLD_DLL)
+          $newExp = @(Get-Exports $new)
+          $newExp | Set-Content out/exports-win.txt
+          $removed = @($oldExp | Where-Object { $newExp -notcontains $_ })
+          $added = @($newExp | Where-Object { $oldExp -notcontains $_ })
+          $report = @()
+          $report += "# Windows TFLite C: new $env:TF_VERSION_NUMBER vs committed $env:OLD_VERSION"
+          $report += "size old: $((Get-Item $env:OLD_DLL).Length)  new: $((Get-Item $new).Length)"
+          $report += "sha256 old: $((Get-FileHash $env:OLD_DLL -Algorithm SHA256).Hash.ToLower())"
+          $report += "sha256 new: $((Get-FileHash $new -Algorithm SHA256).Hash.ToLower())"
+          $report += "exports old: $($oldExp.Count)  new: $($newExp.Count)"
+          $report += "## exports removed"
+          $report += $(if ($removed.Count) { $removed | ForEach-Object { "-$_" } } else { "(none)" })
+          $report += "## exports added"
+          $report += $(if ($added.Count) { $added | ForEach-Object { "+$_" } } else { "(none)" })
+          $report += "## dependent DLLs old"
+          $report += Get-Deps $env:OLD_DLL
+          $report += "## dependent DLLs new"
+          $report += Get-Deps $new
+          $report += "## headers new (machine, subsystem, linker)"
+          $report += (dumpbin /headers $new | Select-String -Pattern 'machine|subsystem|linker version|operating system version' | ForEach-Object { $_.Line.Trim() })
+          $report += "## headers old"
+          $report += (dumpbin /headers $env:OLD_DLL | Select-String -Pattern 'machine|subsystem|linker version|operating system version' | ForEach-Object { $_.Line.Trim() })
+          $report | Set-Content out/compare-win.txt
+          $report | ForEach-Object { Write-Host $_ }
+          if ($newExp.Count -lt 50) { Write-Error "too few exports parsed"; exit 1 }
+          if ($removed.Count) { Write-Host "::warning::exports were removed compared with $env:OLD_VERSION (see compare-win.txt)" }
+
+      - name: Write sha256
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash out/libtensorflowlite_c-win.dll -Algorithm SHA256).Hash.ToLower()
+          "$h  libtensorflowlite_c-win.dll" | Set-Content -NoNewline out/libtensorflowlite_c-win.dll.sha256
+          Get-Content out/libtensorflowlite_c-win.dll.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: libtensorflowlite_c-win
-          path: libtensorflowlite_c-win.dll
+          name: libtensorflowlite_c-win-${{ env.TF_VERSION }}
+          path: out/
           retention-days: 30
-
-      - name: Upload to GitHub Release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "tflite-c-${TF_VERSION}" \
-            --title "TFLite C Library ${TF_VERSION} (Windows x64)" \
-            --notes "TensorFlow Lite C shared library for Windows x64 with XNNPack support. Built from TF ${TF_VERSION} source via CMake + Ninja + MSVC." \
-            --repo "${{ github.repository }}" || true
-          gh release upload "tflite-c-${TF_VERSION}" \
-            libtensorflowlite_c-win.dll \
-            --repo "${{ github.repository }}" \
-            --clobber
