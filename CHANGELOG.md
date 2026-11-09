@@ -13,7 +13,8 @@ before upgrading an Android app.
   `libLiteRt.so` from Google's `com.google.ai.edge.litert:litert` 2.3.2 AAR,
   the same library `CompiledModel` uses. LiteRT 1.4.2 is gone: the
   `litert:1.4.2` and `litert-gpu:1.4.2` dependencies are no longer added to the
-  app, and `Interpreter.version` no longer reports `2.22.0-dev0+selfbuilt`.
+  app, and `Interpreter.version` on Android now reports `2.23.0` instead of
+  `2.22.0-dev0+selfbuilt`.
   The bundled native libraries are 4.2 to 8.7 MB smaller per ABI (arm64-v8a
   8.9 MB, armeabi-v7a 3.7 MB, x86_64 11.7 MB, against about 15.7, 7.8, and
   20.4 MB in 3.10.0).
@@ -59,8 +60,10 @@ before upgrading an Android app.
   that already declare one no longer conflict with the plugin's.
 * **Small CPU numerics differences on Android.** LiteRT 2.3.2 is not
   bit-identical to 1.4.2. Float CPU results stayed within 8.8e-05 relative on
-  the custom-op tests, and the largest summary difference across the model
-  matrix was 0.000932, with no top-1 index changed. Quantized models on the
+  the custom-op tests. Across the 29-model matrix on the Pixel 9 Pro, Galaxy
+  S23, and Galaxy A56, every model still ran and passed the accuracy check on
+  CPU and XNNPACK, CPU outputs differed by up to 9.3e-4 relative, and no top
+  index changed. Quantized models on the
   plain CPU path moved more: MobileNet changed 7 of 1001 scores (the largest
   from 83 to 90, top-5 order unchanged), and YAMNet changed 2 of 521 (0.8516 to
   0.8008, top-1 unchanged, but class 132 now ties class 147). Quantized
@@ -77,13 +80,32 @@ before upgrading an Android app.
   from Google Maven (`litert-npu-runtime-qualcomm` 2.3.2), and the QAIRT pin
   moves from 2.47.0.260601 to 2.50.0.260828. A
   `flutterLitert.qualcommNpuRuntimeDir` bundle must be rebuilt from those two.
-  See `doc/android_compiled_model_npu.md`.
+  See `doc/android_compiled_model_npu.md`. Known issue: on the Galaxy S23,
+  `selfie_segmenter` and `selfie_segmenter_landscape` now fail in the NPU
+  modes that worked with QAIRT 2.47; run them on CPU or GPU.
 * Linux and Windows `CompiledModel`: LiteRT 2.1.5 to 2.3.0 (`ai-edge-litert`
   2.3.0), with the desktop WebGPU accelerator rebuilt for 2.3.0.
 * Web: LiteRT.js 2.5.3 to 2.6.0 (`@litertjs/core@2.6.0`).
 * iOS and macOS `CompiledModel`: LiteRT 2.3.x.
 * The Play services runtime (`play-services-litert` 17.0.0) is unchanged.
 * The example app builds with Kotlin 2.4.0.
+
+### Performance
+
+Measured with the 29-model matrix on Firebase Test Lab (Pixel 9 Pro, Galaxy
+S23, Galaxy A56), comparing the Android `Interpreter` on LiteRT 2.3.2 with
+1.4.2. These are median latencies from single runs per device, not controlled
+benchmarks.
+
+* **Plain CPU (no delegate) is faster.** Median latency fell by about 83% on
+  the Pixel 9 Pro, 48% on the Galaxy S23, and 51% on the Galaxy A56. The
+  exception is `yolov8n` on CPU, which was 13 to 17% slower on the two Samsung
+  phones.
+* **XNNPACK is about the same:** -1% on the Pixel 9 Pro and the Galaxy A56,
+  +8% on one Galaxy S23 run. The cat and dog face landmark models are the
+  exception, 45 to 61% faster on XNNPACK.
+* **The Interpreter GPU is gone on Android**, so models that were fastest on it
+  now run on `CompiledModel` GPU, XNNPACK, or CPU. See step 3 below.
 
 ### Migrating from 3.10.x
 
@@ -95,7 +117,9 @@ before upgrading an Android app.
    tries the GPU and falls back to the CPU), and check its output once with
    `verifyCompiledModel`. For an `Interpreter`, use `PerformanceConfig.auto()`
    or `PerformanceConfig.xnnpack()`.
-3. **Expect some models to run slower without the Interpreter GPU.** The
+3. **Expect some models to run slower without the Interpreter GPU.** CPU and
+   XNNPACK did not get slower overall (see Performance above); the losses are
+   on models whose fastest 3.10.x path was the Interpreter GPU. The
    physical-device matrix (Pixel 9 Pro, Galaxy A56, Galaxy S23, 29 models)
    found three models that no Android GPU path now runs on any of the three
    devices: `face_blendshapes`, `face_detection_full_range_sparse`, and
