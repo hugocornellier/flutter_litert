@@ -1860,16 +1860,17 @@ flutter_litert bundles one native runtime per API on most platforms. The classic
 | Platform | Interpreter runtime | CompiledModel runtime |
 |----------|---------------------|-----------------------|
 | Android | LiteRT 2.3.2 (CPU / XNNPACK) | LiteRT 2.3.2, the same library (CPU / OpenCL/GL GPU / app-provided NPU) |
-| iOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.x (CPU / Metal GPU / Core ML NPU) |
-| macOS | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.x (CPU / Metal GPU / Core ML NPU) |
+| iOS | TensorFlow Lite 2.20.0 | LiteRT 2.3.2 (CPU / Metal GPU / Core ML NPU) |
+| macOS | TensorFlow Lite 2.20.0 | LiteRT 2.3.0 (CPU / Metal GPU / Core ML NPU) |
 | Windows | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.0 |
 | Linux | TensorFlow Lite 2.20.0 | LiteRT Next 2.3.0 |
 | Web | LiteRT.js 2.6.0 / TFLite.js (WASM) | LiteRT.js 2.6.0 (WASM / WebGPU) |
 
 Bundling:
 - Android: the runtime comes from Google's official Maven AARs (`com.google.ai.edge.litert`), extracted automatically by Gradle. The plugin takes `libLiteRt.so` for `arm64-v8a`, `armeabi-v7a`, and `x86_64` from the `litert` 2.3.2 AAR, and `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64` from the `litert-gpu` 2.3.2 AAR. The `Interpreter` and `CompiledModel` both load that one `libLiteRt.so`. 32-bit `x86` is not packaged, and `minSdk` is 24. The AARs' Java classes are not added to the app. SoC-specific NPU runtimes remain app-provided.
-- iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` xcframework (release `litert-ios-v1.0.1` for SPM, `litert-ios-v1.0.0` for CocoaPods; both the same commit-pinned LiteRT Next build, commit `1adc2475`).
-- macOS, Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake (CocoaPods on macOS); CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` wheel (2.3.0 on Windows and Linux, 2.3.x on macOS), bundled via CMake on Windows and Linux and via CocoaPods on macOS.
+- iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` and `LiteRtMetalAccelerator` xcframeworks (release `litert-ios-v2.0.0`, the same files for SPM and CocoaPods): the runtime is built from the LiteRT v2.3.2 source tag with LiteRT's runtime-only export list, and the Metal accelerator is Google's v2.3.0 release build. CompiledModel needs iOS 15.0 or later.
+- macOS: the Interpreter is the prebuilt TensorFlow Lite C library; CompiledModel is the `libLiteRt` and `libLiteRtMetalAccelerator` pair from the official `ai-edge-litert` 2.3.0 wheel (LiteRT 2.3.2 ships no new macOS binaries), plus a Core ML NPU delegate built from the LiteRT v2.3.2 source; all bundled via CocoaPods or SPM.
+- Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake; CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.3.0 wheel, bundled via CMake.
 - Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.6.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).
 
 > Intel Macs only: the iOS simulator is not supported under Swift Package Manager on x86_64. You have two options: test using a real iOS device or switch to CocoaPods to use the simulator. This applies to Intel Macs only.
