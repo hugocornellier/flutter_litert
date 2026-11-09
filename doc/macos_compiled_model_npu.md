@@ -11,7 +11,8 @@ The implementation consists of:
 - `libLiteRtCoreMlNpuAccelerator.dylib`, a small LiteRT accelerator-registration
   bridge;
 - `libtensorflowlite_coreml_npu-mac.dylib`, a dedicated Core ML delegate built
-  from LiteRT v2.1.5;
+  from LiteRT v2.3.2 (it must come from the same LiteRT release as the bundled
+  runtime, because the delegate reads TFLite's in-process context structures);
 - macOS-only lazy registration in the native `CompiledModel` path.
 
 CPU-only and GPU-only models keep using the existing shared LiteRT environment
@@ -99,8 +100,8 @@ iPhone performance.
 
 ## Reproducible build
 
-`.github/workflows/build-coreml-npu-macos.yml` pins LiteRT v2.1.5 at commit
-`9d26e89d88ef8785b6a1e54ec41ac8add215a125`. It applies
+`.github/workflows/build-coreml-npu-macos.yml` pins LiteRT v2.3.2 at commit
+`d30595a09f74b4c4c4f669eafeb26928a92deb5a`. It applies
 `patches/litert_coreml_npu_macos.patch`, builds the arm64 delegate and bridge,
 sets stable install names, signs both artifacts ad hoc, verifies their exported
 symbols, and uploads the pair.

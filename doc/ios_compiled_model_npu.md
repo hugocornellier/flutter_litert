@@ -42,10 +42,10 @@ Engine and CPU.
   CPU-only inference.
 - NPU and GPU cannot currently be combined on Apple platforms.
 
-The iOS accelerator bridge mirrors the ABI of the bundled LiteRT runtime at
-commit `1adc2475829fbe52d5670873821a45bea8779532`. That revision wraps a TFLite
-delegate together with its deleter; it is intentionally different from the
-newer delegate-lifetime ABI used by the macOS build.
+The iOS accelerator bridge mirrors the LiteRT 2.3.x accelerator ABI of the
+bundled runtime (built from the v2.3.2 source tag): accelerator definitions
+start with a versioned `LiteRtAbiHeader`, and a TFLite delegate is wrapped
+together with its deleter. The macOS bridge mirrors the same ABI.
 
 ## Simulator validation
 
