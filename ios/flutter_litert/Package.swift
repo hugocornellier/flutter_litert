@@ -34,18 +34,18 @@ let package = Package(
         // scripts/wrap_litert_ios_frameworks.sh.)
         .binaryTarget(
             name: "TensorFlowLiteC",
-            url: "https://github.com/hugocornellier/flutter_litert/releases/download/flex-v1.1.1/TensorFlowLiteC-spm.xcframework.zip",
-            checksum: "18701b6fdf438394dcacf0ed2d0412eefcd59f70db7a10ead5b8b68dbbc0b382"
+            url: "https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0/TensorFlowLiteC-spm.xcframework.zip",
+            checksum: "7008f7ed4dd01d2feddf9f45103df71cb157d9383c2964eef283ca6370b54cc2"
         ),
         .binaryTarget(
             name: "TensorFlowLiteCMetal",
-            url: "https://github.com/hugocornellier/flutter_litert/releases/download/flex-v1.1.1/TensorFlowLiteCMetal-spm.xcframework.zip",
-            checksum: "0a87767a22aee42309432c3d8f82f87a92712af37968432460193a027aedb481"
+            url: "https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0/TensorFlowLiteCMetal-spm.xcframework.zip",
+            checksum: "22543d2bed3e3f18d90026e21604e1a0e3c298daa5b4695791e806184378ed04"
         ),
         .binaryTarget(
             name: "TensorFlowLiteCCoreML",
-            url: "https://github.com/hugocornellier/flutter_litert/releases/download/coreml-ios-v1.1.0/TensorFlowLiteCCoreML-spm.xcframework.zip",
-            checksum: "4d6932bbdf5791cd9d53b689dd796b47d7bd4595204aa04f88d29921701192eb"
+            url: "https://github.com/hugocornellier/flutter_litert/releases/download/coreml-ios-v1.2.0/TensorFlowLiteCCoreML-spm.xcframework.zip",
+            checksum: "a16b908a36ad17cb520b6a79a8f81aa45b57e8c2abf970746686d3458b41aedd"
         ),
         // LiteRT Next runtime + Metal accelerator (CompiledModel API). These
         // are the same conventional framework-wrapped xcframeworks the
