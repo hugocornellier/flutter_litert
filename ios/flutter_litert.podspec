@@ -88,11 +88,17 @@ runtimes, classic delegates, and the CompiledModel API.
           "(expected #{expected}, got #{actual}). Run `pod install` again."
   end
 
+  # Fail a connection that does not open within 30 s or a transfer that stays
+  # under 1 KB/s for 60 s, instead of letting `pod install` hang on a stalled
+  # download, and retry transient failures (timeouts, 5xx) a few times.
+  curl_options = '-fsL --connect-timeout 30 --speed-limit 1024 --speed-time 60 ' \
+                 '--retry 3 --retry-delay 5'
+
   unless File.exist?(marker) && coreml_has_npu && tflite_current
     puts '[flutter_litert] Downloading TensorFlow Lite iOS frameworks...'
     zip = File.join(framework_dir, '_tflite_ios.zip')
     tflite_zip_sha256 = '2897e55a5a04ed9aeb2f63f8f3796737d5f351a7d4e3012a12ce4e52313695a3'
-    system("curl -fsL 'https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0/ios-frameworks.zip' -o '#{zip}'")
+    system("curl #{curl_options} 'https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0/ios-frameworks.zip' -o '#{zip}'")
     abort '[flutter_litert] ERROR: Failed to download TFLite iOS frameworks. Check your internet connection.' unless $?.success?
     verify_download.call(zip, tflite_zip_sha256, 'The TFLite iOS frameworks download')
     # Remove the old frameworks first so no file of an earlier release (or its
@@ -132,7 +138,7 @@ runtimes, classic delegates, and the CompiledModel API.
     puts '[flutter_litert] Downloading LiteRT Next iOS frameworks...'
     zip = File.join(framework_dir, '_litert_ios.zip')
     litert_zip_sha256 = 'e2bff21bae9bfc7c59e8acc7bcab8a9bab25e1798d1d49895b04b4c606dc46cc'
-    system("curl -fsL 'https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v2.0.0/litert-ios-frameworks.zip' -o '#{zip}'")
+    system("curl #{curl_options} 'https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v2.0.0/litert-ios-frameworks.zip' -o '#{zip}'")
     abort '[flutter_litert] ERROR: Failed to download LiteRT Next iOS frameworks. Check your internet connection.' unless $?.success?
     verify_download.call(zip, litert_zip_sha256, 'The LiteRT Next iOS frameworks download')
     # Remove any stale slices first so an old arm64-only simulator slice can't
