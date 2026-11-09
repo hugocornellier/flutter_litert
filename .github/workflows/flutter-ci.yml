@@ -236,6 +236,63 @@ jobs:
         working-directory: example
         run: flutter test integration_test/interpreter_coexistence_test.dart -d windows --timeout 600s
 
+  # The Flex addon host on Windows, as its own job: inference, training and
+  # weight persistence through libtensorflowlite_flex-win.dll inside a built
+  # app. That DLL imports vcruntime140_threads.dll, which the runner image
+  # does not have to provide: windows/CMakeLists.txt bundles it next to the
+  # executable.
+  build-windows-flex:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Flex integration host dependencies
+        working-directory: example/flex_test_host
+        run: flutter pub get
+
+      # flutter_litert_flex's windows/CMakeLists.txt downloads the flex DLL
+      # (about 240 MB) into its own package directory and checks it against a
+      # pinned SHA-256. Cache that file. pubspec.lock pins the flex version, so
+      # the key follows it; a stale file is harmless because CMake downloads it
+      # again when the SHA-256 differs.
+      #
+      # rootUri is a file: URI for a hosted or git dependency (its path reads
+      # /C:/... on Windows, which url2pathname turns into C:\...) and a path
+      # relative to .dart_tool for a path dependency.
+      - name: Locate FlexDelegate library (Windows)
+        id: flex-windows
+        working-directory: example/flex_test_host
+        shell: bash
+        run: |
+          python - >> "$GITHUB_OUTPUT" <<'PY'
+          import json, os, urllib.parse, urllib.request
+          packages = json.load(open('.dart_tool/package_config.json'))['packages']
+          uri = [p['rootUri'] for p in packages if p['name'] == 'flutter_litert_flex'][0]
+          parsed = urllib.parse.urlparse(uri)
+          if parsed.scheme == 'file':
+              root = urllib.request.url2pathname(parsed.path)
+          else:
+              root = os.path.join('.dart_tool', urllib.request.url2pathname(uri))
+          root = os.path.abspath(root)
+          print('path=' + os.path.join(root, 'windows', 'libtensorflowlite_flex-win.dll'))
+          PY
+
+      - name: Cache FlexDelegate library (Windows)
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.flex-windows.outputs.path }}
+          key: flex-delegate-windows-${{ hashFiles('example/flex_test_host/pubspec.lock') }}
+
+      - name: Run Flex addon integration tests
+        working-directory: example/flex_test_host
+        timeout-minutes: 30
+        run: flutter test -d windows integration_test
+
   # Checks the iOS frameworks consumers actually download, for both packaging
   # channels. build-ios cannot cover this: it redirects the SwiftPM binary
   # target at the working-copy xcframework, so it validates the framework on
