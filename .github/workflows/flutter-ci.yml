@@ -37,18 +37,23 @@ jobs:
       - name: Analyze project source
         run: flutter analyze .
 
-      - name: Cache FlexDelegate library (macOS)
-        uses: actions/cache@v6
-        with:
-          path: ~/Library/Caches/flutter_litert
-          key: flex-delegate-macos-v1.0.0
-
       - name: Run tests
         run: flutter test
 
       - name: Install Flex integration host dependencies
         working-directory: example/flex_test_host
         run: flutter pub get
+
+      # The host builds with Swift Package Manager, which downloads
+      # flutter_litert_flex's flex xcframework (a binaryTarget pinned by URL
+      # and checksum) into SwiftPM's shared artifact cache. pubspec.lock pins
+      # the flex version, so the key follows it; a stale entry is harmless
+      # because SwiftPM checks the checksum.
+      - name: Cache FlexDelegate library (macOS)
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm/artifacts
+          key: flex-delegate-macos-${{ hashFiles('example/flex_test_host/pubspec.lock') }}
 
       - name: Run Flex addon integration tests
         working-directory: example/flex_test_host
@@ -132,12 +137,6 @@ jobs:
       - name: Analyze project source
         run: flutter analyze .
 
-      - name: Cache FlexDelegate library (Linux)
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/flutter_litert
-          key: flex-delegate-linux-v1.0.0
-
       # CompiledModel tests load the bundled linux/lib/libLiteRt.so via the
       # loader's package-path fallback, the same binary end users get.
       - name: Run tests
@@ -146,6 +145,24 @@ jobs:
       - name: Install Flex integration host dependencies
         working-directory: example/flex_test_host
         run: flutter pub get
+
+      # flutter_litert_flex's linux/CMakeLists.txt downloads the flex library
+      # into its own package directory and checks it against a pinned SHA-256.
+      # Cache that file. pubspec.lock pins the flex version, so the key follows
+      # it; a stale file is harmless because CMake downloads it again when the
+      # SHA-256 differs.
+      - name: Locate FlexDelegate library (Linux)
+        id: flex-linux
+        working-directory: example/flex_test_host
+        run: |
+          root=$(python3 -c "import json, urllib.parse; print([urllib.parse.urlparse(p['rootUri']).path for p in json.load(open('.dart_tool/package_config.json'))['packages'] if p['name'] == 'flutter_litert_flex'][0])")
+          echo "path=$root/linux/libtensorflowlite_flex-linux.so" >> "$GITHUB_OUTPUT"
+
+      - name: Cache FlexDelegate library (Linux)
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.flex-linux.outputs.path }}
+          key: flex-delegate-linux-${{ hashFiles('example/flex_test_host/pubspec.lock') }}
 
       - name: Run Flex addon integration tests
         working-directory: example/flex_test_host
