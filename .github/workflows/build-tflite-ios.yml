@@ -25,13 +25,16 @@ name: Build TFLite C and Metal xcframeworks (iOS)
 # Every output is compared with the published binary it replaces (archs,
 # platform and minimum OS, embedded TF version, exported symbol diff, headers),
 # and the podspec's nmedit hide list is checked against the new TensorFlowLiteC.
+# The references are the frameworks flutter_litert ships today (release
+# tflite-ios-v2.21.0); the 2.21.0 build itself was checked against the 2.20.0
+# releases above.
 # Outputs are Actions artifacts with .sha256 files. No release is created.
 
 on:
   workflow_dispatch:
     inputs:
       metal_transpose_conv_v4:
-        description: 'Apply patches/gpu_transpose_conv_v4.patch to the Metal delegate (2.20.0 did not)'
+        description: 'Apply patches/gpu_transpose_conv_v4.patch to the Metal delegate (the published 2.20.0 and 2.21.0 builds did not)'
         required: false
         default: false
         type: boolean
@@ -54,8 +57,8 @@ env:
   TF_VERSION: v2.21.0
   EXPECTED_TF_VERSION: 2.21.0
   BAZEL_VERSION: 7.7.0
-  REF_PODS_ZIP_URL: https://github.com/hugocornellier/flutter_litert/releases/download/libs-v0.1.9/ios-frameworks.zip
-  REF_SPM_BASE_URL: https://github.com/hugocornellier/flutter_litert/releases/download/flex-v1.1.1
+  REF_PODS_ZIP_URL: https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0/ios-frameworks.zip
+  REF_SPM_BASE_URL: https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0
 
 jobs:
   plan:
@@ -257,7 +260,7 @@ jobs:
           name: TensorFlowLiteCCoreML-ios-xcframework
           path: ~/coreml
 
-      - name: Download the published 2.20.0 references
+      - name: Download the published references
         run: |
           mkdir -p ~/ref/pods ~/ref/spm
           curl -fsSL -o ~/ref/ios-frameworks.zip "$REF_PODS_ZIP_URL"
@@ -287,7 +290,7 @@ jobs:
           mkdir -p ~/out/verify
           cp ~/raw/build-info-*.txt ~/raw/inspect-*.txt ~/out/verify/ 2>/dev/null || true
 
-      - name: Compare with the published 2.20.0 frameworks
+      - name: Compare with the published frameworks
         id: compare
         continue-on-error: true
         run: |
@@ -308,7 +311,7 @@ jobs:
               2>&1 | tee ~/out/verify/compare-pods-TensorFlowLiteCCoreML.txt || status=1
           fi
           {
-            echo '### Comparison with libs-v0.1.9 (pods) and flex-v1.1.1 (spm)'
+            echo '### Comparison with the published tflite-ios-v2.21.0 frameworks'
             echo '```'
             grep -h -E '^(#####|=== slice|archs|size|--- .*\[|build version|global symbols|added|removed|version strings|Headers|Modules|bundle|RESULT|FAIL)' ~/out/verify/compare-*.txt
             echo '```'

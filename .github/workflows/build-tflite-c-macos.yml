@@ -49,7 +49,7 @@ permissions:
 env:
   BAZEL_VERSION: 7.7.0
   TF_REF: ${{ inputs.tf_ref || 'v2.21.0' }}
-  # Same floors as the 2.20.0 dylib this replaces: arm64 minos 14.5,
+  # Same floors as the 2.20.0 and 2.21.0 dylibs: arm64 minos 14.5,
   # x86_64 LC_VERSION_MIN_MACOSX 10.11.
   ARM64_MIN_MACOS: '14.5'
   X86_64_MIN_MACOS: '10.11'
@@ -279,7 +279,7 @@ jobs:
             echo "Rosetta not available; x86_64 slice was smoke-tested natively in the x86_64 job"
           fi
 
-      - name: Compare with the committed 2.20.0 dylib
+      - name: Compare with the committed dylib
         run: |
           set -o pipefail
           sh scripts/compare_macos_dylib.sh out/libtensorflowlite_c-mac.dylib \

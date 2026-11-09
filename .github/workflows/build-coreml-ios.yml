@@ -16,7 +16,7 @@ name: Build patched TFLite CoreML xcframework (iOS)
 # Neural Engine; actual ANE behavior must be tested on physical hardware.
 #
 # The output is an Actions artifact: the xcframework zip with a .sha256 file
-# next to it, plus the comparison against the published coreml-ios-v1.1.0
+# next to it, plus the comparison against the published coreml-ios-v1.2.0
 # xcframework. This workflow creates no release; hosting is a separate step.
 # The same zip serves both consumers: the podspec takes the xcframework from
 # ios-frameworks.zip, and Package.swift uses it as
@@ -38,7 +38,7 @@ jobs:
       TF_VERSION: v2.21.0
       EXPECTED_TF_VERSION: 2.21.0
       BAZEL_VERSION: 7.7.0
-      REF_ZIP_URL: https://github.com/hugocornellier/flutter_litert/releases/download/coreml-ios-v1.1.0/TensorFlowLiteCCoreML-spm.xcframework.zip
+      REF_ZIP_URL: https://github.com/hugocornellier/flutter_litert/releases/download/coreml-ios-v1.2.0/TensorFlowLiteCCoreML-spm.xcframework.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -271,7 +271,7 @@ jobs:
 
       # A failed comparison still uploads the artifact (for inspection) and then
       # fails the job in the last step.
-      - name: Compare with the published coreml-ios-v1.1.0 xcframework
+      - name: Compare with the published coreml-ios-v1.2.0 xcframework
         id: compare
         continue-on-error: true
         run: |
