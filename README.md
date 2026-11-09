@@ -1073,7 +1073,7 @@ for (var i = 0; i < count; i++) {
 }
 ```
 
-Use `resetVariableTensors()` to reset all trainable weights to their initial values (as defined in the `.tflite` file).
+`resetVariableTensors()` sets every variable tensor to zero (an int8 tensor to its quantization zero point), the state `allocateTensors()` also leaves them in. It does not restore values from the `.tflite` file: LiteRT's reset only zeroes the memory. To get the model's values back, close the interpreter and create a new one from the model.
 
 #### Checkpoint-based persistence (save/restore)
 

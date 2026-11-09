@@ -136,7 +136,8 @@ class Interpreter {
     'Interpreter.getOutputIndex is not supported on this platform',
   );
 
-  // Resets all variable tensors to the default value
+  /// Sets every variable tensor to zero on native platforms; it does not
+  /// restore values from the `.tflite` file. Throws [UnsupportedError] here.
   void resetVariableTensors() => throw UnsupportedError(
     'Interpreter.resetVariableTensors is not supported on this platform',
   );
