@@ -94,16 +94,17 @@ before upgrading an Android app.
 
 Measured with the 29-model matrix on Firebase Test Lab (Pixel 9 Pro, Galaxy
 S23, Galaxy A56), comparing the Android `Interpreter` on LiteRT 2.3.2 with
-1.4.2. These are median latencies from single runs per device, not controlled
+1.4.2. Each figure is the median, across models, of the change in each model's
+median (p50) latency. They come from single runs per device, not controlled
 benchmarks.
 
-* **Plain CPU (no delegate) is faster.** Median latency fell by about 83% on
-  the Pixel 9 Pro, 48% on the Galaxy S23, and 51% on the Galaxy A56. The
-  exception is `yolov8n` on CPU, which was 13 to 17% slower on the two Samsung
-  phones.
-* **XNNPACK is about the same:** -1% on the Pixel 9 Pro and the Galaxy A56,
-  +8% on one Galaxy S23 run. The cat and dog face landmark models are the
-  exception, 45 to 61% faster on XNNPACK.
+* **Plain CPU (no delegate) is faster.** Latency fell by about 83% on the
+  Pixel 9 Pro, 48% on the Galaxy S23, and 51% on the Galaxy A56. The exception
+  is `yolov8n` on CPU, which was 13 to 17% slower on the two Samsung phones.
+* **XNNPACK is about the same:** -5% to +4% against the 1.4.2 results, with
+  one Galaxy S23 run 8% slower than a later 1.4.2 run on the same device. The
+  cat and dog face landmark models are the exception, 45 to 61% faster on
+  XNNPACK.
 * **The Interpreter GPU is gone on Android**, so models that were fastest on it
   now run on `CompiledModel` GPU, XNNPACK, or CPU. See step 3 below.
 
