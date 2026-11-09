@@ -429,11 +429,14 @@ static and unfused.
   auto-mode (XNNPACK delegate, `numThreads = min(4, nproc)` = 4, `QS8|QU8`).
   `tf.lite` Python is a third runtime again and ranks these graphs differently from
   both dylibs; do not mix them.
-- `TfLiteXNNPackDelegateOptionsDefault` writes **more than the 48 bytes** the Dart
-  bindings declare. Handing it a 48-byte buffer corrupts the caller's stack and
-  segfaults on return. Over-allocate. This dylib also defaults
-  `weight_cache_file_descriptor` to -1, where `XNNPackDelegateOptions` in Dart
-  leaves it 0 via `calloc`; worth confirming that is intentional.
+- `TfLiteXNNPackDelegateOptionsDefault` writes **more than the 48 bytes** this
+  ctypes harness first declared. Handing it a 48-byte buffer corrupts the caller's
+  stack and segfaults on return. Over-allocate. (The Dart bindings declare the full
+  struct: 64 bytes on 64-bit hosts since 4.0.0, which matches LiteRT 2.3.2.) This
+  dylib also defaults `weight_cache_file_descriptor` to -1, where
+  `XNNPackDelegateOptions` in Dart leaves it 0 via `calloc`. That is harmless: the
+  delegate only uses the descriptor when it is `> 0` (LiteRT v2.3.2
+  `xnnpack_delegate.cc:699`).
 - Timing cannot detect a no-op delegate. Use `dev != 0.0`. Conversely `dev != 0.0`
   does not mean *fully* delegated, as finding 2 shows: 123 of 279 ops was enough to
   register as engaged.
