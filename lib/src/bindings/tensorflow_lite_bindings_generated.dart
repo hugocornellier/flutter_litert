@@ -5644,6 +5644,12 @@ final class TfLiteXNNPackDelegateOptions extends ffi.Struct {
   /// the weight cache will only be loaded from this if `weights_cache` is
   /// undefined.
   external ffi.Pointer<ffi.Void> weight_cache_provider;
+
+  /// Whether to memory lock the weight cache. This is only supported on systems
+  /// that support memory locking and will only work if the weight cache is
+  /// memory mapped. This flag only if `weights_cache` is undefined.
+  @ffi.Bool()
+  external bool weight_cache_lock_memory;
 }
 
 const int TFLITE_XNNPACK_DELEGATE_FLAG_QS8 = 1;
