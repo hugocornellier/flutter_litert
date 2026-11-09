@@ -28,6 +28,12 @@ before upgrading an Android app.
   Raise the app's `minSdk` to 24. `tools:overrideLibrary` does not help: the
   build then succeeds, but LiteRT cannot load below API 24. The bundled
   minimum was 21 in 3.10.x.
+* **The iOS minimum is now 15.0** (it was 13.0), for both CocoaPods and Swift
+  Package Manager. The new `LiteRt` and `LiteRtMetalAccelerator` frameworks
+  are built for iOS 15.0 (LiteRT's own minimum) and load at app launch, so an
+  app with a lower target could not run them. Raise the app's
+  `IPHONEOS_DEPLOYMENT_TARGET`, and for CocoaPods `platform :ios, '15.0'` in
+  `ios/Podfile`.
 * **Removed: `GpuDelegateV2`, `GpuDelegateOptionsV2`, and the
   `TfLiteGpuInferenceUsage`, `TfLiteGpuInferencePriority`, and
   `TfLiteGpuExperimentalFlags` enums.** They were the Android GL/CL GPU
@@ -91,7 +97,6 @@ before upgrading an Android app.
   v2.3.2 source.
 * iOS `CompiledModel`: a runtime built from the LiteRT v2.3.2 source tag and
   Google's 2.3.0 Metal accelerator, shipped as release `litert-ios-v2.0.0`.
-  `CompiledModel` needs iOS 15.0 or later.
 * Core ML NPU acceleration on iOS and macOS is now registered so that LiteRT
   2.3.x applies it to regular `.tflite` models.
 * The Core ML NPU path (`Accelerator.npu`) needs iOS 16 or newer and macOS 14
@@ -100,8 +105,7 @@ before upgrading an Android app.
   macOS 13. The iOS bridge now checks the OS before it registers the
   accelerator, so on iOS 15 strict `{npu}` throws an `UnsupportedError` and
   `{npu, cpu}` drops the NPU and runs on CPU. Before, an iOS 15 device passed
-  the Core ML framework's iOS 13 check. The general iOS deployment target is
-  unchanged.
+  the Core ML framework's iOS 13 check.
 * The Play services runtime (`play-services-litert` 17.0.0) is unchanged.
 * The example app builds with Kotlin 2.4.0.
 

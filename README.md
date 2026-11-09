@@ -1816,7 +1816,8 @@ for when you want to control rotation or share one frame across detectors.
 
 ## Platform support
 
-iOS requires **iOS 13.0 or newer** for both CocoaPods and Swift Package Manager.
+iOS requires **iOS 15.0 or newer** for both CocoaPods and Swift Package Manager.
+The bundled LiteRT frameworks are built for iOS 15.0 and load at app launch.
 If your Xcode SDK requires a newer deployment target, raise the app's
 `IPHONEOS_DEPLOYMENT_TARGET` for every build configuration. CocoaPods apps must
 also raise `platform :ios, '…'` in `ios/Podfile` and run `pod install` again.
@@ -1873,7 +1874,7 @@ flutter_litert bundles one native runtime per API on most platforms. The classic
 
 Bundling:
 - Android: the runtime comes from Google's official Maven AARs (`com.google.ai.edge.litert`), extracted automatically by Gradle. The plugin takes `libLiteRt.so` for `arm64-v8a`, `armeabi-v7a`, and `x86_64` from the `litert` 2.3.2 AAR, and `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64` from the `litert-gpu` 2.3.2 AAR. The `Interpreter` and `CompiledModel` both load that one `libLiteRt.so`. 32-bit `x86` is not packaged, and `minSdk` is 24. The AARs' Java classes are not added to the app. SoC-specific NPU runtimes remain app-provided.
-- iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` and `LiteRtMetalAccelerator` xcframeworks (release `litert-ios-v2.0.0`, the same files for SPM and CocoaPods): the runtime is built from the LiteRT v2.3.2 source tag with LiteRT's runtime-only export list, and the Metal accelerator is Google's v2.3.0 release build. CompiledModel needs iOS 15.0 or later.
+- iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` and `LiteRtMetalAccelerator` xcframeworks (release `litert-ios-v2.0.0`, the same files for SPM and CocoaPods): the runtime is built from the LiteRT v2.3.2 source tag with LiteRT's runtime-only export list, and the Metal accelerator is Google's v2.3.0 release build. Both are built for iOS 15.0, which is the plugin's minimum.
 - macOS: the Interpreter is the prebuilt TensorFlow Lite C library; CompiledModel is the `libLiteRt` and `libLiteRtMetalAccelerator` pair from the official `ai-edge-litert` 2.3.0 wheel (LiteRT 2.3.2 ships no new macOS binaries), plus a Core ML NPU delegate built from the LiteRT v2.3.2 source; all bundled via CocoaPods or SPM.
 - Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake; CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.3.0 wheel, bundled via CMake.
 - Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.6.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).
