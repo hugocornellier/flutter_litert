@@ -29,6 +29,45 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE PkgConfig::GTK)
 # Build the TFLite custom ops library (e.g., Convolution2DTransposeBias for MediaPipe)
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_BINARY_DIR}/custom_ops")
 
+# Every prebuilt library in linux/lib is x86_64 only, so they are bundled (and
+# the accelerator downloaded) only for an x86_64 target. The Flutter tool
+# always passes the target as FLUTTER_TARGET_PLATFORM (linux-x64, linux-arm64,
+# linux-riscv64). It cross-builds by setting the compiler target, without a
+# toolchain file, so CMAKE_SYSTEM_PROCESSOR is then the build host's processor
+# and is used only when CMake is run without the Flutter tool.
+if(NOT "${FLUTTER_TARGET_PLATFORM}" STREQUAL "")
+  set(FLUTTER_LITERT_TARGET_ARCH "${FLUTTER_TARGET_PLATFORM}")
+  if(FLUTTER_TARGET_PLATFORM STREQUAL "linux-x64")
+    set(FLUTTER_LITERT_TARGET_IS_X86_64 TRUE)
+  else()
+    set(FLUTTER_LITERT_TARGET_IS_X86_64 FALSE)
+  endif()
+else()
+  set(FLUTTER_LITERT_TARGET_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    set(FLUTTER_LITERT_TARGET_IS_X86_64 TRUE)
+  else()
+    set(FLUTTER_LITERT_TARGET_IS_X86_64 FALSE)
+  endif()
+endif()
+
+# ON (the default) bundles this plugin's CompiledModel runtime: libLiteRt.so
+# and the WebGPU accelerator. An app that ships another copy of the LiteRT
+# runtime under the same file names (LiteRT-LM does) can turn it OFF, so the
+# files are neither downloaded nor bundled. The TensorFlow Lite C library
+# (Interpreter) and the custom ops library are bundled in both settings.
+# An app sets it in its own linux/CMakeLists.txt, before the line
+# include(flutter/generated_plugins.cmake):
+#   set(FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME OFF)
+# CMP0077 (CMake 3.13) makes option() keep that plain variable; this file's
+# minimum version of 3.10 would otherwise leave the policy unset.
+if(POLICY CMP0077)
+  cmake_policy(SET CMP0077 NEW)
+endif()
+option(FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME
+  "Bundle flutter_litert's CompiledModel runtime (libLiteRt and the WebGPU accelerator)"
+  ON)
+
 # The WebGPU GPU accelerator (~18 MB) is fetched at build time from a GitHub
 # release rather than bundled in the published pub.dev package, which must stay
 # under the 100 MiB limit. Downloaded (verified by SHA-256) only if it is not
@@ -63,35 +102,45 @@ function(flutter_litert_fetch_lib path url sha)
   message(FATAL_ERROR "flutter_litert: could not download ${url}")
 endfunction()
 
-flutter_litert_fetch_lib(
-  "${CMAKE_CURRENT_SOURCE_DIR}/lib/libLiteRtWebGpuAccelerator.so"
-  "https://github.com/hugocornellier/flutter_litert/releases/download/litert-desktop-gpu-v2.3.0/libLiteRtWebGpuAccelerator.so"
-  "b67f193ae6eb8ad3a15349f54aba696c97d6f981c92bc2eb1096cbe9e2835b25")
-
-set(flutter_tflite_bundled_libraries
+# The custom ops library is built from source, so it is bundled for every
+# architecture.
+set(flutter_litert_bundled_libraries
   "$<TARGET_FILE:tflite_custom_ops>"
-  "${CMAKE_CURRENT_SOURCE_DIR}/lib/libtensorflowlite_c-linux.so"
-  # LiteRT Next runtime (CompiledModel API) + WebGPU/Vulkan GPU accelerator,
-  # x86_64; from the official ai-edge-litert 2.3.0 PyPI wheel. The runtime
-  # discovers the accelerator by scanning its own directory for the bare
-  # soname, so both must land in the same bundled lib/ dir.
-  "${CMAKE_CURRENT_SOURCE_DIR}/lib/libLiteRt.so"
-  "${CMAKE_CURRENT_SOURCE_DIR}/lib/libLiteRtWebGpuAccelerator.so"
 )
+
+if(FLUTTER_LITERT_TARGET_IS_X86_64)
+  list(APPEND flutter_litert_bundled_libraries
+    "${CMAKE_CURRENT_SOURCE_DIR}/lib/libtensorflowlite_c-linux.so"
+  )
+  if(FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME)
+    flutter_litert_fetch_lib(
+      "${CMAKE_CURRENT_SOURCE_DIR}/lib/libLiteRtWebGpuAccelerator.so"
+      "https://github.com/hugocornellier/flutter_litert/releases/download/litert-desktop-gpu-v2.3.0/libLiteRtWebGpuAccelerator.so"
+      "b67f193ae6eb8ad3a15349f54aba696c97d6f981c92bc2eb1096cbe9e2835b25")
+    list(APPEND flutter_litert_bundled_libraries
+      # LiteRT Next runtime (CompiledModel API) + WebGPU/Vulkan GPU accelerator,
+      # x86_64; from the official ai-edge-litert 2.3.0 PyPI wheel. The runtime
+      # discovers the accelerator by scanning its own directory for the bare
+      # soname, so both must land in the same bundled lib/ dir.
+      "${CMAKE_CURRENT_SOURCE_DIR}/lib/libLiteRt.so"
+      "${CMAKE_CURRENT_SOURCE_DIR}/lib/libLiteRtWebGpuAccelerator.so"
+    )
+  else()
+    message(STATUS "flutter_litert: FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME is OFF; not bundling libLiteRt.so or libLiteRtWebGpuAccelerator.so")
+  endif()
+else()
+  message(WARNING
+    "flutter_litert: no native runtime is available for ${FLUTTER_LITERT_TARGET_ARCH}. "
+    "The prebuilt TensorFlow Lite C library (Interpreter) and the LiteRT runtime "
+    "and WebGPU accelerator (CompiledModel) are x86_64 only, so none of them is "
+    "bundled. The app still builds. At run time Interpreter and CompiledModel "
+    "throw UnsupportedError unless the app provides the libraries itself.")
+endif()
 
 # Flutter's generated_plugins.cmake references plugins by their directory name
 # (flutter_litert), not by PROJECT_NAME (flutter_tflite). Set both to ensure
-# the custom ops library gets bundled.
-set(flutter_litert_bundled_libraries
-  "$<TARGET_FILE:tflite_custom_ops>"
-  "${CMAKE_CURRENT_SOURCE_DIR}/lib/libtensorflowlite_c-linux.so"
-  # LiteRT Next runtime (CompiledModel API) + WebGPU/Vulkan GPU accelerator,
-  # x86_64; from the official ai-edge-litert 2.3.0 PyPI wheel. The runtime
-  # discovers the accelerator by scanning its own directory for the bare
-  # soname, so both must land in the same bundled lib/ dir.
-  "${CMAKE_CURRENT_SOURCE_DIR}/lib/libLiteRt.so"
-  "${CMAKE_CURRENT_SOURCE_DIR}/lib/libLiteRtWebGpuAccelerator.so"
-)
+# the libraries get bundled.
+set(flutter_tflite_bundled_libraries ${flutter_litert_bundled_libraries})
 
 set(flutter_tflite_bundled_libraries ${flutter_tflite_bundled_libraries} PARENT_SCOPE)
 set(flutter_litert_bundled_libraries ${flutter_litert_bundled_libraries} PARENT_SCOPE)

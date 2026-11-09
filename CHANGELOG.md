@@ -28,6 +28,33 @@ without a recent Visual C++ runtime. Android (LiteRT 2.3.2) and every
   whose flex delegate is rebuilt at 2.21.0. Use `flutter_litert_flex` 2.0.0
   with 4.0.x.
 
+### Desktop builds
+
+* Linux and Windows: new CMake option `FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME`,
+  `ON` by default. `OFF` stops the plugin from downloading and bundling its
+  `CompiledModel` runtime: `libLiteRt` and the WebGPU accelerator, plus
+  `dxcompiler.dll` and `dxil.dll` on Windows. That is an 18.9 MB download and
+  27 MB of bundle on Linux, and a 50 MB download and 57 MB of bundle on
+  Windows. It is for apps that ship another copy of the LiteRT runtime under
+  the same file names, as LiteRT-LM does: that copy overwrites the plugin's
+  files in the app bundle anyway. The `Interpreter` library, the custom ops
+  library, and `vcruntime140_threads.dll` on Windows are bundled in both
+  settings. An app sets it in its own `linux/CMakeLists.txt` and
+  `windows/CMakeLists.txt`, before `include(flutter/generated_plugins.cmake)`:
+
+  ```cmake
+  set(FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME OFF)
+  ```
+
+  See [Linux and Windows build options](README.md#linux-and-windows-build-options).
+* Linux: the prebuilt libraries are x86_64 only, and the plugin now bundles
+  them (and downloads the accelerator) only when the target is x86_64. Until
+  now a Linux arm64 app got the x86_64 `libtensorflowlite_c-linux.so`,
+  `libLiteRt.so`, and `libLiteRtWebGpuAccelerator.so` in its bundle, none of
+  which can load there. On other architectures the plugin still
+  builds, bundles only the custom ops library, and prints a CMake warning that
+  no native runtime is available.
+
 ### Fixes
 
 * Windows: `CompiledModel` failed to load (error 126) on machines without a

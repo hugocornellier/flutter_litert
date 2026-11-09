@@ -1884,13 +1884,30 @@ Bundling:
 - Android: the runtime comes from Google's official Maven AARs (`com.google.ai.edge.litert`), extracted automatically by Gradle. The plugin takes `libLiteRt.so` for `arm64-v8a`, `armeabi-v7a`, and `x86_64` from the `litert` 2.3.2 AAR, and `libLiteRtClGlAccelerator.so` by default for `arm64-v8a` and `x86_64` from the `litert-gpu` 2.3.2 AAR. The `Interpreter` and `CompiledModel` both load that one `libLiteRt.so`. 32-bit `x86` is not packaged, and `minSdk` is 24. The AARs' Java classes are not added to the app. SoC-specific NPU runtimes remain app-provided.
 - iOS: the Interpreter ships as TensorFlowLiteC xcframeworks (SPM remote binary targets, or vendored via CocoaPods); CompiledModel ships as the `LiteRt` and `LiteRtMetalAccelerator` xcframeworks (release `litert-ios-v2.0.0`, the same files for SPM and CocoaPods): the runtime is built from the LiteRT v2.3.2 source tag with LiteRT's runtime-only export list, and the Metal accelerator is Google's v2.3.0 release build. Both are built for iOS 15.0, which is the plugin's minimum.
 - macOS: the Interpreter is the prebuilt TensorFlow Lite C library; CompiledModel is the `libLiteRt` and `libLiteRtMetalAccelerator` pair from the official `ai-edge-litert` 2.3.0 wheel (LiteRT 2.3.2 ships no new macOS binaries), plus a Core ML NPU delegate built from the LiteRT v2.3.2 source; all bundled via CocoaPods or SPM.
-- Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake; CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.3.0 wheel, bundled via CMake.
+- Windows, Linux: the Interpreter is the prebuilt TensorFlow Lite C library bundled via CMake; CompiledModel is the `libLiteRt` library from the official `ai-edge-litert` 2.3.0 wheel, bundled via CMake. Both are x86_64 only. See [Linux and Windows build options](#linux-and-windows-build-options) for Linux arm64 and for leaving the CompiledModel runtime out of the bundle.
 - Windows runtime DLLs: since 4.1.0 the Interpreter library (`libtensorflowlite_c-win.dll`) is built with the static C runtime (`/MT`). It imports only `KERNEL32.dll` and needs no Visual C++ redistributable. Google's `libLiteRt.dll` imports `vcruntime140_threads.dll`, which many machines do not have, so the plugin bundles that file next to it. It is Microsoft's unmodified redistributable file from the Visual C++ 2022 redistributable (`Microsoft.VC143.CRT`, version 14.44.35211.0). Without it, `CompiledModel` fails to load on those machines with error 126. `tflite_custom_ops.dll` still uses the dynamic C runtime.
 - Web: the Interpreter runs on LiteRT.js (`@litertjs/core@2.6.0`, auto-loaded by `LiteRtInterpreter`) or TFLite.js (`tflite-js@v0.0.1-alpha.10`, loaded via `initializeWeb()`). CompiledModel runs on that same auto-loaded LiteRT.js runtime through its async API; see [CompiledModel on the web](#compiledmodel-on-the-web).
 
 > Intel Macs only: the iOS simulator is not supported under Swift Package Manager on x86_64. You have two options: test using a real iOS device or switch to CocoaPods to use the simulator. This applies to Intel Macs only.
 
 iOS and macOS will be migrated to LiteRT as official CocoaPods artifacts become available.
+
+### Linux and Windows build options
+
+**Skipping the plugin's `CompiledModel` runtime.** By default the plugin bundles its own LiteRT runtime for `CompiledModel`: `libLiteRt.so` and `libLiteRtWebGpuAccelerator.so` on Linux, and `libLiteRt.dll`, `libLiteRtWebGpuAccelerator.dll`, `dxcompiler.dll`, and `dxil.dll` on Windows. The accelerator and the two DirectX Shader Compiler files are downloaded when CMake configures the app. An app that also ships another package's LiteRT runtime under the same file names (LiteRT-LM does) does not use these copies: Flutter installs native assets after plugin libraries, so the other package's files overwrite them in the app bundle. Such an app can turn the plugin's copies off with the CMake option `FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME` (default `ON`). The plugin's CMake file is pulled in by the app's generated plugin list, so set the option in the app's own `linux/CMakeLists.txt` and `windows/CMakeLists.txt`, above the line that includes that list:
+
+```cmake
+# Do not download or bundle flutter_litert's CompiledModel runtime.
+set(FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME OFF)
+
+# Generated plugin build rules, which manage building the plugins and adding
+# them to the application.
+include(flutter/generated_plugins.cmake)
+```
+
+With `OFF` the plugin skips an 18.9 MB download and 27 MB of bundle on Linux, and a 50 MB download and 57 MB of bundle on Windows. In both settings it bundles the TensorFlow Lite C library used by `Interpreter`, the custom ops library, and on Windows `vcruntime140_threads.dll`, so `Interpreter` is not affected. `CompiledModel` then runs on whatever `libLiteRt` the app bundle contains (`lib/libLiteRt.so` next to the executable on Linux, `libLiteRt.dll` next to the executable on Windows). The plugin does not check that library's version, and it must be compatible with the LiteRT 2.3 C API that the plugin binds. If the bundle has no `libLiteRt`, creating a `CompiledModel` throws `UnsupportedError`. (An app started from its project directory, as `flutter run` and `flutter test` do, can still find the plugin's own `libLiteRt` in the package directory through the loader's development fallback. A deployed app cannot.)
+
+**Linux architectures.** The plugin's prebuilt Linux libraries are x86_64 only, and since 4.1.0 they are bundled only when the target is x86_64. For any other target (for example Linux arm64) the app still builds, the plugin bundles only its custom ops library, which is compiled from source, and CMake prints a warning that no native runtime is available. On such a target `Interpreter` throws `UnsupportedError` when it is first used. `CompiledModel` works only if another package puts a `libLiteRt.so` for that architecture in the bundle's `lib` directory, and throws `UnsupportedError` otherwise.
 
 ### Open-source notices for the Android runtime
 
