@@ -1,0 +1,25 @@
+
+# ---------------------------------------------------------------------------
+# flutter_litert: FlexDelegate external plugin shared library.
+# Appended by scripts/flex_desktop/prepare_tf.sh (@LIB_NAME@ is replaced).
+#
+# Exports tflite_plugin_create_delegate and tflite_plugin_destroy_delegate.
+# Build with:
+#   bazel build -c opt --config=monolithic \
+#     --define=tflite_convert_with_select_tf_ops=true \
+#     --define=with_select_tf_ops=true \
+#     //tensorflow/lite/delegates/flex:@LIB_NAME@
+# ---------------------------------------------------------------------------
+cc_binary(
+    name = "@LIB_NAME@",
+    srcs = ["flex_delegate_plugin.cc"],
+    linkshared = True,
+    local_defines = ["TFL_EXTERNAL_DELEGATE_COMPILE_LIBRARY"],
+    deps = [
+        ":delegate",
+        "//tensorflow/lite/delegates/external:external_delegate_interface",
+        "//tensorflow/lite/delegates/utils:simple_delegate",
+        "//tensorflow/lite:framework",
+        "//tensorflow/lite/core:framework",
+    ],
+)
