@@ -166,3 +166,41 @@ jobs:
           name: windows-crt-proof
           path: proof-out/
           retention-days: 30
+
+  # TEMPORARY: the build-linux steps of flutter-ci.yml, minus
+  # test/flutter_litert_test.dart, whose version expectation (2.20.0) the lead
+  # updates separately. Flex runs informationally only (flex is still 2.20.0).
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure*
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev xvfb
+      - run: flutter config --enable-linux-desktop
+      - run: flutter pub get
+      - name: Run tests (all but the version test)
+        run: |
+          files=$(find test -name '*_test.dart' ! -path test/flutter_litert_test.dart | sort)
+          echo "$files" | wc -l
+          flutter test $files
+      - name: Run CompiledModel integration tests (Linux desktop)
+        working-directory: example
+        run: xvfb-run -a flutter test integration_test/compiled_model_test.dart -d linux --timeout 600s
+      - name: Run Interpreter/CompiledModel coexistence tests (Linux desktop)
+        working-directory: example
+        run: xvfb-run -a flutter test integration_test/interpreter_coexistence_test.dart -d linux --timeout 600s
+      - name: Install Flex integration host dependencies
+        working-directory: example/flex_test_host
+        run: flutter pub get
+      - name: Run Flex addon integration tests (informational)
+        continue-on-error: true
+        working-directory: example/flex_test_host
+        run: xvfb-run -a flutter test -d linux integration_test
