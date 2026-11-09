@@ -6,7 +6,7 @@ require 'digest'
 
 Pod::Spec.new do |s|
   s.name             = 'flutter_litert'
-  s.version          = '4.0.0'
+  s.version          = '4.1.0'
   s.summary          = 'LiteRT (formerly TensorFlow Lite) plugin for Flutter apps.'
   s.description      = <<-DESC
 LiteRT (formerly TensorFlow Lite) plugin for Flutter apps with bundled native
