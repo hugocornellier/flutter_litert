@@ -23,6 +23,12 @@ dev_dependencies:
 dependency_overrides:
   flutter_litert:
     path: ../..
+  # TEMP: test the unpublished flutter_litert_flex 2.1.0 (flex rebuilt at TF
+  # 2.21.0) before it is on pub.dev. Drop this override before merging.
+  flutter_litert_flex:
+    git:
+      url: https://github.com/hugocornellier/flutter_litert_flex.git
+      ref: a363f85ad409473318ea2df4b2fb5203ae1033a3
 
 flutter:
   assets:
