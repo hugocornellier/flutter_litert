@@ -1880,6 +1880,10 @@ Bundling:
 
 iOS and macOS will be migrated to LiteRT as official CocoaPods artifacts become available.
 
+### Open-source notices for the Android runtime
+
+Google's `litert` and `litert-gpu` 2.3.2 AARs carry a `LICENSE` (Apache 2.0) and a `THIRD_PARTY_NOTICE.txt` for the code compiled into `libLiteRt.so` and `libLiteRtClGlAccelerator.so`. Several of those licences (BSD-style ones among them) require the copyright notice to be reproduced with binary redistributions. The plugin extracts only the `.so` files, so it ships both notice files unchanged in [`android/licenses/litert-2.3.2/`](android/licenses/litert-2.3.2/) (the two AARs carry identical copies). An Android app that bundles the plugin's runtime (the default build, or `flutterLitert.runtime=auto`) should include them in its open-source notices. Neither Flutter's `showLicensePage` nor the Android build adds them for you. With `flutterLitert.runtime=playServices` the APK contains no LiteRT runtime from the plugin. An app that packages a Qualcomm NPU runtime should also include the notices from the `litert-npu-runtime-qualcomm` AAR, whose `THIRD_PARTY_NOTICE.txt` differs from these, and from QAIRT.
+
 ## Web support
 
 `flutter_litert` supports Flutter Web with three inference surfaces across two runtimes:
