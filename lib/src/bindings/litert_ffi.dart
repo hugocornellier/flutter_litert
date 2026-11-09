@@ -15,7 +15,6 @@
  */
 
 import 'dart:ffi';
-import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
@@ -99,35 +98,19 @@ final class LiteRtEnvOption extends Struct {
 
 typedef LiteRtOpaquePayloadDeleterNative = Void Function(Pointer<Void>);
 
-// LiteRT 2.1.6 added an environment as the first model-loading argument but
-// kept the same exported symbol names and public API version, so the ABI
-// cannot be probed at runtime. Android (2.2.0), Linux and Windows (2.3.0)
-// bundle runtimes with the environment-aware ABI; the currently bundled Apple
-// runtimes retain the legacy ABI. Present one environment-aware Dart signature
-// to the caller and adapt only at this binding boundary.
-final bool _envAwareModelLoading =
-    Platform.isAndroid || Platform.isLinux || Platform.isWindows;
-
+// Every bundled native runtime is LiteRT 2.3.x, whose model loaders take the
+// environment as their first argument (added in 2.1.6 under the same symbol
+// names).
 int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Pointer<Void>>)
-_bindCreateModelFromFile(DynamicLibrary dylib) {
-  if (_envAwareModelLoading) {
-    return dylib.lookupFunction<
+_bindCreateModelFromFile(DynamicLibrary dylib) =>
+    dylib.lookupFunction<
       Int32 Function(Pointer<Void>, Pointer<Utf8>, Pointer<Pointer<Void>>),
       int Function(Pointer<Void>, Pointer<Utf8>, Pointer<Pointer<Void>>)
     >('LiteRtCreateModelFromFile');
-  }
-  final legacy = dylib
-      .lookupFunction<
-        Int32 Function(Pointer<Utf8>, Pointer<Pointer<Void>>),
-        int Function(Pointer<Utf8>, Pointer<Pointer<Void>>)
-      >('LiteRtCreateModelFromFile');
-  return (_, path, model) => legacy(path, model);
-}
 
 int Function(Pointer<Void>, Pointer<Void>, int, Pointer<Pointer<Void>>)
-_bindCreateModelFromBuffer(DynamicLibrary dylib) {
-  if (_envAwareModelLoading) {
-    return dylib.lookupFunction<
+_bindCreateModelFromBuffer(DynamicLibrary dylib) =>
+    dylib.lookupFunction<
       Int32 Function(
         Pointer<Void>,
         Pointer<Void>,
@@ -136,14 +119,6 @@ _bindCreateModelFromBuffer(DynamicLibrary dylib) {
       ),
       int Function(Pointer<Void>, Pointer<Void>, int, Pointer<Pointer<Void>>)
     >('LiteRtCreateModelFromBuffer');
-  }
-  final legacy = dylib
-      .lookupFunction<
-        Int32 Function(Pointer<Void>, IntPtr, Pointer<Pointer<Void>>),
-        int Function(Pointer<Void>, int, Pointer<Pointer<Void>>)
-      >('LiteRtCreateModelFromBuffer');
-  return (_, buffer, size, model) => legacy(buffer, size, model);
-}
 
 /// Hand-written bindings for the LiteRT Next C API surface used by
 /// [CompiledModel].
