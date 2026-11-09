@@ -1,18 +1,24 @@
 name: Build TFLite Metal GPU dylib (macOS)
 
+# Builds libtensorflowlite_gpu-mac.dylib (arm64) from TensorFlow with
+# patches/gpu_transpose_conv_v4.patch. The output is an Actions artifact with a
+# .sha256 file next to it, compared against the committed dylib it replaces.
+# Hosting and committing the dylib are separate, manual steps.
+
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 360
     env:
-      TF_VERSION: v2.20.0
-      BAZEL_VERSION: 7.4.1
+      TF_VERSION: v2.21.0
+      BAZEL_VERSION: 7.7.0
+      COMMITTED_DYLIB: macos/flutter_litert/Sources/flutter_litert/Resources/libtensorflowlite_gpu-mac.dylib
 
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +31,15 @@ jobs:
             /usr/local/lib/android /usr/local/share/chromium 2>/dev/null || true
           echo "After cleanup:"
           df -h /
+
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          sudo xcode-select -s /Applications/Xcode_16.4.app
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          xcrun --sdk macosx --show-sdk-path
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -40,6 +55,12 @@ jobs:
         run: |
           git clone --depth 1 --branch $TF_VERSION \
             https://github.com/tensorflow/tensorflow.git ~/tf-src
+
+      - name: Re-pin the LLVM source archive checksum
+        run: sh scripts/pin_tf_llvm_archive.sh ~/tf-src
+
+      - name: Patch apple_support so Objective-C compiles get the Xcode env
+        run: sh scripts/patch_tf_apple_support.sh ~/tf-src
 
       - name: Patch GPU delegate to accept TRANSPOSE_CONV v4
         run: |
@@ -60,6 +81,9 @@ jobs:
           CC_OPT_FLAGS="-march=native" \
           python3 configure.py
 
+      # The Objective-C++ compiles (metal/common.mm, coreml_executor.mm) need
+      # the apple_support patch above; without it wrapped_clang fails with
+      # "Error: DEVELOPER_DIR not set". --cpu=darwin_arm64 as in 2.20.0.
       - name: Build Metal GPU dylib (arm64)
         run: |
           cd ~/tf-src
@@ -74,6 +98,13 @@ jobs:
             --jobs=4 \
             //tensorflow/lite/delegates/gpu:tensorflow_lite_gpu_dylib
 
+      - name: Show Bazel's Xcode configuration
+        if: failure()
+        run: |
+          cd ~/tf-src
+          OUTPUT_BASE=$(USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk info output_base)
+          cat "$OUTPUT_BASE/external/local_config_xcode/BUILD" || true
+
       - name: Verify symbols
         run: |
           echo "=== Metal GPU delegate symbols ==="
@@ -86,25 +117,34 @@ jobs:
 
       - name: Rename
         run: |
+          mkdir -p ~/out
           cp ~/tf-src/bazel-bin/tensorflow/lite/delegates/gpu/tensorflow_lite_gpu_dylib.dylib \
-            ~/libtensorflowlite_gpu-mac.dylib
+            ~/out/libtensorflowlite_gpu-mac.dylib
+
+      - name: Compare with the committed dylib
+        run: |
+          set -o pipefail
+          sh scripts/compare_macos_dylib.sh ~/out/libtensorflowlite_gpu-mac.dylib \
+            "$COMMITTED_DYLIB" ~/out/compare 2>&1 | tee ~/out/compare.txt
+          cat ~/out/compare.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checksum and build info
+        run: |
+          cd ~/out
+          shasum -a 256 libtensorflowlite_gpu-mac.dylib > libtensorflowlite_gpu-mac.dylib.sha256
+          {
+            echo "tf_ref: $TF_VERSION"
+            echo "tf_commit: $(git -C ~/tf-src rev-parse HEAD)"
+            echo "patches: gpu_transpose_conv_v4.patch"
+            echo "bazel: $BAZEL_VERSION"
+            echo "runner: $(sw_vers -productVersion) $(xcodebuild -version | head -1)"
+          } > build-info.txt
+          cat build-info.txt libtensorflowlite_gpu-mac.dylib.sha256
+          stat -f "size %z" libtensorflowlite_gpu-mac.dylib
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: libtensorflowlite_gpu-mac
-          path: ~/libtensorflowlite_gpu-mac.dylib
-          retention-days: 30
-
-      - name: Create release and upload
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create metal-v1.0.0 \
-            --title "Metal GPU Delegate v1.0.0 (macOS arm64)" \
-            --notes "Metal GPU delegate dylib for macOS (arm64 only). Built from TensorFlow v2.20.0." \
-            --repo ${{ github.repository }} || true
-          gh release upload metal-v1.0.0 \
-            ~/libtensorflowlite_gpu-mac.dylib \
-            --repo ${{ github.repository }} \
-            --clobber
+          path: ~/out/
+          if-no-files-found: error

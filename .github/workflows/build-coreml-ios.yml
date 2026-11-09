@@ -1,7 +1,7 @@
 name: Build patched TFLite CoreML xcframework (iOS)
 
-# Builds TensorFlowLiteCCoreML for iOS from TensorFlow v2.20.0 with two
-# flutter_litert patches:
+# Builds TensorFlowLiteCCoreML for iOS from TensorFlow (TF_VERSION below) with
+# two flutter_litert patches:
 #
 # 1. coreml_mean_padding.patch sets the required padding oneof for global MEAN
 #    pooling. Without it, Core ML rejects MobileNetV3/EfficientNet-style graphs
@@ -14,20 +14,31 @@ name: Build patched TFLite CoreML xcframework (iOS)
 # The result contains an arm64 device slice and a universal arm64+x86_64
 # simulator slice. A simulator validates packaging and inference but has no
 # Neural Engine; actual ANE behavior must be tested on physical hardware.
+#
+# The output is an Actions artifact: the xcframework zip with a .sha256 file
+# next to it, plus the comparison against the published coreml-ios-v1.1.0
+# xcframework. This workflow creates no release; hosting is a separate step.
+# The same zip serves both consumers: the podspec takes the xcframework from
+# ios-frameworks.zip, and Package.swift uses it as
+# TensorFlowLiteCCoreML-spm.xcframework.zip (universal simulator slice).
+# build-tflite-ios.yml calls this workflow to assemble ios-frameworks.zip.
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 360
     env:
-      TF_VERSION: v2.20.0
-      BAZEL_VERSION: 7.4.1
+      TF_VERSION: v2.21.0
+      EXPECTED_TF_VERSION: 2.21.0
+      BAZEL_VERSION: 7.7.0
+      REF_ZIP_URL: https://github.com/hugocornellier/flutter_litert/releases/download/coreml-ios-v1.1.0/TensorFlowLiteCCoreML-spm.xcframework.zip
 
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +51,21 @@ jobs:
             /usr/local/lib/android /usr/local/share/chromium 2>/dev/null || true
           echo "After cleanup:"
           df -h /
+
+      # The 2.20.0 TensorFlowLiteC and Metal xcframeworks were built with the
+      # iOS 18.2 SDK (Xcode 16.2). Use that Xcode when the image still has it,
+      # else the closest 16.x, else the image default.
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          for v in 16.2 16.3 16.4 16.1; do
+            if [ -d "/Applications/Xcode_$v.app" ]; then
+              sudo xcode-select -s "/Applications/Xcode_$v.app"
+              break
+            fi
+          done
+          xcodebuild -version
+          echo "iphoneos SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -55,6 +81,12 @@ jobs:
         run: |
           git clone --depth 1 --branch $TF_VERSION \
             https://github.com/tensorflow/tensorflow.git ~/tf-src
+
+      - name: Re-pin the LLVM source archive checksum
+        run: sh scripts/pin_tf_llvm_archive.sh ~/tf-src
+
+      - name: Patch apple_support so Objective-C compiles get the Xcode env
+        run: sh scripts/patch_tf_apple_support.sh ~/tf-src
 
       - name: Apply flutter_litert Core ML patches
         run: |
@@ -115,7 +147,7 @@ jobs:
           # BUILD.apple -> BUILD for every path in APPLE_BAZEL_FILES, which includes
           # tensorflow/lite/ios/BUILD. Without it bazel reports
           # "no such package 'tensorflow/lite/ios': BUILD file not found", because
-          # v2.20.0 ships only BUILD.apple there.
+          # v2.20.0 and v2.21.0 ship only BUILD.apple there.
           PYTHON_BIN_PATH=$(which python3) \
           TF_NEED_CUDA=0 TF_NEED_ROCM=0 TF_NEED_TENSORRT=0 \
           TF_CONFIGURE_IOS=1 CC_OPT_FLAGS="-march=native" \
@@ -206,9 +238,9 @@ jobs:
             plutil -insert CFBundleInfoDictionaryVersion -string 6.0 "$framework/Info.plist"
             plutil -insert CFBundleName -string TensorFlowLiteCCoreML "$framework/Info.plist"
             plutil -insert CFBundlePackageType -string FMWK "$framework/Info.plist"
-            plutil -insert CFBundleShortVersionString -string 2.20.0 "$framework/Info.plist"
+            plutil -insert CFBundleShortVersionString -string "$EXPECTED_TF_VERSION" "$framework/Info.plist"
             plutil -insert CFBundleSupportedPlatforms -json "[\"$platform\"]" "$framework/Info.plist"
-            plutil -insert CFBundleVersion -string 2.20.0 "$framework/Info.plist"
+            plutil -insert CFBundleVersion -string "$EXPECTED_TF_VERSION" "$framework/Info.plist"
             plutil -insert MinimumOSVersion -string 13.0 "$framework/Info.plist"
           done
 
@@ -237,14 +269,48 @@ jobs:
 
           plutil -p ~/cm-build/TensorFlowLiteCCoreML.xcframework/Info.plist
 
+      # A failed comparison still uploads the artifact (for inspection) and then
+      # fails the job in the last step.
+      - name: Compare with the published coreml-ios-v1.1.0 xcframework
+        id: compare
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p ~/cm-ref ~/cm-out
+          curl -fsSL -o ~/cm-ref/ref.zip "$REF_ZIP_URL"
+          unzip -q ~/cm-ref/ref.zip -d ~/cm-ref
+          bash scripts/compare_ios_tflite_frameworks.sh \
+            ~/cm-build/TensorFlowLiteCCoreML.xcframework \
+            ~/cm-ref/TensorFlowLiteCCoreML.xcframework \
+            "$EXPECTED_TF_VERSION" ~/cm-out/compare 2>&1 | tee ~/cm-out/compare-coreml.txt
+          { echo '```'; cat ~/cm-out/compare-coreml.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Package xcframework
         run: |
           cd ~/cm-build
-          zip -r TensorFlowLiteCCoreML-ios.xcframework.zip TensorFlowLiteCCoreML.xcframework
+          zip -qry ~/cm-out/TensorFlowLiteCCoreML-ios.xcframework.zip TensorFlowLiteCCoreML.xcframework
+          cd ~/cm-out
+          shasum -a 256 TensorFlowLiteCCoreML-ios.xcframework.zip > TensorFlowLiteCCoreML-ios.xcframework.zip.sha256
+          {
+            echo "tf_ref: $TF_VERSION"
+            echo "tf_commit: $(git -C ~/tf-src rev-parse HEAD)"
+            echo "patches: coreml_mean_padding.patch litert_coreml_npu_ios.patch"
+            echo "bazel: $BAZEL_VERSION"
+            echo "runner: macOS $(sw_vers -productVersion), $(xcodebuild -version | head -1), iphoneos SDK $(xcrun --sdk iphoneos --show-sdk-version)"
+          } > build-info-coreml.txt
+          cat build-info-coreml.txt TensorFlowLiteCCoreML-ios.xcframework.zip.sha256
+          stat -f "size %z" TensorFlowLiteCCoreML-ios.xcframework.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: TensorFlowLiteCCoreML-ios-xcframework
-          path: ~/cm-build/TensorFlowLiteCCoreML-ios.xcframework.zip
+          path: ~/cm-out/
+          if-no-files-found: error
           retention-days: 30
+
+      - name: Fail if the comparison failed
+        if: steps.compare.outcome == 'failure'
+        run: |
+          echo "compare_ios_tflite_frameworks.sh reported FAIL; see compare-coreml.txt"
+          exit 1
