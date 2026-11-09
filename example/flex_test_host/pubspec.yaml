@@ -28,7 +28,7 @@ dependency_overrides:
   flutter_litert_flex:
     git:
       url: https://github.com/hugocornellier/flutter_litert_flex.git
-      ref: a363f85ad409473318ea2df4b2fb5203ae1033a3
+      ref: 1a6536cf301c8aea347cbc494153360951c8e5b1
 
 flutter:
   assets:
