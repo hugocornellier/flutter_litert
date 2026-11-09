@@ -49,6 +49,14 @@ set(FLUTTER_LITERT_GPU_DLL "${CMAKE_CURRENT_SOURCE_DIR}/libLiteRtWebGpuAccelerat
 # to the executable.
 set(FLUTTER_LITERT_DXCOMPILER_DLL "${CMAKE_CURRENT_SOURCE_DIR}/dxcompiler.dll")
 set(FLUTTER_LITERT_DXIL_DLL "${CMAKE_CURRENT_SOURCE_DIR}/dxil.dll")
+# Microsoft's app-local redist copy of vcruntime140_threads.dll (C11 threads,
+# VC++ 14.38+), from Microsoft.VC143.CRT 14.44.35211.0, unmodified (sha256
+# 219915cf20822f34d5e7c1fdd4e21ae7f3396881096c51036225fb8f84b47afa).
+# libLiteRt.dll (CompiledModel) imports it, and it is not among the VC++
+# runtime DLLs Flutter apps deploy app-locally, so PCs without a recent VC++
+# Redistributable would fail to load libLiteRt.dll. libtensorflowlite_c-win.dll
+# is built with the static CRT and needs no VC++ runtime DLL.
+set(FLUTTER_LITERT_VCRUNTIME_THREADS_DLL "${CMAKE_CURRENT_SOURCE_DIR}/vcruntime140_threads.dll")
 
 # The WebGPU GPU accelerator (~30 MB) and DirectX Shader Compiler (~18 MB) are
 # fetched at build time from a GitHub release rather than bundled in the
@@ -103,6 +111,7 @@ set(flutter_tflite_bundled_libraries
   "${FLUTTER_LITERT_GPU_DLL}"
   "${FLUTTER_LITERT_DXCOMPILER_DLL}"
   "${FLUTTER_LITERT_DXIL_DLL}"
+  "${FLUTTER_LITERT_VCRUNTIME_THREADS_DLL}"
   "$<TARGET_FILE:tflite_custom_ops>"
 )
 
@@ -115,6 +124,7 @@ set(flutter_litert_bundled_libraries
   "${FLUTTER_LITERT_GPU_DLL}"
   "${FLUTTER_LITERT_DXCOMPILER_DLL}"
   "${FLUTTER_LITERT_DXIL_DLL}"
+  "${FLUTTER_LITERT_VCRUNTIME_THREADS_DLL}"
   "$<TARGET_FILE:tflite_custom_ops>"
 )
 
