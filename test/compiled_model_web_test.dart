@@ -589,4 +589,139 @@ void main() {
       cm.close();
     });
   });
+
+  // LiteRT.js 2.6.0 takes the WebGPU precision as `gpuOptions.precision`.
+  // These tests stand in a fake `window.LiteRt` that records the options of
+  // every `loadAndCompile` call and compiles each one on the real runtime's
+  // WASM backend, so they run on GPU-less machines too.
+  group('web CompiledModel precision forwarding (network)', () {
+    late JSObject realRoot;
+
+    setUpAll(() async {
+      // Load the real runtime once so the stub can delegate compiles.
+      (await cm_web.CompiledModel.fromBufferAsync(modelBytes)).close();
+      realRoot = globalContext.getProperty<JSObject>('LiteRt'.toJS);
+    });
+
+    tearDown(() {
+      globalContext.setProperty('LiteRt'.toJS, realRoot);
+    });
+
+    /// Installs the recording stub. Each entry is the accelerator and the
+    /// `gpuOptions.precision` of one call (null when no `gpuOptions` was
+    /// sent). With [failGpu], webgpu calls reject instead of compiling.
+    List<(String, String?)> installRecordingRuntime({bool failGpu = false}) {
+      final calls = <(String, String?)>[];
+      final stub = JSObject();
+      stub.setProperty('Tensor'.toJS, realRoot.getProperty('Tensor'.toJS));
+      stub.setProperty(
+        'loadAndCompile'.toJS,
+        ((JSAny bytes, JSObject options) {
+          final accelerator =
+              (options.getProperty('accelerator'.toJS) as JSString).toDart;
+          final gpuOptions = options.getProperty<JSObject?>('gpuOptions'.toJS);
+          final precision = gpuOptions?.getProperty<JSString?>(
+            'precision'.toJS,
+          );
+          calls.add((accelerator, precision?.toDart));
+          if (failGpu && accelerator == 'webgpu') {
+            return Future<JSObject>.error(StateError('stub: no WebGPU')).toJS;
+          }
+          final wasmOptions = JSObject()
+            ..setProperty('accelerator'.toJS, 'wasm'.toJS);
+          return realRoot.callMethod<JSPromise<JSObject>>(
+            'loadAndCompile'.toJS,
+            bytes,
+            wasmOptions,
+          );
+        }).toJS,
+      );
+      globalContext.setProperty('LiteRt'.toJS, stub);
+      return calls;
+    }
+
+    test('an unset precision sends no gpuOptions', () async {
+      final calls = installRecordingRuntime();
+      (await cm_web.CompiledModel.fromBufferAsync(
+        modelBytes,
+        accelerators: const {Accelerator.gpu, Accelerator.cpu},
+      )).close();
+      (await cm_web.CompiledModel.fromBufferWithConfigAsync(
+        modelBytes,
+      )).close();
+      (await cm_web.CompiledModel.fromBufferWithGpuFallbackAsync(
+        modelBytes,
+      )).close();
+      expect(calls, [('webgpu', null), ('webgpu', null), ('webgpu', null)]);
+    });
+
+    test('an explicit precision reaches every WebGPU compile', () async {
+      final calls = installRecordingRuntime();
+      (await cm_web.CompiledModel.fromBufferAsync(
+        modelBytes,
+        accelerators: const {Accelerator.gpu, Accelerator.cpu},
+        precision: Precision.fp16,
+      )).close();
+      (await cm_web.CompiledModel.fromBufferWithConfigAsync(
+        modelBytes,
+        config: const CompiledModelConfig.gpuWithCpuFallback(
+          precision: Precision.fp32,
+        ),
+      )).close();
+      (await cm_web.CompiledModel.fromBufferWithConfigAsync(
+        modelBytes,
+        config: const CompiledModelConfig.auto(precision: Precision.fp16),
+      )).close();
+      (await cm_web.CompiledModel.fromBufferWithGpuFallbackAsync(
+        modelBytes,
+        precision: Precision.fp32,
+      )).close();
+      await expectLater(
+        cm_web.CompiledModel.fromBufferAsync(
+          modelBytes,
+          accelerators: const {Accelerator.gpu},
+          precision: Precision.fp16,
+        ),
+        // The stub resolves on WASM, which a strict request rejects.
+        throwsStateError,
+      );
+      expect(calls, [
+        ('webgpu', 'fp16'),
+        ('webgpu', 'fp32'),
+        ('webgpu', 'fp16'),
+        ('webgpu', 'fp32'),
+        ('webgpu', 'fp16'),
+      ]);
+    });
+
+    test('WASM compiles never send a precision', () async {
+      final calls = installRecordingRuntime(failGpu: true);
+      (await cm_web.CompiledModel.fromBufferAsync(
+        modelBytes,
+        precision: Precision.fp16,
+      )).close();
+      (await cm_web.CompiledModel.fromBufferWithConfigAsync(
+        modelBytes,
+        config: const CompiledModelConfig.cpu(precision: Precision.fp16),
+      )).close();
+      // The WebGPU attempt fails, so the fallback compiles on WASM.
+      (await cm_web.CompiledModel.fromBufferWithGpuFallbackAsync(
+        modelBytes,
+        precision: Precision.fp16,
+      )).close();
+      (await cm_web.CompiledModel.fromBufferAsync(
+        modelBytes,
+        accelerators: const {Accelerator.gpu, Accelerator.cpu},
+        precision: Precision.fp32,
+      )).close();
+      expect(calls, [
+        ('wasm', null),
+        ('wasm', null),
+        ('webgpu', 'fp16'),
+        ('wasm', null),
+        ('webgpu', 'fp32'),
+        ('wasm', null),
+      ]);
+    });
+  });
 }

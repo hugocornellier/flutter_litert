@@ -136,7 +136,7 @@ class CompiledModel {
   static CompiledModel fromBufferWithGpuFallback(
     Uint8List bytes, {
     bool forceCpu = false,
-    Precision precision = Precision.fp32,
+    Precision? precision,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
     void Function(Object error)? onFallback,
   }) {
@@ -154,10 +154,15 @@ class CompiledModel {
   /// model on WASM instead), and `{gpu, cpu}` tries WebGPU first and falls
   /// back to WASM. [Accelerator.npu] is not available on the web.
   ///
-  /// [precision] is accepted for API parity but ignored: LiteRT.js does not
-  /// expose a precision option, so WebGPU kernels run at their default
-  /// precision. [tensorBufferMode] must be [TensorBufferMode.managed];
-  /// host-memory buffers are a native-only concept.
+  /// [precision] is sent to LiteRT.js as `gpuOptions.precision` for the
+  /// WebGPU attempt; WASM has no precision option and ignores it. When
+  /// [precision] is null (the default on the web), no precision is sent and
+  /// LiteRT.js picks fp16 if the GPU supports `shader-f16` and fp32
+  /// otherwise, as in releases before 4.0.0. Pass [Precision.fp32] to match
+  /// the native default. An explicit [Precision.fp16] on a GPU without fp16
+  /// support can fail the WebGPU compile. [tensorBufferMode] must be
+  /// [TensorBufferMode.managed]; host-memory buffers are a native-only
+  /// concept.
   ///
   /// When the set contains both accelerators, the WebGPU attempt is also
   /// bounded by a watchdog: if the LiteRT.js compile promise neither
@@ -171,7 +176,7 @@ class CompiledModel {
   static Future<CompiledModel> fromBufferAsync(
     Uint8List bytes, {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
-    Precision precision = Precision.fp32,
+    Precision? precision,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
   }) {
     // Capture the async request before the first await so caller mutation of a
@@ -180,6 +185,7 @@ class CompiledModel {
     return _fromBufferAsyncImpl(
       bytes,
       accelerators: requested,
+      precision: precision,
       tensorBufferMode: tensorBufferMode,
       requestedAccelerators: requested,
     );
@@ -192,6 +198,9 @@ class CompiledModel {
   /// never selected by Auto. A strict NPU policy is unsupported on the web;
   /// `npuWithCpuFallback` reports that failure through [onFallback] and builds
   /// on WASM.
+  ///
+  /// [CompiledModelConfig.requestedPrecision] is sent for WebGPU attempts as
+  /// in [fromBufferAsync]; when it is unset, LiteRT.js picks the precision.
   static Future<CompiledModel> fromBufferWithConfigAsync(
     Uint8List bytes, {
     CompiledModelConfig config = const CompiledModelConfig.auto(),
@@ -214,6 +223,7 @@ class CompiledModel {
       return await _fromBufferAsyncImpl(
         bytes,
         accelerators: firstAttempt,
+        precision: config.requestedPrecision,
         tensorBufferMode: config.tensorBufferMode,
         requestedAccelerators: primary,
         requestedConfig: config,
@@ -226,6 +236,7 @@ class CompiledModel {
       return _fromBufferAsyncImpl(
         bytes,
         accelerators: fallback,
+        precision: config.requestedPrecision,
         tensorBufferMode: config.tensorBufferMode,
         requestedAccelerators: primary,
         requestedConfig: config,
@@ -237,6 +248,7 @@ class CompiledModel {
   static Future<CompiledModel> _fromBufferAsyncImpl(
     Uint8List bytes, {
     required Set<Accelerator> accelerators,
+    required Precision? precision,
     required TensorBufferMode tensorBufferMode,
     required Set<Accelerator> requestedAccelerators,
     CompiledModelConfig? requestedConfig,
@@ -275,8 +287,8 @@ class CompiledModel {
         // owns a WASM fallback. A strict request surfaces the runtime's own
         // behavior without a synthetic timeout.
         compiled = canFallBack || useGpuCompileWatchdog
-            ? await _compileGpuWithWatchdog(bytes)
-            : await _compile(bytes, 'webgpu');
+            ? await _compileGpuWithWatchdog(bytes, precision)
+            : await _compile(bytes, 'webgpu', gpuPrecision: precision);
         requested = Accelerator.gpu;
       } catch (e) {
         if (!canFallBack) rethrow;
@@ -331,8 +343,11 @@ class CompiledModel {
   /// Callers only use this when they hold a WASM fallback. The abandoned
   /// promise cannot be cancelled; if it settles later, its model is deleted
   /// so a late success cannot leak a WebGPU model.
-  static Future<lrt.CompiledModelJS> _compileGpuWithWatchdog(Uint8List bytes) {
-    final attempt = _compile(bytes, 'webgpu');
+  static Future<lrt.CompiledModelJS> _compileGpuWithWatchdog(
+    Uint8List bytes,
+    Precision? precision,
+  ) {
+    final attempt = _compile(bytes, 'webgpu', gpuPrecision: precision);
     return attempt.timeout(
       debugGpuCompileWatchdog,
       onTimeout: () {
@@ -350,12 +365,20 @@ class CompiledModel {
 
   /// Compiles via LiteRT.js, normalizing failures to [StateError] so web
   /// compile errors carry the same type as native ones.
+  ///
+  /// [gpuPrecision] is only sent for `webgpu`; a null value leaves the
+  /// precision to LiteRT.js.
   static Future<lrt.CompiledModelJS> _compile(
     Uint8List bytes,
-    String accelerator,
-  ) async {
+    String accelerator, {
+    Precision? gpuPrecision,
+  }) async {
     try {
-      return await lrt.loadAndCompile(bytes, accelerator: accelerator);
+      return await lrt.loadAndCompile(
+        bytes,
+        accelerator: accelerator,
+        gpuPrecision: accelerator == 'webgpu' ? gpuPrecision?.name : null,
+      );
     } on StateError {
       rethrow;
     } catch (e) {
@@ -372,11 +395,12 @@ class CompiledModel {
   /// the 60-second compile watchdog, so callers always get a working model.
   /// Pass [forceCpu] to skip the WebGPU attempt. [onFallback] is invoked
   /// with the WebGPU error ([TimeoutException] for a watchdog abandonment)
-  /// when the WASM retry happens.
+  /// when the WASM retry happens. [precision] behaves as in
+  /// [fromBufferAsync]: null leaves the WebGPU precision to LiteRT.js.
   static Future<CompiledModel> fromBufferWithGpuFallbackAsync(
     Uint8List bytes, {
     bool forceCpu = false,
-    Precision precision = Precision.fp32,
+    Precision? precision,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
     void Function(Object error)? onFallback,
   }) {

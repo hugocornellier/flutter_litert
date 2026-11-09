@@ -298,7 +298,8 @@ model.close();
 
 - Include `Accelerator.cpu` in the `accelerators` set to allow CPU placement when compilation succeeds. When a bundled GPU accelerator is present but cannot initialize, combined `{gpu, cpu}` compilation can still fail instead of falling back internally. Use the convenience factory below when a working GPU-to-CPU retry is required.
 - `precision` accepts `Precision.fp16` or `Precision.fp32`, and defaults to
-  `Precision.fp32`. Across the 29 published detection models, strict-GPU fp32
+  `Precision.fp32` (on the web an unset precision is left to LiteRT.js; see
+  [CompiledModel on the web](#compiledmodel-on-the-web)). Across the 29 published detection models, strict-GPU fp32
   matched a plain-CPU reference for every model that compiled on all four GPU
   architectures measured, while fp16 matched only 4 of 18 on Adreno, 5 of 18 on
   Xclipse, 4 of 18 on Apple Metal, and 1 of 12 on Mali. Google's LiteRT Python
@@ -705,8 +706,9 @@ Web specifics:
   request therefore mean "try WebGPU, then reconstruct on WASM" rather than a
   native mixed-accelerator construction.
 - `model.accelerators` reports what LiteRT.js actually resolved: `{Accelerator.gpu}` for a fully accelerated WebGPU model, `{Accelerator.cpu}` for WASM, and `{Accelerator.gpu, Accelerator.cpu}` when the runtime reports a WebGPU model as only partially accelerated.
-- When WebGPU cannot place the whole model, LiteRT.js 2.5 returns a partially delegated WebGPU model on browsers with JSPI (such as current Chrome) and recompiles on WASM on browsers without it. Requests that allow a CPU fallback accept the WASM model; a strict `CompiledModelConfig.gpu()` or `{Accelerator.gpu}` request throws `StateError` instead of silently running on the CPU.
-- `precision` is accepted but ignored (LiteRT.js does not expose a precision option), and the zero-copy `TensorBufferMode.hostMemory` path is native-only.
+- When WebGPU cannot place the whole model, LiteRT.js (2.5.0 and later, including the bundled 2.6.0) returns a partially delegated WebGPU model on browsers with JSPI (such as current Chrome) and recompiles on WASM on browsers without it. Requests that allow a CPU fallback accept the WASM model; a strict `CompiledModelConfig.gpu()` or `{Accelerator.gpu}` request throws `StateError` instead of silently running on the CPU.
+- `precision` is sent to LiteRT.js as `gpuOptions.precision` for WebGPU compiles; WASM has no precision option. On the web an unset `precision` sends nothing, so LiteRT.js picks fp16 when the GPU supports `shader-f16` and fp32 otherwise, as before 4.0.0. This differs from the native default of `Precision.fp32`: pass `precision: Precision.fp32` (or set it on the `CompiledModelConfig`) for the same precision on every platform. An explicit `Precision.fp16` on a GPU without fp16 support can fail the WebGPU compile; policies with a CPU fallback then build on WASM.
+- The zero-copy `TensorBufferMode.hostMemory` path is native-only.
 - The first `fromBufferAsync` call auto-loads the LiteRT.js runtime from jsDelivr, exactly like `LiteRtInterpreter`; call `configureLiteRtWebLoader(...)` first to self-host the module and WASM files or to disable auto-loading.
 - Inference-time WebGPU failures (device lost, GPU out of memory) throw `LiteRtRuntimeError`, the same typed error the web `LiteRtInterpreter` uses; dispose the model and rebuild it with `{Accelerator.cpu}` to recover.
 

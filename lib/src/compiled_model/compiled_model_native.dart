@@ -316,16 +316,19 @@ class CompiledModel {
   /// is Promise-based and only this variant is available, so code that must
   /// also run on the web should prefer it. On native platforms compilation
   /// still runs synchronously inside this call.
+  ///
+  /// A null [precision] (the default) means [Precision.fp32] on native
+  /// platforms. On the web it leaves the choice to LiteRT.js.
   static Future<CompiledModel> fromBufferAsync(
     Uint8List bytes, {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
-    Precision precision = Precision.fp32,
+    Precision? precision,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
   }) async {
     return fromBuffer(
       bytes,
       accelerators: accelerators,
-      precision: precision,
+      precision: precision ?? Precision.fp32,
       tensorBufferMode: tensorBufferMode,
     );
   }
@@ -346,7 +349,8 @@ class CompiledModel {
 
   /// Creates a compiled model from [bytes], preferring GPU with a CPU fallback.
   ///
-  /// Requests `{gpu, cpu}` at [precision] (default [Precision.fp32], since
+  /// Requests `{gpu, cpu}` at [precision] (null, the default, means
+  /// [Precision.fp32] on native platforms, since
   /// pixel-space landmark/box coordinates lose accuracy in fp16 and weak desktop
   /// GPU drivers have produced wrong fp16 results); if GPU compilation throws
   /// (unsupported op, no GPU, driver bug) it retries CPU-only so callers always
@@ -356,7 +360,9 @@ class CompiledModel {
   ///
   /// [precision] applies to every path, including the [forceCpu] shortcut and
   /// the CPU retry, so a model never silently drops to a precision the caller
-  /// did not ask for.
+  /// did not ask for. A null [precision] stays unset in [requestedConfig]
+  /// (see [CompiledModelConfig.requestedPrecision]); the web async variant
+  /// leaves an unset precision to LiteRT.js.
   ///
   /// [onFallback] is invoked with the GPU error when the CPU retry happens, so
   /// callers can log it; the library itself stays free of a logging dependency.
@@ -364,7 +370,7 @@ class CompiledModel {
   static CompiledModel fromBufferWithGpuFallback(
     Uint8List bytes, {
     bool forceCpu = false,
-    Precision precision = Precision.fp32,
+    Precision? precision,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
     void Function(Object error)? onFallback,
   }) {
@@ -396,7 +402,7 @@ class CompiledModel {
   static Future<CompiledModel> fromBufferWithGpuFallbackAsync(
     Uint8List bytes, {
     bool forceCpu = false,
-    Precision precision = Precision.fp32,
+    Precision? precision,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
     void Function(Object error)? onFallback,
   }) async {
