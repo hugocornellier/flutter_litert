@@ -22,7 +22,9 @@ match the bundled version, so 4.0.0 builds need the 2.3.2 compiler and dispatch
 plugins from Google Maven (`com.google.ai.edge.litert:litert-npu-runtime-qualcomm`)
 together with QAIRT 2.50.0.260828, the version LiteRT 2.3.2 pins. The library
 names are unchanged. A runtime prepared for flutter_litert 3.10.x (LiteRT 2.2.0,
-QAIRT 2.47.0.260601) must be rebuilt.
+QAIRT 2.47.0.260601) must be rebuilt. On 2.3.2 the Galaxy S23 matrix found a
+regression in the two selfie segmentation models; see
+[Known issue](#known-issue-selfie-segmentation-on-litert-232-galaxy-s23).
 
 The ordinary package requires minSdk 24 since 4.0.0 (the bundled `libLiteRt.so` requires API 24)
 and remains multi-ABI. The device-targeted NPU bundle opts into minSdk 31 and
@@ -222,3 +224,23 @@ is intentionally red at its final safety assertion. In every case,
 MobileFaceNet met the conservative 1% tolerance while segmentation and heavy
 pose did not; those two models require application-level validation before NPU
 rollout.
+
+## Known issue: selfie segmentation on LiteRT 2.3.2 (Galaxy S23)
+
+On LiteRT 2.3.2 with QAIRT 2.50.0.260828, the Galaxy S23 (HTP v73) model matrix
+shows `selfie_segmenter` and `selfie_segmenter_landscape` failing in three NPU
+modes:
+
+| Mode | Failure |
+|---|---|
+| `compiled_npu_cpu_fp32` | `LiteRtStatus` 3 at run |
+| `compiled_npu_gpu_cpu_fp32` | `LiteRtStatus` 3 at run |
+| `compiled_npu_gpu_fp32` | status 504 at compile |
+
+Both models worked in these modes on LiteRT 2.1.6 with QAIRT 2.47.0.260601. They
+contain the custom op `Convolution2DTransposeBias`. The Qualcomm plugin leaves
+that op off the NPU, but the op then runs as a stub.
+
+Workaround: run these two models on CPU or GPU (`{Accelerator.cpu}`,
+`{Accelerator.gpu}`, or `{Accelerator.gpu, Accelerator.cpu}`), not with an
+accelerator set that includes `Accelerator.npu`.
