@@ -54,7 +54,8 @@ enum CompiledModelPolicy {
   /// Package-recommended selection.
   ///
   /// In flutter_litert 3.9 this means a strict GPU request at
-  /// [Precision.fp32], with a complete CPU-only retry when GPU construction
+  /// [Precision.fp32] (on the web, at LiteRT.js's default precision unless
+  /// one is set), with a complete CPU-only retry when GPU construction
   /// fails. It does not first request a mixed `{gpu, cpu}` graph. NPU is
   /// intentionally excluded because availability and correctness remain
   /// device- and model-specific.
@@ -99,12 +100,22 @@ class CompiledModelConfig {
   /// Ordered accelerator selection and fallback policy.
   final CompiledModelPolicy policy;
 
-  /// GPU precision.
+  /// GPU precision: [requestedPrecision], or [Precision.fp32] when the
+  /// caller left it unset.
   ///
   /// This is retained for CPU and NPU policies so a single immutable config
   /// can move between policies without losing the user's precision choice.
   /// Those backends do not currently expose a configurable precision.
-  final Precision precision;
+  Precision get precision => _precision ?? Precision.fp32;
+
+  /// The precision the caller passed, or null when it was left unset.
+  ///
+  /// Native platforms compile an unset precision as [Precision.fp32]. On the
+  /// web, an unset precision leaves WebGPU at LiteRT.js's own default, which
+  /// is fp16 when the GPU supports `shader-f16` and fp32 otherwise.
+  Precision? get requestedPrecision => _precision;
+
+  final Precision? _precision;
 
   /// Tensor buffer allocation mode.
   final TensorBufferMode tensorBufferMode;
@@ -112,45 +123,51 @@ class CompiledModelConfig {
   /// Creates a policy-based CompiledModel configuration.
   const CompiledModelConfig({
     this.policy = CompiledModelPolicy.auto,
-    this.precision = Precision.fp32,
+    Precision? precision,
     this.tensorBufferMode = TensorBufferMode.managed,
-  });
+  }) : _precision = precision;
 
   /// Package-recommended accelerator selection.
   const CompiledModelConfig.auto({
-    this.precision = Precision.fp32,
+    Precision? precision,
     this.tensorBufferMode = TensorBufferMode.managed,
-  }) : policy = CompiledModelPolicy.auto;
+  }) : policy = CompiledModelPolicy.auto,
+       _precision = precision;
 
   /// CPU-only compilation.
   const CompiledModelConfig.cpu({
-    this.precision = Precision.fp32,
+    Precision? precision,
     this.tensorBufferMode = TensorBufferMode.managed,
-  }) : policy = CompiledModelPolicy.cpu;
+  }) : policy = CompiledModelPolicy.cpu,
+       _precision = precision;
 
   /// Strict GPU compilation.
   const CompiledModelConfig.gpu({
-    this.precision = Precision.fp32,
+    Precision? precision,
     this.tensorBufferMode = TensorBufferMode.managed,
-  }) : policy = CompiledModelPolicy.gpu;
+  }) : policy = CompiledModelPolicy.gpu,
+       _precision = precision;
 
   /// GPU-preferred compilation with a complete CPU retry.
   const CompiledModelConfig.gpuWithCpuFallback({
-    this.precision = Precision.fp32,
+    Precision? precision,
     this.tensorBufferMode = TensorBufferMode.managed,
-  }) : policy = CompiledModelPolicy.gpuWithCpuFallback;
+  }) : policy = CompiledModelPolicy.gpuWithCpuFallback,
+       _precision = precision;
 
   /// Strict NPU compilation.
   const CompiledModelConfig.npu({
-    this.precision = Precision.fp32,
+    Precision? precision,
     this.tensorBufferMode = TensorBufferMode.managed,
-  }) : policy = CompiledModelPolicy.npu;
+  }) : policy = CompiledModelPolicy.npu,
+       _precision = precision;
 
   /// NPU-preferred compilation with a complete CPU retry.
   const CompiledModelConfig.npuWithCpuFallback({
-    this.precision = Precision.fp32,
+    Precision? precision,
     this.tensorBufferMode = TensorBufferMode.managed,
-  }) : policy = CompiledModelPolicy.npuWithCpuFallback;
+  }) : policy = CompiledModelPolicy.npuWithCpuFallback,
+       _precision = precision;
 
   /// Exact accelerator set used for the policy's first construction attempt.
   Set<Accelerator> get primaryAccelerators => switch (policy) {
@@ -189,7 +206,7 @@ class CompiledModelConfig {
   }) {
     return CompiledModelConfig(
       policy: policy ?? this.policy,
-      precision: precision ?? this.precision,
+      precision: precision ?? _precision,
       tensorBufferMode: tensorBufferMode ?? this.tensorBufferMode,
     );
   }
@@ -199,18 +216,22 @@ class CompiledModelConfig {
     return identical(this, other) ||
         other is CompiledModelConfig &&
             policy == other.policy &&
-            precision == other.precision &&
+            _precision == other._precision &&
             tensorBufferMode == other.tensorBufferMode;
   }
 
   @override
-  int get hashCode => Object.hash(policy, precision, tensorBufferMode);
+  int get hashCode => Object.hash(policy, _precision, tensorBufferMode);
 
   @override
   String toString() {
+    final requested = _precision;
+    final precisionText = requested == null
+        ? 'unset'
+        : 'Precision.${requested.name}';
     return 'CompiledModelConfig('
         'policy: CompiledModelPolicy.${policy.name}, '
-        'precision: Precision.${precision.name}, '
+        'precision: $precisionText, '
         'tensorBufferMode: TensorBufferMode.${tensorBufferMode.name})';
   }
 }

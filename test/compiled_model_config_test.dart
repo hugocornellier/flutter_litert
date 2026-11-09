@@ -67,6 +67,32 @@ void main() {
       expect(copy.tensorBufferMode, TensorBufferMode.hostMemory);
     });
 
+    test('an unset precision reads as fp32 but stays distinguishable', () {
+      const unset = CompiledModelConfig.gpu();
+      const explicit = CompiledModelConfig.gpu(precision: Precision.fp32);
+
+      expect(unset.precision, Precision.fp32);
+      expect(unset.requestedPrecision, isNull);
+      expect(explicit.precision, Precision.fp32);
+      expect(explicit.requestedPrecision, Precision.fp32);
+      // The web sends only an explicit precision to LiteRT.js, so the two
+      // configs can build differently there and are not equal.
+      expect(unset, isNot(explicit));
+      expect(unset.toString(), contains('precision: unset'));
+      expect(
+        unset.copyWith(policy: CompiledModelPolicy.cpu).requestedPrecision,
+        isNull,
+      );
+      expect(
+        unset.copyWith(precision: Precision.fp16).requestedPrecision,
+        Precision.fp16,
+      );
+      expect(
+        explicit.copyWith(policy: CompiledModelPolicy.cpu).requestedPrecision,
+        Precision.fp32,
+      );
+    });
+
     test('has value equality, hash code, and diagnostic text', () {
       const first = CompiledModelConfig.gpu(precision: Precision.fp16);
       const second = CompiledModelConfig(

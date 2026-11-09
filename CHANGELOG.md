@@ -113,6 +113,20 @@ before upgrading an Android app.
   at build time, so these notices were not reaching apps before. Apps that
   bundle the runtime should include them in their open-source notices; see
   "Open-source notices for the Android runtime" in the README.
+* Web `CompiledModel`: `precision` is no longer dropped. An explicit
+  `Precision.fp16` or `Precision.fp32` is now sent to LiteRT.js as
+  `gpuOptions.precision` on every WebGPU compile (`fromBufferAsync`,
+  `fromBufferWithConfigAsync`, and `fromBufferWithGpuFallbackAsync`); WASM
+  compiles have no precision option. When `precision` is not set, nothing is
+  sent and LiteRT.js keeps its own default (fp16 when the GPU supports
+  `shader-f16`, fp32 otherwise), so results do not change for code that does
+  not pass it. Pass `Precision.fp32` to get the native default on the web too.
+  To tell the two apart, `CompiledModelConfig` gains `requestedPrecision`
+  (null when unset; `precision` still reads `Precision.fp32` then), and an
+  unset config no longer equals one with an explicit `Precision.fp32`.
+  `fromBufferAsync`, `fromBufferWithGpuFallback`, and
+  `fromBufferWithGpuFallbackAsync` now take `Precision?` on every platform;
+  on native a null `precision` still compiles at `Precision.fp32`.
 * Docs: `Interpreter.resetVariableTensors()` sets every variable tensor to
   zero (an int8 tensor to its zero point), as LiteRT implements it. The README
   and the API docs said it restored the initial values from the `.tflite`

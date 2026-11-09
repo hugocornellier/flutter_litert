@@ -209,10 +209,16 @@ String _jsString(String s) {
   return '"$escaped"';
 }
 
-/// Calls `LiteRt.loadAndCompile(bytes, {accelerator})`.
+/// Calls `LiteRt.loadAndCompile(bytes, {accelerator, gpuOptions})`.
+///
+/// [gpuPrecision] (`'fp16'` or `'fp32'`) is sent as `gpuOptions.precision`,
+/// which LiteRT.js forwards to its WebGPU delegate. When it is null no
+/// `gpuOptions` are sent, and the delegate picks fp16 if the GPU supports it
+/// and fp32 otherwise.
 Future<CompiledModelJS> loadAndCompile(
   Uint8List bytes, {
   String accelerator = 'wasm',
+  String? gpuPrecision,
 }) async {
   final root = _liteRtRoot;
   if (root == null) {
@@ -222,6 +228,9 @@ Future<CompiledModelJS> loadAndCompile(
   }
   final options = JSObject();
   options['accelerator'] = accelerator.toJS;
+  if (gpuPrecision != null) {
+    options['gpuOptions'] = JSObject()..['precision'] = gpuPrecision.toJS;
+  }
   final JSPromise<CompiledModelJS> promise = root
       .callMethod<JSPromise<CompiledModelJS>>(
         'loadAndCompile'.toJS,

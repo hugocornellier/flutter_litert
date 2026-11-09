@@ -67,7 +67,7 @@ class CompiledModel {
   static Future<CompiledModel> fromBufferAsync(
     Uint8List bytes, {
     Set<Accelerator> accelerators = const {Accelerator.cpu},
-    Precision precision = Precision.fp32,
+    Precision? precision,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
   }) {
     throw UnsupportedError('CompiledModel is not supported on this platform.');
@@ -87,7 +87,7 @@ class CompiledModel {
   static CompiledModel fromBufferWithGpuFallback(
     Uint8List bytes, {
     bool forceCpu = false,
-    Precision precision = Precision.fp32,
+    Precision? precision,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
     void Function(Object error)? onFallback,
   }) {
@@ -99,7 +99,7 @@ class CompiledModel {
   static Future<CompiledModel> fromBufferWithGpuFallbackAsync(
     Uint8List bytes, {
     bool forceCpu = false,
-    Precision precision = Precision.fp32,
+    Precision? precision,
     TensorBufferMode tensorBufferMode = TensorBufferMode.managed,
     void Function(Object error)? onFallback,
   }) {
