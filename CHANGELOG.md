@@ -86,7 +86,14 @@ before upgrading an Android app.
 * Linux and Windows `CompiledModel`: LiteRT 2.1.5 to 2.3.0 (`ai-edge-litert`
   2.3.0), with the desktop WebGPU accelerator rebuilt for 2.3.0.
 * Web: LiteRT.js 2.5.3 to 2.6.0 (`@litertjs/core@2.6.0`).
-* iOS and macOS `CompiledModel`: LiteRT 2.3.x.
+* macOS `CompiledModel`: LiteRT 2.1.5 to 2.3.0 (`ai-edge-litert` 2.3.0 runtime
+  and Metal accelerator), with the Core ML NPU delegate rebuilt from the LiteRT
+  v2.3.2 source.
+* iOS `CompiledModel`: a runtime built from the LiteRT v2.3.2 source tag and
+  Google's 2.3.0 Metal accelerator, shipped as release `litert-ios-v2.0.0`.
+  `CompiledModel` needs iOS 15.0 or later.
+* Core ML NPU acceleration on iOS and macOS is now registered so that LiteRT
+  2.3.x applies it to regular `.tflite` models.
 * The Play services runtime (`play-services-litert` 17.0.0) is unchanged.
 * The example app builds with Kotlin 2.4.0.
 
