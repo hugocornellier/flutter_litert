@@ -1,0 +1,11 @@
+#!/bin/bash
+# xcrun stand-in that build-ios puts first on PATH for `flutter test`. It
+# holds `simctl launch` until flutter's simulator log stream is connected
+# (see wait_for_log_stream.py) and passes every call to the real xcrun.
+# flutter_tools runs `xcrun simctl launch <udid> <bundle id> ...`, on Apple
+# silicon through `/usr/bin/arch -arm64e`, which execs it in place, so this
+# script's parent is the flutter_tools process that also started the stream.
+if [ "$1" = simctl ] && [ "$2" = launch ]; then
+  python3 "$(dirname "$0")/wait_for_log_stream.py" "$3" "$PPID"
+fi
+exec /usr/bin/xcrun "$@"

@@ -852,6 +852,14 @@ jobs:
           attempt_timeout=900
           cold_build_timeout=1800
           max=2
+          # flutter_tools reads the app's VM service URL from a simulator log
+          # stream that it starts together with `simctl launch`, then waits
+          # for the URL with no timeout. An app that printed the URL before
+          # the stream had connected left the launch silent until the
+          # watchdog fired. This xcrun stand-in holds the launch until the
+          # stream is connected and logs when that happened.
+          launch_gate="$GITHUB_WORKSPACE/scripts/ios_simulator_launch"
+          export IOS_LAUNCH_GATE_LOG="$RUNNER_TEMP/ios-launch-gate.log"
 
           run_ios_test() {
             test_file="$1"
@@ -865,7 +873,8 @@ jobs:
               timeout_marker="$RUNNER_TEMP/ios-timeout-$(basename "$test_file")-$attempt"
               rm -f "$timeout_marker"
               echo "::group::$test_file (attempt $attempt/$max)"
-              flutter test "$test_file" \
+              rm -f "$IOS_LAUNCH_GATE_LOG"
+              PATH="$launch_gate:$PATH" flutter test "$test_file" \
                 -d "$SIMULATOR_UDID" --timeout 600s &
               pid=$!
               ( sleep "$watchdog_timeout"
@@ -881,6 +890,7 @@ jobs:
               rc=$?
               kill -TERM "$watchdog" 2>/dev/null
               wait "$watchdog" 2>/dev/null
+              cat "$IOS_LAUNCH_GATE_LOG" 2>/dev/null
               if [ -f "$timeout_marker" ]; then
                 # Flutter may exit zero after handling SIGTERM. Preserve the
                 # timeout as a failure so a killed test can never go green.
