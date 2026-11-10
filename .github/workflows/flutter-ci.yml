@@ -608,8 +608,36 @@ jobs:
           # listen and flutter test waits for it without end. So the smoke
           # APK is uninstalled first (a new uid is not restricted), and
           # timeout ends that test run if it stalls all the same.
+          # The Play Store on this image can update itself and then Google
+          # Play services while the job runs (seen from 1 to 12 minutes
+          # after boot). While that update installs, Android stops Play
+          # services for 15 to 40 s and kills every app that has loaded code
+          # from it, this host included: that ended the release smoke app
+          # 2 s after launch in one run and failed attempt 1 of the first
+          # test in others. Disabling the Play Store prevents the update,
+          # but Play services downloads the runtime module through the
+          # store, about 80 s after boot, and the module then stays on the
+          # device across a Play services update. So the script waits until
+          # Play services reports the module (the query its client library
+          # uses), disables the Play Store, waits for an install the store
+          # had already handed to Android, and only then runs the tests and
+          # the smoke apps. If the module does not show up in 3 minutes,
+          # the store stays on for the first test and is disabled after it.
           script: >-
-            bash -c 'set +e; timeout 300 adb -s emulator-5554 shell am wait-for-broadcast-idle;
+            bash -c 'set +e;
+            settle() { for i in $(seq 1 36); do
+            [ "$(adb -s emulator-5554 shell dumpsys package installs | sed -n "/Active install sessions/,/Finalized install sessions/p" | grep -c mCommitted=true)" = 0 ] && break;
+            echo "waiting for an install that is under way"; sleep 5; done;
+            timeout 300 adb -s emulator-5554 shell am wait-for-broadcast-idle; };
+            storeoff() { adb -s emulator-5554 shell pm disable-user --user 0 com.android.vending ||
+            echo "::warning::could not disable the Play Store, a Play services update can still end a later step";
+            settle; };
+            ready=0; for i in $(seq 1 36); do
+            timeout 30 adb -s emulator-5554 shell content query --uri content://com.google.android.gms.chimera/api/com.google.android.gms.tflite_dynamite | grep -q " version=[1-9]" && ready=1 && break;
+            echo "waiting for Play services to download the runtime module"; sleep 5; done;
+            if [ "$ready" = 1 ]; then storeoff; else
+            echo "::warning::the runtime module is not on the device after 3 minutes, the Play Store stays on for the first test";
+            settle; fi;
             rc=1; for attempt in 1 2; do
             adb -s emulator-5554 logcat -c;
             timeout 1500 flutter test integration_test/play_services_runtime_test.dart -d emulator-5554 --timeout 900s; rc=$?;
@@ -619,6 +647,7 @@ jobs:
             adb -s emulator-5554 logcat -d | grep -E "flutter|LiteRt|litert|TfLite|tflite|Dynamite|Chimera|AndroidRuntime|FATAL" | tail -n 300;
             echo "::endgroup::";
             done; [ "$rc" -eq 0 ] || exit "$rc";
+            storeoff;
             bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600 &&
             adb -s emulator-5554 uninstall com.hugocornellier.flutter_litert_play_services_test_host &&
             env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto timeout -k 30 900 flutter test integration_test/auto_runtime_test.dart -d emulator-5554 --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices --timeout 600s &&
