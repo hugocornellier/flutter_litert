@@ -1,0 +1,18 @@
+
+# flutter_litert: static framework with the Flex delegate. The core TFLite C
+# symbols in avoid_deps come from TensorFlowLiteC (flutter_litert) at app link
+# time. Appended to tensorflow/lite/ios/BUILD.apple by build-flex-ios.yml.
+ios_static_framework(
+    name = "TensorFlowLiteFlex_framework",
+    avoid_deps = [
+        "//tensorflow/lite/core/c:common",
+        "//tensorflow/lite/core/async/interop/c:types",
+        "//tensorflow/lite/profiling/telemetry/c:telemetry_setting",
+    ],
+    bundle_name = "TensorFlowLiteFlex",
+    minimum_os_version = TFL_MINIMUM_OS_VERSION,
+    deps = [
+        "//tensorflow/lite/delegates/flex:delegate",
+        "//tensorflow/lite/delegates/flex:flex_delegate_plugin",
+    ],
+)

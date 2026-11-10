@@ -1,0 +1,227 @@
+name: Build Flex delegate (Windows x64)
+
+# Builds libtensorflowlite_flex-win.dll (the flutter_litert_flex Windows
+# library) from TensorFlow source with bazel, MSYS2 and Visual Studio 2022,
+# and verifies it against the published flex-v1.0.0 file. The build is
+# longer than one GitHub-hosted job may run, so each compiler chain runs over
+# up to six time-boxed stages that hand a bazel disk cache to each other
+# (build-flex-desktop-stage.yml).
+#
+# The clang chain (clang-cl, the only compiler TF upstream builds Windows
+# with) produces the DLL to ship. The msvc chain (cl.exe, what the 2.20.0 DLL
+# used) does not build TF 2.21.0 (it fails inside LLVM, see the recipe) and
+# only runs on request. Output: Actions artifacts flex-windows-<compiler>
+# (DLL, .sha256, build-info.txt) and flex-windows-<compiler>-verify. Nothing
+# is released here. Recipe: scripts/build_flex_delegate_windows.md
+
+on:
+  workflow_dispatch:
+    inputs:
+      msvc:
+        description: Also try the MSVC (cl.exe) chain (fails at TF v2.21.0)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  BASELINE_URL: https://github.com/hugocornellier/flutter_litert/releases/download/flex-v1.0.0/libtensorflowlite_flex-win.dll
+
+jobs:
+  msvc1:
+    if: ${{ inputs.msvc }}
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: msvc
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 1
+  msvc2:
+    needs: msvc1
+    if: needs.msvc1.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: msvc
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 2
+      prev_stage: 1
+  msvc3:
+    needs: msvc2
+    if: needs.msvc2.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: msvc
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 3
+      prev_stage: 2
+  msvc4:
+    needs: msvc3
+    if: needs.msvc3.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: msvc
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 4
+      prev_stage: 3
+  msvc5:
+    needs: msvc4
+    if: needs.msvc4.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: msvc
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 5
+      prev_stage: 4
+  msvc6:
+    needs: msvc5
+    if: needs.msvc5.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: msvc
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 6
+      prev_stage: 5
+  clang1:
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: clang
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 1
+  clang2:
+    needs: clang1
+    if: needs.clang1.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: clang
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 2
+      prev_stage: 1
+  clang3:
+    needs: clang2
+    if: needs.clang2.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: clang
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 3
+      prev_stage: 2
+  clang4:
+    needs: clang3
+    if: needs.clang3.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: clang
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 4
+      prev_stage: 3
+  clang5:
+    needs: clang4
+    if: needs.clang4.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: clang
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 5
+      prev_stage: 4
+  clang6:
+    needs: clang5
+    if: needs.clang5.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: windows
+      runner: windows-2022
+      variant: clang
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 6
+      prev_stage: 5
+
+  verify:
+    needs: [msvc1, msvc2, msvc3, msvc4, msvc5, msvc6, clang1, clang2, clang3, clang4, clang5, clang6]
+    if: always() && contains(needs.*.outputs.result, 'done')
+    name: verify ${{ matrix.variant }}
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [msvc, clang]
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # A chain that failed has no artifact; its verify leg then does nothing.
+      - name: Download the new DLL
+        id: dl
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: flex-windows-${{ matrix.variant }}
+          path: new
+
+      - name: Set up MSVC (dumpbin, cl)
+        if: steps.dl.outcome == 'success'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Download the flex-v1.0.0 DLL it replaces (inspected only)
+        if: steps.dl.outcome == 'success'
+        run: |
+          mkdir -p old
+          curl -fsSL -o old/libtensorflowlite_flex-win.dll "$BASELINE_URL"
+          ( cd new && sha256sum -c libtensorflowlite_flex-win.dll.sha256 )
+          cat new/build-info.txt
+
+      - name: Verify
+        if: steps.dl.outcome == 'success'
+        run: |
+          set +e
+          bash scripts/flex_desktop/verify_windows.sh \
+            new/libtensorflowlite_flex-win.dll old/libtensorflowlite_flex-win.dll verify
+          rc=$?
+          { echo "### ${{ matrix.variant }}"; echo '```'; cat new/build-info.txt; echo; cat verify/verify-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: Upload verify report
+        if: always() && steps.dl.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flex-windows-${{ matrix.variant }}-verify
+          path: verify
+          retention-days: 90

@@ -1,0 +1,118 @@
+name: Build Flex delegate (Linux x86_64)
+
+# Builds libtensorflowlite_flex-linux.so (the flutter_litert_flex Linux
+# library) from TensorFlow source and verifies it against the published
+# flex-v1.0.0 file. The build is longer than one GitHub-hosted job may run,
+# so it is chained over up to five time-boxed stages that hand a bazel disk
+# cache to each other (build-flex-desktop-stage.yml). Output: the Actions
+# artifact flex-linux-hermetic (library, .sha256, build-info.txt) and
+# flex-linux-verify (report and export lists). Nothing is released here.
+# Recipe: scripts/build_flex_delegate_linux.md
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASELINE_URL: https://github.com/hugocornellier/flutter_litert/releases/download/flex-v1.0.0/libtensorflowlite_flex-linux.so
+
+jobs:
+  stage1:
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    # ubuntu-24.04 class, so the GLIBC floor is no higher than the 2.20.0
+    # file's. (Inputs are repeated per stage: Actions YAML has no merge keys.)
+    with:
+      os: linux
+      runner: ubuntu-24.04
+      variant: hermetic
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 1
+  stage2:
+    needs: stage1
+    if: needs.stage1.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: linux
+      runner: ubuntu-24.04
+      variant: hermetic
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 2
+      prev_stage: 1
+  stage3:
+    needs: stage2
+    if: needs.stage2.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: linux
+      runner: ubuntu-24.04
+      variant: hermetic
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 3
+      prev_stage: 2
+  stage4:
+    needs: stage3
+    if: needs.stage3.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: linux
+      runner: ubuntu-24.04
+      variant: hermetic
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 4
+      prev_stage: 3
+  stage5:
+    needs: stage4
+    if: needs.stage4.outputs.result == 'timeout'
+    uses: ./.github/workflows/build-flex-desktop-stage.yml
+    with:
+      os: linux
+      runner: ubuntu-24.04
+      variant: hermetic
+      tf_version: v2.21.0
+      bazel_version: 7.7.0
+      stage: 5
+      prev_stage: 4
+
+  verify:
+    needs: [stage1, stage2, stage3, stage4, stage5]
+    if: always() && contains(needs.*.outputs.result, 'done')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the new library
+        uses: actions/download-artifact@v4
+        with:
+          name: flex-linux-hermetic
+          path: new
+
+      - name: Download the flex-v1.0.0 library it replaces (inspected only)
+        run: |
+          mkdir -p old
+          curl -fsSL -o old/libtensorflowlite_flex-linux.so "$BASELINE_URL"
+          ( cd new && sha256sum -c libtensorflowlite_flex-linux.so.sha256 )
+          cat new/build-info.txt
+
+      - name: Verify
+        run: |
+          set +e
+          bash scripts/flex_desktop/verify_linux.sh \
+            new/libtensorflowlite_flex-linux.so old/libtensorflowlite_flex-linux.so verify
+          rc=$?
+          { echo '```'; cat new/build-info.txt; echo; cat verify/verify-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: Upload verify report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flex-linux-verify
+          path: verify
+          retention-days: 90

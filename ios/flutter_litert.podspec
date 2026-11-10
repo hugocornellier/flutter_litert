@@ -2,9 +2,11 @@
 # To learn more about a Podspec see http://guides.cocoapods.org/syntax/podspec.html.
 # Run `pod lib lint flutter_litert.podspec` to validate before publishing.
 #
+require 'digest'
+
 Pod::Spec.new do |s|
   s.name             = 'flutter_litert'
-  s.version          = '4.0.0'
+  s.version          = '4.1.0'
   s.summary          = 'LiteRT (formerly TensorFlow Lite) plugin for Flutter apps.'
   s.description      = <<-DESC
 LiteRT (formerly TensorFlow Lite) plugin for Flutter apps with bundled native
@@ -62,11 +64,46 @@ runtimes, classic delegates, and the CompiledModel API.
                    `xcrun nm -gU '#{coreml_binary}' 2>/dev/null`
                      .include?('_FlutterTfLiteCoreMlNpuDelegateCreate')
 
-  unless File.exist?(marker) && coreml_has_npu
+  # This release ships the TensorFlow v2.21.0 build of the three frameworks, so
+  # a cached bundle from an older release must be replaced too, not only an
+  # incomplete one. TensorFlowLiteC.framework carries no Info.plist; the Core ML
+  # framework from the same archive records the TensorFlow version it was built
+  # from.
+  tflite_version = '2.21.0'
+  tflite_plist = File.join(framework_dir, 'TensorFlowLiteCCoreML.xcframework',
+                           'ios-arm64', 'TensorFlowLiteCCoreML.framework', 'Info.plist')
+  tflite_current = File.exist?(tflite_plist) &&
+                   `/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' '#{tflite_plist}' 2>/dev/null`
+                     .strip == tflite_version
+
+  # Every downloaded archive is checked against a pinned SHA-256 before it is
+  # unpacked, so a truncated, replaced or tampered download fails `pod install`
+  # instead of being linked into the app.
+  verify_download = lambda do |zip, expected, what|
+    actual = File.exist?(zip) ? Digest::SHA256.file(zip).hexdigest : 'missing'
+    next if actual == expected
+
+    File.delete(zip) if File.exist?(zip)
+    abort "[flutter_litert] ERROR: #{what} failed the SHA-256 check " \
+          "(expected #{expected}, got #{actual}). Run `pod install` again."
+  end
+
+  # Fail a connection that does not open within 30 s or a transfer that stays
+  # under 1 KB/s for 60 s, instead of letting `pod install` hang on a stalled
+  # download, and retry transient failures (timeouts, 5xx) a few times.
+  curl_options = '-fsL --connect-timeout 30 --speed-limit 1024 --speed-time 60 ' \
+                 '--retry 3 --retry-delay 5'
+
+  unless File.exist?(marker) && coreml_has_npu && tflite_current
     puts '[flutter_litert] Downloading TensorFlow Lite iOS frameworks...'
     zip = File.join(framework_dir, '_tflite_ios.zip')
-    system("curl -sL 'https://github.com/hugocornellier/flutter_litert/releases/download/libs-v0.1.9/ios-frameworks.zip' -o '#{zip}'")
+    tflite_zip_sha256 = '2897e55a5a04ed9aeb2f63f8f3796737d5f351a7d4e3012a12ce4e52313695a3'
+    system("curl #{curl_options} 'https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0/ios-frameworks.zip' -o '#{zip}'")
     abort '[flutter_litert] ERROR: Failed to download TFLite iOS frameworks. Check your internet connection.' unless $?.success?
+    verify_download.call(zip, tflite_zip_sha256, 'The TFLite iOS frameworks download')
+    # Remove the old frameworks first so no file of an earlier release (or its
+    # .flex_deduped marker) lingers next to the freshly downloaded ones.
+    system("rm -rf '#{File.join(framework_dir, 'TensorFlowLiteC.xcframework')}' '#{File.join(framework_dir, 'TensorFlowLiteCMetal.xcframework')}' '#{File.join(framework_dir, 'TensorFlowLiteCCoreML.xcframework')}'")
     system("unzip -qo '#{zip}' -d '#{framework_dir}'")
     File.delete(zip) if File.exist?(zip)
     puts '[flutter_litert] TensorFlow Lite iOS frameworks installed.'
@@ -100,8 +137,10 @@ runtimes, classic delegates, and the CompiledModel API.
   unless File.exist?(litert_device_marker) && File.exist?(litert_sim_marker) && litert_current
     puts '[flutter_litert] Downloading LiteRT Next iOS frameworks...'
     zip = File.join(framework_dir, '_litert_ios.zip')
-    system("curl -sL 'https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v2.0.0/litert-ios-frameworks.zip' -o '#{zip}'")
+    litert_zip_sha256 = 'e2bff21bae9bfc7c59e8acc7bcab8a9bab25e1798d1d49895b04b4c606dc46cc'
+    system("curl #{curl_options} 'https://github.com/hugocornellier/flutter_litert/releases/download/litert-ios-v2.0.0/litert-ios-frameworks.zip' -o '#{zip}'")
     abort '[flutter_litert] ERROR: Failed to download LiteRT Next iOS frameworks. Check your internet connection.' unless $?.success?
+    verify_download.call(zip, litert_zip_sha256, 'The LiteRT Next iOS frameworks download')
     # Remove any stale slices first so an old arm64-only simulator slice can't
     # linger alongside the freshly downloaded universal one.
     system("rm -rf '#{File.join(framework_dir, 'LiteRt.xcframework')}' '#{File.join(framework_dir, 'LiteRtMetalAccelerator.xcframework')}'")

@@ -15,4 +15,6 @@ Run from this directory:
 flutter test -d macos integration_test
 # or on Linux:
 flutter test -d linux integration_test
+# or on Windows:
+flutter test -d windows integration_test
 ```

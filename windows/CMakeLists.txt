@@ -33,6 +33,19 @@ target_link_libraries(${PLUGIN_NAME} PRIVATE flutter flutter_wrapper_plugin)
 # Build the TFLite custom ops library (e.g., Convolution2DTransposeBias for MediaPipe)
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_BINARY_DIR}/custom_ops")
 
+# ON (the default) bundles this plugin's CompiledModel runtime: libLiteRt.dll,
+# the WebGPU accelerator and the DirectX Shader Compiler DLLs. An app that
+# ships another copy of the LiteRT runtime under the same file names (LiteRT-LM
+# does) can turn it OFF, so the files are neither downloaded nor bundled. The
+# TensorFlow Lite C library (Interpreter), the custom ops library and
+# vcruntime140_threads.dll are bundled in both settings.
+# An app sets it in its own windows/CMakeLists.txt, before the line
+# include(flutter/generated_plugins.cmake):
+#   set(FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME OFF)
+option(FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME
+  "Bundle flutter_litert's CompiledModel runtime (libLiteRt, the WebGPU accelerator and DXC)"
+  ON)
+
 set(FLUTTER_LITERT_TFLITE_DLL "${CMAKE_CURRENT_SOURCE_DIR}/libtensorflowlite_c-win.dll")
 # LiteRT Next runtime (CompiledModel API), x86_64; from the official
 # ai-edge-litert 2.3.0 PyPI wheel.
@@ -49,6 +62,16 @@ set(FLUTTER_LITERT_GPU_DLL "${CMAKE_CURRENT_SOURCE_DIR}/libLiteRtWebGpuAccelerat
 # to the executable.
 set(FLUTTER_LITERT_DXCOMPILER_DLL "${CMAKE_CURRENT_SOURCE_DIR}/dxcompiler.dll")
 set(FLUTTER_LITERT_DXIL_DLL "${CMAKE_CURRENT_SOURCE_DIR}/dxil.dll")
+# Microsoft's app-local redist copy of vcruntime140_threads.dll (C11 threads,
+# VC++ 14.38+), from Microsoft.VC143.CRT 14.44.35211.0, unmodified (sha256
+# 219915cf20822f34d5e7c1fdd4e21ae7f3396881096c51036225fb8f84b47afa).
+# libLiteRt.dll (CompiledModel) imports it, and it is not among the VC++
+# runtime DLLs Flutter apps deploy app-locally, so PCs without a recent VC++
+# Redistributable would fail to load libLiteRt.dll. libtensorflowlite_c-win.dll
+# is built with the static CRT and needs no VC++ runtime DLL.
+# It stays bundled when FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME is OFF: the
+# flutter_litert_flex Windows library imports it too.
+set(FLUTTER_LITERT_VCRUNTIME_THREADS_DLL "${CMAKE_CURRENT_SOURCE_DIR}/vcruntime140_threads.dll")
 
 # The WebGPU GPU accelerator (~30 MB) and DirectX Shader Compiler (~18 MB) are
 # fetched at build time from a GitHub release rather than bundled in the
@@ -87,36 +110,36 @@ function(flutter_litert_fetch_lib path url sha)
   message(FATAL_ERROR "flutter_litert: could not download ${url}")
 endfunction()
 
-flutter_litert_fetch_lib("${FLUTTER_LITERT_GPU_DLL}"
-  "${FLUTTER_LITERT_GPU_LIBS_URL}/libLiteRtWebGpuAccelerator.dll"
-  "1cf8b23cd30d04f0c7f087243322a4550a695c4803be9b5ef5027d7de3e26d8d")
-flutter_litert_fetch_lib("${FLUTTER_LITERT_DXCOMPILER_DLL}"
-  "${FLUTTER_LITERT_GPU_LIBS_URL}/dxcompiler.dll"
-  "9b5e10ed756c461b4ec2c83a99f1d6ace20e97826e9c0b0e966b7b1cd6f2aec6")
-flutter_litert_fetch_lib("${FLUTTER_LITERT_DXIL_DLL}"
-  "${FLUTTER_LITERT_GPU_LIBS_URL}/dxil.dll"
-  "cbcfe883a09fd0ca1f98abdf3a9553b560895e3283a136da82a8381253a169df")
-
-set(flutter_tflite_bundled_libraries
+set(flutter_litert_bundled_libraries
   "${FLUTTER_LITERT_TFLITE_DLL}"
-  "${FLUTTER_LITERT_LITERT_DLL}"
-  "${FLUTTER_LITERT_GPU_DLL}"
-  "${FLUTTER_LITERT_DXCOMPILER_DLL}"
-  "${FLUTTER_LITERT_DXIL_DLL}"
+  "${FLUTTER_LITERT_VCRUNTIME_THREADS_DLL}"
   "$<TARGET_FILE:tflite_custom_ops>"
 )
+
+if(FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME)
+  flutter_litert_fetch_lib("${FLUTTER_LITERT_GPU_DLL}"
+    "${FLUTTER_LITERT_GPU_LIBS_URL}/libLiteRtWebGpuAccelerator.dll"
+    "1cf8b23cd30d04f0c7f087243322a4550a695c4803be9b5ef5027d7de3e26d8d")
+  flutter_litert_fetch_lib("${FLUTTER_LITERT_DXCOMPILER_DLL}"
+    "${FLUTTER_LITERT_GPU_LIBS_URL}/dxcompiler.dll"
+    "9b5e10ed756c461b4ec2c83a99f1d6ace20e97826e9c0b0e966b7b1cd6f2aec6")
+  flutter_litert_fetch_lib("${FLUTTER_LITERT_DXIL_DLL}"
+    "${FLUTTER_LITERT_GPU_LIBS_URL}/dxil.dll"
+    "cbcfe883a09fd0ca1f98abdf3a9553b560895e3283a136da82a8381253a169df")
+  list(APPEND flutter_litert_bundled_libraries
+    "${FLUTTER_LITERT_LITERT_DLL}"
+    "${FLUTTER_LITERT_GPU_DLL}"
+    "${FLUTTER_LITERT_DXCOMPILER_DLL}"
+    "${FLUTTER_LITERT_DXIL_DLL}"
+  )
+else()
+  message(STATUS "flutter_litert: FLUTTER_LITERT_BUNDLE_DESKTOP_RUNTIME is OFF; not bundling libLiteRt.dll, libLiteRtWebGpuAccelerator.dll, dxcompiler.dll or dxil.dll")
+endif()
 
 # Flutter's generated_plugins.cmake references plugins by their directory name
 # (flutter_litert), not by PROJECT_NAME (flutter_tflite). Set both to ensure
 # bundled native libraries are included.
-set(flutter_litert_bundled_libraries
-  "${FLUTTER_LITERT_TFLITE_DLL}"
-  "${FLUTTER_LITERT_LITERT_DLL}"
-  "${FLUTTER_LITERT_GPU_DLL}"
-  "${FLUTTER_LITERT_DXCOMPILER_DLL}"
-  "${FLUTTER_LITERT_DXIL_DLL}"
-  "$<TARGET_FILE:tflite_custom_ops>"
-)
+set(flutter_tflite_bundled_libraries ${flutter_litert_bundled_libraries})
 
 set(flutter_tflite_bundled_libraries ${flutter_tflite_bundled_libraries} PARENT_SCOPE)
 set(flutter_litert_bundled_libraries ${flutter_litert_bundled_libraries} PARENT_SCOPE)

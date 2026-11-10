@@ -1,0 +1,14 @@
+
+# flutter_litert: Flex delegate plugin entry points for the iOS framework.
+# Appended to tensorflow/lite/delegates/flex/BUILD by build-flex-ios.yml.
+cc_library(
+    name = "flex_delegate_plugin",
+    srcs = ["flex_delegate_plugin.cc"],
+    copts = tflite_copts(),
+    features = tf_features_nolayering_check_if_ios(),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":delegate",
+    ],
+    alwayslink = True,
+)

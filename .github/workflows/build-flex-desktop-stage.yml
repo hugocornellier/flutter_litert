@@ -1,0 +1,189 @@
+name: Flex delegate build stage (reusable)
+
+# One time-boxed stage of the Linux or Windows flex delegate build, called by
+# build-flex-linux.yml and build-flex-windows.yml. See
+# scripts/flex_desktop/build_stage.sh for why the build is split into stages.
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: linux or windows
+        type: string
+        required: true
+      runner:
+        type: string
+        required: true
+      variant:
+        description: linux hermetic; windows msvc or clang
+        type: string
+        required: true
+      stage:
+        type: number
+        required: true
+      prev_stage:
+        description: stage whose caches to restore (0 for none); expressions cannot subtract
+        type: number
+        default: 0
+      tf_version:
+        type: string
+        required: true
+      bazel_version:
+        type: string
+        required: true
+    outputs:
+      result:
+        description: done (library built) or timeout (the next stage continues)
+        value: ${{ jobs.stage.outputs.result }}
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    name: ${{ inputs.os }} ${{ inputs.variant }} stage ${{ inputs.stage }}
+    runs-on: ${{ inputs.runner }}
+    # GitHub-hosted jobs may run at most 360 minutes.
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      result: ${{ steps.build.outputs.result }}
+    env:
+      TF_VERSION: ${{ inputs.tf_version }}
+      USE_BAZEL_VERSION: ${{ inputs.bazel_version }}
+      FLEX_OS: ${{ inputs.os }}
+      FLEX_VARIANT: ${{ inputs.variant }}
+      LIB_NAME: ${{ inputs.os == 'linux' && 'libtensorflowlite_flex-linux.so' || 'libtensorflowlite_flex-win.dll' }}
+      JOB_LIMIT_MIN: 350
+      # Time kept back after bazel stops: shut bazel down, pack the caches and
+      # upload them. Windows tar and upload are slower.
+      SAVE_RESERVE_MIN: ${{ inputs.os == 'linux' && '35' || '55' }}
+      CACHE_ARTIFACT: flex-${{ inputs.os }}-${{ inputs.variant }}-cache-stage
+
+    steps:
+      - name: Record job start
+        run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+
+      - name: Free disk and choose build locations
+        run: bash scripts/flex_desktop/layout.sh "$FLEX_OS"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip numpy
+          if ! command -v bazelisk >/dev/null 2>&1; then
+            if [ "$FLEX_OS" = "windows" ]; then
+              mkdir -p "$HOME/bin"
+              curl -fsSL -o "$HOME/bin/bazelisk.exe" \
+                https://github.com/bazelbuild/bazelisk/releases/download/v1.27.0/bazelisk-windows-amd64.exe
+            else
+              mkdir -p "$HOME/bin"
+              curl -fsSL -o "$HOME/bin/bazelisk" \
+                https://github.com/bazelbuild/bazelisk/releases/download/v1.27.0/bazelisk-linux-amd64
+              chmod +x "$HOME/bin/bazelisk"
+            fi
+            echo "$HOME/bin" >> "$GITHUB_PATH"
+          fi
+          if [ "$FLEX_OS" = "windows" ]; then
+            git config --global core.longpaths true
+            # Bazel runs genrules and patches through MSYS2's bash.
+            /c/msys64/usr/bin/pacman -S --noconfirm --needed patch unzip zip diffutils zstd \
+              || echo "::warning::pacman install failed"
+            vc="$("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -products '*' -property installationPath | tr -d '\r')"
+            llvm="C:/Program Files/LLVM"
+            if [ "$FLEX_VARIANT" = "clang" ]; then
+              # The runner's LLVM 20 clashes with the Windows 10.0.26100 SDK
+              # (_m_prefetchw "has a different language linkage"), and VS
+              # 2022's STL needs Clang 19 or newer, so use LLVM 19.1.7.
+              curl -fsSL -o "$RUNNER_TEMP/llvm-19.exe" \
+                https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/LLVM-19.1.7-win64.exe
+              powershell -NoProfile -Command "Start-Process -Wait -FilePath '$(cygpath -w "$RUNNER_TEMP/llvm-19.exe")' -ArgumentList '/S','/D=C:\llvm19'"
+              /c/llvm19/bin/clang-cl.exe --version
+              llvm="C:/llvm19"
+            fi
+            # Windows SDK 10.0.26100's winnt.h declares _m_prefetchw in a way
+            # Clang 19 and 20 reject ("different language linkage"), so pin
+            # the newest older SDK the runner has for both variants.
+            echo "Installed Windows SDKs:"
+            ls "/c/Program Files (x86)/Windows Kits/10/Include" || true
+            sdk=""
+            for v in 10.0.22621.0 10.0.22000.0 10.0.20348.0 10.0.19041.0; do
+              if [ -f "/c/Program Files (x86)/Windows Kits/10/Include/$v/um/winnt.h" ]; then sdk="$v"; break; fi
+            done
+            if [ -z "$sdk" ]; then
+              echo "::error::no Windows SDK older than 10.0.26100 is installed"
+              exit 1
+            fi
+            {
+              echo "BAZEL_SH=C:/msys64/usr/bin/bash.exe"
+              echo "BAZEL_VC=$(cygpath -m "$vc")/VC"
+              echo "BAZEL_LLVM=$llvm"
+              echo "BAZEL_WINSDK_FULL_VERSION=$sdk"
+            } | tee -a "$GITHUB_ENV"
+          fi
+
+      - name: Prepare TensorFlow ${{ inputs.tf_version }}
+        run: bash scripts/flex_desktop/prepare_tf.sh
+
+      - name: Restore caches from stage ${{ inputs.prev_stage }}
+        if: inputs.prev_stage > 0
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.CACHE_ARTIFACT }}${{ inputs.prev_stage }}
+          path: ${{ env.ARCHIVE_DIR }}
+
+      - name: Unpack caches
+        if: inputs.prev_stage > 0
+        run: bash scripts/flex_desktop/disk_cache.sh unpack "$CACHE_ROOT" "$ARCHIVE_DIR"
+
+      - name: Seed repository cache with pinned archives
+        run: bash scripts/flex_desktop/seed_repo_cache.sh "$REPO_CACHE"
+
+      - name: Build (time-boxed)
+        id: build
+        run: bash scripts/flex_desktop/build_stage.sh
+
+      - name: Disk use after build
+        if: always()
+        run: df -h 2>/dev/null | grep -vE 'tmpfs|overlay' || true
+
+      - name: Upload library
+        if: steps.build.outputs.result == 'done'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flex-${{ inputs.os }}-${{ inputs.variant }}
+          path: ${{ env.DIST_DIR }}
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Pack caches for the next stage
+        if: steps.build.outputs.result == 'timeout'
+        run: |
+          # Bazel is stopped; its output tree is rebuilt from the disk cache by
+          # the next stage, so drop it to make room for the archive.
+          if [ "$FLEX_OS" = "windows" ]; then
+            cmd //c "rmdir /s /q $(cygpath -w "$OUTPUT_USER_ROOT")" || true
+          else
+            chmod -R u+w "$OUTPUT_USER_ROOT" 2>/dev/null || true
+            rm -rf "$OUTPUT_USER_ROOT"
+          fi
+          df -h 2>/dev/null | grep -vE 'tmpfs|overlay' || true
+          bash scripts/flex_desktop/disk_cache.sh pack "$CACHE_ROOT" "$ARCHIVE_DIR"
+
+      - name: Upload caches for the next stage
+        if: steps.build.outputs.result == 'timeout'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.CACHE_ARTIFACT }}${{ inputs.stage }}
+          path: ${{ env.ARCHIVE_DIR }}
+          retention-days: 3
+          compression-level: ${{ inputs.os == 'linux' && '0' || '1' }}
+          if-no-files-found: error

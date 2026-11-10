@@ -62,6 +62,25 @@ assert_npu_symbols() {
   [ "$found_any" -eq 1 ] || fail "$channel: no usable slice found"
 }
 
+# The podspec aborts `pod install` when a downloaded archive does not match the
+# SHA-256 pinned next to its URL, so a pin that drifts from the published bytes
+# is a hard break for every CocoaPods consumer. The pin is read from the podspec
+# (variable name given as $1), never hardcoded here.
+assert_podspec_pin() {
+  local var="$1" file="$2" what="$3" pinned actual
+  pinned="$(grep -oE "$var = '[a-f0-9]{64}'" "$PODSPEC" | grep -oE "[a-f0-9]{64}" | head -1)"
+  if [ -z "$pinned" ]; then
+    fail "cocoapods $what: no $var pin found in $PODSPEC"
+    return
+  fi
+  actual="$(shasum -a 256 "$file" | cut -d' ' -f1)"
+  if [ "$actual" = "$pinned" ]; then
+    echo "  ok: $what matches the podspec SHA-256 pin"
+  else
+    fail "cocoapods $what: SHA-256 mismatch (pinned $pinned, got $actual)"
+  fi
+}
+
 echo "== CocoaPods channel =="
 # The podspec downloads one bundle guarded by a marker; pull the URL it uses.
 pods_url="$(grep -oE "https://github\.com/[^']*/ios-frameworks\.zip" "$PODSPEC" | head -1)"
@@ -71,8 +90,20 @@ else
   echo "  url: $pods_url"
   curl -fsSL -o "$WORK/pods.zip" "$pods_url" || fail "download failed: $pods_url"
   if [ -s "$WORK/pods.zip" ]; then
+    assert_podspec_pin tflite_zip_sha256 "$WORK/pods.zip" "ios-frameworks.zip"
     mkdir -p "$WORK/pods" && unzip -qo "$WORK/pods.zip" -d "$WORK/pods"
     assert_npu_symbols "$WORK/pods/TensorFlowLiteCCoreML.xcframework" "cocoapods"
+  fi
+fi
+
+litert_url="$(grep -oE "https://github\.com/[^']*/litert-ios-frameworks\.zip" "$PODSPEC" | head -1)"
+if [ -z "$litert_url" ]; then
+  fail "could not resolve the litert-ios-frameworks.zip URL from $PODSPEC"
+else
+  echo "  url: $litert_url"
+  curl -fsSL -o "$WORK/litert.zip" "$litert_url" || fail "download failed: $litert_url"
+  if [ -s "$WORK/litert.zip" ]; then
+    assert_podspec_pin litert_zip_sha256 "$WORK/litert.zip" "litert-ios-frameworks.zip"
   fi
 fi
 

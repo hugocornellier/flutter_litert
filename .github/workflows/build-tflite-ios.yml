@@ -1,0 +1,476 @@
+name: Build TFLite C and Metal xcframeworks (iOS)
+
+# Builds the iOS TensorFlowLiteC and TensorFlowLiteCMetal frameworks from
+# TensorFlow (TF_VERSION below) with the upstream Bazel targets
+# //tensorflow/lite/ios:TensorFlowLiteC_framework and
+# //tensorflow/lite/ios:TensorFlowLiteCMetal_framework, one job per slice
+# (ios_arm64 device, ios_sim_arm64 and ios_x86_64 simulator), and packages
+# them in the two forms flutter_litert consumes:
+#
+# - ios-frameworks.zip (CocoaPods, downloaded by ios/flutter_litert.podspec):
+#   TensorFlowLiteC, TensorFlowLiteCMetal and TensorFlowLiteCCoreML
+#   xcframeworks, each with ios-arm64 and ios-arm64_x86_64-simulator slices.
+#   TensorFlowLiteCCoreML comes from build-coreml-ios.yml, called below.
+# - TensorFlowLiteC-spm.xcframework.zip and TensorFlowLiteCMetal-spm.xcframework.zip
+#   (SwiftPM binary targets in ios/flutter_litert/Package.swift): ios-arm64 and
+#   an arm64-only ios-arm64-simulator slice with per-bundle Info.plist.
+#
+# The 2.20.0 build being reproduced (libs-v0.1.9 and flex-v1.1.1) used the same
+# targets with -c opt and the ios configs of TensorFlow's .bazelrc (bitcode is
+# embedded, minimum iOS 12.0, arm64 simulator 14.0), and no flutter_litert
+# patches: the iOS Metal delegate in those releases predates
+# patches/gpu_transpose_conv_v4.patch. The metal_transpose_conv_v4 input adds
+# that patch; it is off by default to keep parity.
+#
+# Every output is compared with the published binary it replaces (archs,
+# platform and minimum OS, embedded TF version, exported symbol diff, headers),
+# and the podspec's nmedit hide list is checked against the new TensorFlowLiteC.
+# The references are the frameworks flutter_litert ships today (release
+# tflite-ios-v2.21.0); the 2.21.0 build itself was checked against the 2.20.0
+# releases above.
+# Outputs are Actions artifacts with .sha256 files. No release is created.
+
+on:
+  workflow_dispatch:
+    inputs:
+      metal_transpose_conv_v4:
+        description: 'Apply patches/gpu_transpose_conv_v4.patch to the Metal delegate (the published 2.20.0 and 2.21.0 builds did not)'
+        required: false
+        default: false
+        type: boolean
+      build_coreml:
+        description: 'Also build TensorFlowLiteCCoreML (build-coreml-ios.yml) for ios-frameworks.zip'
+        required: false
+        default: true
+        type: boolean
+      reuse_build_run:
+        description: 'Skip the Bazel builds and package the raw artifacts of this earlier run id'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  TF_VERSION: v2.21.0
+  EXPECTED_TF_VERSION: 2.21.0
+  BAZEL_VERSION: 7.7.0
+  REF_PODS_ZIP_URL: https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0/ios-frameworks.zip
+  REF_SPM_BASE_URL: https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      reuse: ${{ steps.plan.outputs.reuse }}
+      metal_patch: ${{ steps.plan.outputs.metal_patch }}
+      coreml: ${{ steps.plan.outputs.coreml }}
+    steps:
+      # A reuse_build_run id repackages that earlier run's raw slices instead of
+      # rebuilding them.
+      - id: plan
+        env:
+          IN_REUSE: ${{ inputs.reuse_build_run }}
+          IN_PATCH: ${{ inputs.metal_transpose_conv_v4 }}
+          IN_COREML: ${{ inputs.build_coreml }}
+        run: |
+          reuse="$IN_REUSE"
+          metal_patch=false
+          [ "$IN_PATCH" = "true" ] && metal_patch=true
+          coreml=true
+          [ "$IN_COREML" = "false" ] && coreml=false
+          [ -n "$reuse" ] && coreml=false
+          {
+            echo "reuse=$reuse"
+            echo "metal_patch=$metal_patch"
+            echo "coreml=$coreml"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.reuse == ''
+    runs-on: macos-15
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [ios_arm64, ios_sim_arm64, ios_x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/share/powershell /usr/local/.ghcup \
+            /usr/local/lib/android /usr/local/share/chromium 2>/dev/null || true
+          df -h /
+
+      # The 2.20.0 xcframeworks were built with the iOS 18.2 SDK (Xcode 16.2).
+      # Use that Xcode when the image still has it, else the closest 16.x.
+      - name: Select Xcode
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          for v in 16.2 16.3 16.4 16.1; do
+            if [ -d "/Applications/Xcode_$v.app" ]; then
+              sudo xcode-select -s "/Applications/Xcode_$v.app"
+              break
+            fi
+          done
+          xcodebuild -version
+          echo "iphoneos SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install numpy
+          brew install bazelisk
+
+      - name: Clone TensorFlow
+        run: |
+          git clone --depth 1 --branch $TF_VERSION \
+            https://github.com/tensorflow/tensorflow.git ~/tf-src
+
+      - name: Re-pin the LLVM source archive checksum
+        run: sh scripts/pin_tf_llvm_archive.sh ~/tf-src
+
+      - name: Patch apple_support so Objective-C compiles get the Xcode env
+        run: sh scripts/patch_tf_apple_support.sh ~/tf-src
+
+      - name: Patch GPU delegate to accept TRANSPOSE_CONV v4 (opt-in)
+        if: needs.plan.outputs.metal_patch == 'true'
+        run: |
+          cd ~/tf-src
+          git apply --verbose "$GITHUB_WORKSPACE/patches/gpu_transpose_conv_v4.patch"
+          grep -n "CheckMaxSupportedOpVersion(registration, 4)" \
+            tensorflow/lite/delegates/gpu/common/model_builder.cc
+          grep -n "MaybeFuseActivation(tf_options->activation, graph, node)" \
+            tensorflow/lite/delegates/gpu/common/model_builder.cc | tail -1
+
+      - name: Configure TensorFlow
+        run: |
+          cd ~/tf-src
+          # TF_CONFIGURE_IOS=1 symlinks BUILD.apple -> BUILD for tensorflow/lite/ios;
+          # without it the package does not exist.
+          PYTHON_BIN_PATH=$(which python3) \
+          TF_NEED_CUDA=0 TF_NEED_ROCM=0 TF_NEED_TENSORRT=0 \
+          TF_CONFIGURE_IOS=1 CC_OPT_FLAGS="-march=native" \
+          python3 configure.py
+          ls -la tensorflow/lite/ios/BUILD
+
+      - name: Build TensorFlowLiteC and TensorFlowLiteCMetal (${{ matrix.config }})
+        run: |
+          cd ~/tf-src
+          # --config=ios --cpu=<cpu>, as the 2.20.0 iOS workflows did. TF 2.21's
+          # --config=ios_<cpu> also sets --platforms=@build_bazel_apple_support//...,
+          # and with it Objective-C compiles fail with "DEVELOPER_DIR not set".
+          USE_BAZEL_VERSION=$BAZEL_VERSION bazelisk build -c opt \
+            --config=ios \
+            --cpu=${{ matrix.config }} \
+            --local_ram_resources=HOST_RAM*0.7 \
+            --jobs=4 \
+            //tensorflow/lite/ios:TensorFlowLiteC_framework \
+            //tensorflow/lite/ios:TensorFlowLiteCMetal_framework
+
+      - name: Collect and inspect
+        run: |
+          set -o pipefail
+          mkdir -p ~/raw
+          for name in TensorFlowLiteC TensorFlowLiteCMetal; do
+            dest=~/raw/$name-${{ matrix.config }}
+            mkdir -p "$dest"
+            unzip -q -o ~/tf-src/bazel-bin/tensorflow/lite/ios/${name}_framework.zip -d "$dest"
+            (cd "$dest" && find . -type f | sort)
+            bash scripts/inspect_ios_tflite_binary.sh "$dest/$name.framework/$name" \
+              | tee -a ~/raw/inspect-${{ matrix.config }}.txt
+          done
+          {
+            echo "config: ${{ matrix.config }}"
+            echo "tf_ref: $TF_VERSION"
+            echo "tf_commit: $(git -C ~/tf-src rev-parse HEAD)"
+            echo "metal_transpose_conv_v4: ${{ needs.plan.outputs.metal_patch }}"
+            echo "bazel: $BAZEL_VERSION"
+            echo "runner: macOS $(sw_vers -productVersion), $(xcodebuild -version | head -1), iphoneos SDK $(xcrun --sdk iphoneos --show-sdk-version)"
+          } > ~/raw/build-info-${{ matrix.config }}.txt
+          cat ~/raw/build-info-${{ matrix.config }}.txt
+          { echo '```'; cat ~/raw/build-info-${{ matrix.config }}.txt ~/raw/inspect-${{ matrix.config }}.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw slice
+        uses: actions/upload-artifact@v4
+        with:
+          name: tflite-ios-raw-${{ matrix.config }}
+          path: ~/raw/
+          if-no-files-found: error
+          retention-days: 30
+
+  coreml:
+    needs: plan
+    if: needs.plan.outputs.reuse == '' && needs.plan.outputs.coreml == 'true'
+    uses: ./.github/workflows/build-coreml-ios.yml
+
+  package:
+    needs: [plan, build, coreml]
+    if: >-
+      ${{ !cancelled() && needs.plan.result == 'success' &&
+      (needs.build.result == 'success' ||
+       (needs.build.result == 'skipped' && needs.plan.outputs.reuse != '')) }}
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          for v in 16.2 16.3 16.4 16.1; do
+            if [ -d "/Applications/Xcode_$v.app" ]; then
+              sudo xcode-select -s "/Applications/Xcode_$v.app"
+              break
+            fi
+          done
+          xcodebuild -version
+
+      - name: Download raw slices (this run)
+        if: needs.plan.outputs.reuse == ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tflite-ios-raw-*
+          merge-multiple: true
+          path: ~/raw
+
+      - name: Download raw slices (run ${{ needs.plan.outputs.reuse }})
+        if: needs.plan.outputs.reuse != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tflite-ios-raw-*
+          merge-multiple: true
+          path: ~/raw
+          run-id: ${{ needs.plan.outputs.reuse }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download Core ML xcframework (this run)
+        if: needs.coreml.result == 'success' || needs.coreml.result == 'failure'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: TensorFlowLiteCCoreML-ios-xcframework
+          path: ~/coreml
+
+      - name: Download the published references
+        run: |
+          mkdir -p ~/ref/pods ~/ref/spm
+          curl -fsSL -o ~/ref/ios-frameworks.zip "$REF_PODS_ZIP_URL"
+          unzip -q ~/ref/ios-frameworks.zip -d ~/ref/pods
+          for name in TensorFlowLiteC TensorFlowLiteCMetal; do
+            curl -fsSL -o ~/ref/$name-spm.xcframework.zip "$REF_SPM_BASE_URL/$name-spm.xcframework.zip"
+            unzip -q ~/ref/$name-spm.xcframework.zip -d ~/ref/spm
+          done
+          shasum -a 256 ~/ref/*.zip
+          find ~/ref/pods ~/ref/spm -maxdepth 2 | sort
+
+      - name: Package CocoaPods and SwiftPM forms
+        id: package
+        run: |
+          coreml=""
+          if [ -f ~/coreml/TensorFlowLiteCCoreML-ios.xcframework.zip ]; then
+            mkdir -p ~/coreml/x
+            unzip -q ~/coreml/TensorFlowLiteCCoreML-ios.xcframework.zip -d ~/coreml/x
+            coreml=~/coreml/x/TensorFlowLiteCCoreML.xcframework
+            cp ~/coreml/TensorFlowLiteCCoreML-ios.xcframework.zip ~/coreml/TensorFlowLiteCCoreML-spm.xcframework.zip
+            (cd ~/coreml && shasum -a 256 TensorFlowLiteCCoreML-spm.xcframework.zip > TensorFlowLiteCCoreML-spm.xcframework.zip.sha256)
+            echo "coreml=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No TensorFlowLiteCCoreML xcframework in this run; ios-frameworks.zip has TensorFlowLiteC and TensorFlowLiteCMetal only"
+          fi
+          bash scripts/package_ios_tflite_frameworks.sh ~/raw ~/out $coreml
+          mkdir -p ~/out/verify
+          cp ~/raw/build-info-*.txt ~/raw/inspect-*.txt ~/out/verify/ 2>/dev/null || true
+
+      - name: Compare with the published frameworks
+        id: compare
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          status=0
+          for name in TensorFlowLiteC TensorFlowLiteCMetal; do
+            for form in pods spm; do
+              bash scripts/compare_ios_tflite_frameworks.sh \
+                ~/out/$form/$name.xcframework ~/ref/$form/$name.xcframework \
+                "$EXPECTED_TF_VERSION" ~/out/verify/$form \
+                2>&1 | tee ~/out/verify/compare-$form-$name.txt || status=1
+            done
+          done
+          if [ -d ~/out/pods/TensorFlowLiteCCoreML.xcframework ]; then
+            bash scripts/compare_ios_tflite_frameworks.sh \
+              ~/out/pods/TensorFlowLiteCCoreML.xcframework ~/ref/pods/TensorFlowLiteCCoreML.xcframework \
+              "$EXPECTED_TF_VERSION" ~/out/verify/pods \
+              2>&1 | tee ~/out/verify/compare-pods-TensorFlowLiteCCoreML.txt || status=1
+          fi
+          {
+            echo '### Comparison with the published tflite-ios-v2.21.0 frameworks'
+            echo '```'
+            grep -h -E '^(#####|=== slice|archs|size|--- .*\[|build version|global symbols|added|removed|version strings|Headers|Modules|bundle|RESULT|FAIL)' ~/out/verify/compare-*.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Check the podspec nmedit hide list
+        id: nmedit
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          bash scripts/check_ios_tflc_nmedit_list.sh \
+            ~/out/pods/TensorFlowLiteC.xcframework ios/flutter_litert.podspec \
+            2>&1 | tee ~/out/verify/nmedit-check.txt
+          { echo '### podspec nmedit list'; echo '```'; cat ~/out/verify/nmedit-check.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # Links all three frameworks into one program, as an app using the
+      # plugin does (catches duplicate symbols and header problems), for the
+      # device and the simulator, then runs the simulator build and checks
+      # TfLiteVersion(). Informational: a missing simulator runtime on the
+      # image must not block the artifacts.
+      - name: Link check and simulator TfLiteVersion()
+        id: runtime
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p ~/rt
+          cat > ~/rt/main.c <<'EOF'
+          #include <stdio.h>
+          #include <string.h>
+          #include <TensorFlowLiteC/TensorFlowLiteC.h>
+          extern void* TFLGpuDelegateCreate(const void* options);
+          #ifdef HAVE_COREML
+          extern void* TfLiteCoreMlDelegateCreate(const void* options);
+          #endif
+          int main(void) {
+            const char* v = TfLiteVersion();
+            printf("TfLiteVersion() = %s\n", v);
+            printf("TFLGpuDelegateCreate at %p\n", (void*)&TFLGpuDelegateCreate);
+          #ifdef HAVE_COREML
+            printf("TfLiteCoreMlDelegateCreate at %p\n", (void*)&TfLiteCoreMlDelegateCreate);
+          #endif
+            return strncmp(v, EXPECTED, strlen(EXPECTED)) == 0 ? 0 : 3;
+          }
+          EOF
+          names="TensorFlowLiteC TensorFlowLiteCMetal"
+          extra="-framework Metal -framework Foundation -lc++"
+          if [ -d ~/out/pods/TensorFlowLiteCCoreML.xcframework ]; then
+            names="$names TensorFlowLiteCCoreML"
+            extra="$extra -framework CoreML -DHAVE_COREML"
+          fi
+          echo "linking: $names"
+          link() {
+            sdk="$1"; slice="$2"; minflag="$3"; out="$4"
+            args=""
+            for n in $names; do
+              args="$args -F $HOME/out/pods/$n.xcframework/$slice -framework $n"
+            done
+            xcrun -sdk "$sdk" clang -arch arm64 "$minflag" -DEXPECTED="\"$EXPECTED_TF_VERSION\"" \
+              ~/rt/main.c -o "$out" $args $extra
+          }
+          link iphoneos ios-arm64 -miphoneos-version-min=15.0 ~/rt/t-device
+          echo "device link OK"
+          link iphonesimulator ios-arm64_x86_64-simulator -mios-simulator-version-min=15.0 ~/rt/t-sim
+          echo "simulator link OK"
+          udid="$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          for rt, devs in sorted(d.items(), reverse=True):
+              if "iOS" in rt:
+                  for x in devs:
+                      if x["name"].startswith("iPhone"):
+                          print(x["udid"]); sys.exit(0)
+          ')"
+          echo "simulator: $udid"
+          xcrun simctl boot "$udid" || true
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl spawn "$udid" ~/rt/t-sim 2>&1 | tee ~/out/verify/simulator-tfliteversion.txt
+          { echo '### simulator run'; echo '```'; cat ~/out/verify/simulator-tfliteversion.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Manifest
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        run: |
+          cd ~/out
+          {
+            echo "tf_ref: $TF_VERSION"
+            echo "bazel: $BAZEL_VERSION"
+            echo "package runner: macOS $(sw_vers -productVersion), $(xcodebuild -version | head -1)"
+            echo "compare: ${{ steps.compare.outcome }}"
+            echo "nmedit list: ${{ steps.nmedit.outcome }}"
+            echo "link and simulator run: ${{ steps.runtime.outcome }}"
+            echo
+            echo "zips:"
+            for z in ios-frameworks.zip TensorFlowLiteC-spm.xcframework.zip TensorFlowLiteCMetal-spm.xcframework.zip; do
+              echo "  $z size $(stat -f %z "$z") sha256 $(cut -d' ' -f1 "$z.sha256")"
+            done
+            echo
+            echo "binaries:"
+            find pods spm -type f -path '*.framework/*' ! -path '*/Headers/*' ! -path '*/Modules/*' ! -name Info.plist | sort | while read -r f; do
+              echo "  $f size $(stat -f %z "$f") archs $(lipo -archs "$f") sha256 $(shasum -a 256 "$f" | cut -d' ' -f1)"
+            done
+          } > verify/manifest.txt
+          cat verify/manifest.txt
+          { echo '### Manifest'; echo '```'; cat verify/manifest.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload ios-frameworks.zip (CocoaPods)
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-frameworks
+          path: |
+            ~/out/ios-frameworks.zip
+            ~/out/ios-frameworks.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload TensorFlowLiteC-spm
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: TensorFlowLiteC-spm
+          path: |
+            ~/out/TensorFlowLiteC-spm.xcframework.zip
+            ~/out/TensorFlowLiteC-spm.xcframework.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload TensorFlowLiteCMetal-spm
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: TensorFlowLiteCMetal-spm
+          path: |
+            ~/out/TensorFlowLiteCMetal-spm.xcframework.zip
+            ~/out/TensorFlowLiteCMetal-spm.xcframework.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload TensorFlowLiteCCoreML-spm
+        if: ${{ !cancelled() && steps.package.outcome == 'success' && steps.package.outputs.coreml == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: TensorFlowLiteCCoreML-spm
+          path: |
+            ~/coreml/TensorFlowLiteCCoreML-spm.xcframework.zip
+            ~/coreml/TensorFlowLiteCCoreML-spm.xcframework.zip.sha256
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload verification reports
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-tflite-verify
+          path: ~/out/verify/
+          retention-days: 30
+
+      - name: Fail if a check failed
+        if: steps.compare.outcome == 'failure' || steps.nmedit.outcome == 'failure'
+        run: |
+          echo "compare: ${{ steps.compare.outcome }}, nmedit list: ${{ steps.nmedit.outcome }}"
+          exit 1

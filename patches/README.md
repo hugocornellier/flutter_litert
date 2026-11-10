@@ -16,7 +16,7 @@ The patch also exports a thread-local delegated-node counter. The iOS
 accelerator-registration bridge reads it after compilation and rejects a
 zero-node Core ML result rather than silently returning CPU-only inference.
 It is deliberately separate from `coreml_mean_padding.patch`; the iOS build
-workflow applies both patches to TensorFlow v2.20.0.
+workflow applies both patches to TensorFlow v2.21.0.
 
 The matching workflow is `build-coreml-ios.yml`. It builds an arm64 device
 slice and a universal arm64+x86_64 simulator slice, then verifies the new NPU
@@ -238,13 +238,16 @@ framework from the same TensorFlow version with this patch applied.
 
 **Packaged macOS artifact.** The dylib committed at
 `macos/flutter_litert/Sources/flutter_litert/Resources/libtensorflowlite_coreml-mac.dylib`
-was rebuilt from TensorFlow `v2.20.0` by
-[workflow run 30707513086](https://github.com/hugocornellier/flutter_litert/actions/runs/30707513086)
+was rebuilt from TensorFlow `v2.21.0` by
+[workflow run 42666219391](https://github.com/hugocornellier/flutter_litert/actions/runs/42666219391)
 with this patch applied. Its SHA-256 is
-`c33c4e904613aed37a409b2805db7099edc4a8952f3e4794f5e84e58c5654580`.
+`7b2cc71c071036c9bb7fc7f13a089bbdd03c4d1afaea661364a19a9dbd56a937`.
+The previous `v2.20.0` build, from
+[workflow run 30707513086](https://github.com/hugocornellier/flutter_litert/actions/runs/30707513086),
+had SHA-256 `c33c4e904613aed37a409b2805db7099edc4a8952f3e4794f5e84e58c5654580`.
 
-The post-build macOS matrix exercised all 29 published models through the
-classic CoreML delegate. The four models that previously failed Core ML
+On that `v2.20.0` dylib, the post-build macOS matrix exercised all 29 published
+models through the classic CoreML delegate. The four models that previously failed Core ML
 validation now compile and execute: `species_classifier_float16`,
 `superanimal_rtmpose_s_float16`, `superanimal_ssdlite_float16`, and
 `selfie_segmenter_landscape`. CPU-reference parity passes for SSD-Lite; the
@@ -252,3 +255,42 @@ other three remain accuracy-policy failures and must not be treated as safe
 CoreML choices. `coreml_delegate_test.dart` uses the species classifier to
 assert that this global-MEAN path stays delegated instead of silently retrying
 on CPU.
+
+## apple_support_objc_compile_actions.patch
+
+Makes the Apple C/C++ toolchain of TensorFlow v2.21.0 pass its compile flags
+and Xcode environment to Objective-C and Objective-C++ actions. Unlike the
+other patches here, it patches Bazel's `apple_support` dependency, not the
+TensorFlow tree.
+
+**Why.** TF v2.21.0 moved to `apple_support` 1.24.5 (v2.20.0 used 1.18.1 and did
+not hit this). Its `crosstool/cc_toolchain_config.bzl` scopes `-c <source>`,
+`-target ...` and the `XCODE_VERSION_OVERRIDE` / `APPLE_SDK_*` environment to
+`ACTION_NAME_GROUPS.all_cc_compile_actions`. Only `rules_cc` 0.2 and newer put
+`objc-compile` and `objc++-compile` in that group, and TensorFlow's WORKSPACE
+resolves an older `rules_cc`. So Bazel never sets `DEVELOPER_DIR` for those
+compiles, and the first `.mm` file (`gpu/metal/common.mm`,
+`coreml/coreml_executor.mm`) fails with:
+
+```
+Error: DEVELOPER_DIR not set.
+```
+
+The same applies to `objc-executable`, the `ObjcLink` action of `macos_dylib`,
+which `rules_cc` 0.2 lists in `cc_link_executable_actions` and older versions
+do not.
+
+**What it does.** Adds `objc-compile` and `objc++-compile` to the compile action
+list, and `objc-executable` to the dynamic link action list, wherever they are
+missing, as `rules_cc` 0.2.13 (the version `apple_support` 1.24.5 requires)
+already does. With a newer `rules_cc` the additions are no-ops.
+
+**How it is applied.** `scripts/patch_tf_apple_support.sh <tf-src>` copies the
+patch into the checkout's `third_party/` and adds it as `patch_file` to the
+`build_bazel_apple_support` archive in `tensorflow/workspace2.bzl`, so Bazel
+patches `apple_support` when it fetches it. The archive's SHA-256 is still
+checked, and the script fails if the checkout does not fetch `apple_support`
+1.24.5 at the pinned SHA-256. It runs after the TensorFlow clone in
+`build-tflite-ios.yml`, `build-coreml-ios.yml`, `build-metal-macos.yml`,
+`build-coreml-macos.yml` and `build-flex-ios.yml`, which all compile
+Objective-C(++) sources.

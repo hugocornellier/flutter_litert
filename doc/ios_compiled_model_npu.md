@@ -79,7 +79,7 @@ Engine hardware.
 
 `.github/workflows/build-coreml-ios.yml` applies both
 `patches/coreml_mean_padding.patch` and
-`patches/litert_coreml_npu_ios.patch` to TensorFlow v2.20.0. It builds an arm64
+`patches/litert_coreml_npu_ios.patch` to TensorFlow v2.21.0. It builds an arm64
 device framework and arm64+x86_64 simulator framework, writes the required
 bundle plists, assembles the xcframework, and verifies the ordinary and
 NPU-specific exported symbols.

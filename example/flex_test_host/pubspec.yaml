@@ -10,7 +10,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_litert: ^4.0.0
+  flutter_litert: ^4.1.0
   flutter_litert_flex: ^2.0.0
 
 dev_dependencies:
@@ -23,6 +23,12 @@ dev_dependencies:
 dependency_overrides:
   flutter_litert:
     path: ../..
+  # TEMP: test the unpublished flutter_litert_flex 2.1.0 (flex rebuilt at TF
+  # 2.21.0) before it is on pub.dev. Drop this override before merging.
+  flutter_litert_flex:
+    git:
+      url: https://github.com/hugocornellier/flutter_litert_flex.git
+      ref: 1a6536cf301c8aea347cbc494153360951c8e5b1
 
 flutter:
   assets:
