@@ -14,13 +14,18 @@ Fixes the iOS and macOS `Interpreter` slowdown with the XNNPACK delegate that
   an inference paid a wake-up and the workers queued on each other. The
   TensorFlow Lite C frameworks (iOS, release `tflite-ios-v2.21.0-xnn1`) and
   the macOS dylib are rebuilt with `patches/pthreadpool_apple_spin.patch`,
-  which spins without the mutex and as long as pthreadpool does on Android.
-  Measured on a physical iPhone 15 Pro with 4 XNNPACK threads over 28 models,
-  same day and same build settings: 4.1.0 was a median MEDIAN_410 slower than
-  4.0.0 (total +TOTAL_410%), 4.1.1 is MEDIAN_411 (total TOTAL_411%). On an
-  Apple silicon Mac (MAC_RESULT). Results are unchanged. CPU use between
-  inferences is unchanged: a worker spins for under a millisecond after the
-  last parallel section before it sleeps.
+  which spins without the mutex, polls the completion flag with plain loads
+  instead of atomic exchanges (an exchange per spin iteration starved the
+  worker that sets the flag on the iPhone), and spins as long as pthreadpool
+  does on Android. Measured on a physical iPhone 15 Pro with 4 XNNPACK
+  threads over 28 models, same day and same build settings, two passes each:
+  4.1.0 was a median 7 to 9% slower than 4.0.0 (total +3 to +4%); 4.1.1 is a
+  median 13 to 18% faster than 4.0.0 (total 3 to 9% lower) and 23 to 27%
+  faster than 4.1.0 (total 7 to 11% lower), with 0 to 5 of the 28 models
+  slower than 4.0.0 by at most 3%. On an Apple silicon Mac (MAC_RESULT).
+  Results are unchanged. CPU use between inferences is unchanged: a worker
+  spins for under a millisecond after the last parallel section before it
+  sleeps.
 * iOS CocoaPods and Swift Package Manager download the rebuilt frameworks from
   release `tflite-ios-v2.21.0-xnn1`; the Metal and Core ML delegate frameworks
   are the same binaries as in 4.1.0.

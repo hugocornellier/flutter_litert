@@ -1,6 +1,6 @@
 diff -ru a/src/pthreads.c new/src/pthreads.c
---- a/src/pthreads.c	2026-11-10 10:49:11
-+++ b/src/pthreads.c	2026-11-10 10:49:11
+--- a/src/pthreads.c	2026-11-10 11:41:46
++++ b/src/pthreads.c	2026-11-10 11:41:46
 @@ -181,11 +181,7 @@
    uint32_t num_recruited_threads =
        pthreadpool_load_acquire_uint32_t(&threadpool->num_recruited_threads);
@@ -98,7 +98,7 @@ diff -ru a/src/pthreads.c new/src/pthreads.c
      for (size_t iter = 0; !work_is_done; iter++) {
        // Just spin for the first few iterations.
        if (iter < PTHREADPOOL_SPIN_WAIT_ITERATIONS) {
-@@ -295,19 +295,22 @@
+@@ -295,19 +295,29 @@
          futex_wait((pthreadpool_atomic_uint32_t*)&threadpool->work_is_done,
                     work_is_done);
  #else
@@ -116,8 +116,17 @@ diff -ru a/src/pthreads.c new/src/pthreads.c
  #endif  // PTHREADPOOL_USE_FUTEX
        }
  
-       work_is_done =
-           pthreadpool_exchange_acquire_uint32_t(&threadpool->work_is_done, 0);
+-      work_is_done =
+-          pthreadpool_exchange_acquire_uint32_t(&threadpool->work_is_done, 0);
++      // Spin on a plain load and consume the flag only once it is seen. An
++      // exchange in the spin loop contends with the exchange in
++      // `signal_work_is_done`; on the iPhone's cores the signalling worker
++      // lost that contention for the whole spin, so every parallel section
++      // took as long as the spin.
++      if (pthreadpool_load_acquire_uint32_t(&threadpool->work_is_done)) {
++        work_is_done = pthreadpool_exchange_acquire_uint32_t(
++            &threadpool->work_is_done, 0);
++      }
      }
 -
 -#if !PTHREADPOOL_USE_FUTEX
@@ -128,9 +137,9 @@ diff -ru a/src/pthreads.c new/src/pthreads.c
  
  static void signal_num_recruited_threads(pthreadpool_t threadpool) {
 diff -ru a/src/threadpool-common.h new/src/threadpool-common.h
---- a/src/threadpool-common.h	2026-11-10 10:49:11
-+++ b/src/threadpool-common.h	2026-11-10 10:49:11
-@@ -47,6 +47,17 @@
+--- a/src/threadpool-common.h	2026-11-10 11:41:46
++++ b/src/threadpool-common.h	2026-11-10 11:41:46
+@@ -47,6 +47,18 @@
   * than we otherwise would. */
  #define PTHREADPOOL_SPIN_YIELD_ITERATIONS 10
  #define PTHREADPOOL_SPIN_PAUSE_ITERATIONS 100000
@@ -139,7 +148,8 @@ diff -ru a/src/threadpool-common.h new/src/threadpool-common.h
 + * and the main thread has to wake it for every parallel section. The GCD
 + * backend that this pool replaced on Apple never slept between the sections
 + * of one inference, so spin as long as Android does. pthreads.c spins without
-+ * holding the mutex, so a long spin costs the other threads nothing.
++ * holding the mutex and without read-modify-write operations, so a long spin
++ * costs the other threads nothing.
 + * Overridable with -DPTHREADPOOL_SPIN_PAUSE_ITERATIONS=N. */
 +#define PTHREADPOOL_SPIN_YIELD_ITERATIONS 0
 +#ifndef PTHREADPOOL_SPIN_PAUSE_ITERATIONS

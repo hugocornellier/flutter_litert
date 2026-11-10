@@ -16,10 +16,12 @@
 #
 # patches/pthreadpool_apple_spin.patch makes the condition-variable waits in
 # src/pthreads.c spin without the mutex (taking it only to sleep, with a
-# re-check under the lock) and gives Apple the Android spin count in
-# src/threadpool-common.h. It applies to that exact pthreadpool revision; see
-# patches/README.md. This script registers the patch in both places TF
-# fetches pthreadpool from:
+# re-check under the lock), makes the main thread poll the completion flag
+# with plain loads instead of an atomic exchange per iteration (the exchange
+# starved the signalling worker on the iPhone), and gives Apple the Android
+# spin count in src/threadpool-common.h. It applies to that exact pthreadpool
+# revision; see patches/README.md. This script registers the patch in both
+# places TF fetches pthreadpool from:
 #   - tensorflow/workspace2.bzl (bazel, the iOS frameworks and the macOS arm64
 #     slice): adds patch_file to the pthreadpool tf_http_archive;
 #   - tensorflow/lite/cmake/DownloadPThreadPool.cmake (CMake, the macOS x86_64
