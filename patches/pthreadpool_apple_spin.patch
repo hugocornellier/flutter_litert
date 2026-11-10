@@ -1,0 +1,150 @@
+diff -ru a/src/pthreads.c new/src/pthreads.c
+--- a/src/pthreads.c	2026-11-10 10:49:11
++++ b/src/pthreads.c	2026-11-10 10:49:11
+@@ -181,11 +181,7 @@
+   uint32_t num_recruited_threads =
+       pthreadpool_load_acquire_uint32_t(&threadpool->num_recruited_threads);
+ 
+-#if !PTHREADPOOL_USE_FUTEX
+   if (num_recruited_threads != expected) {
+-    pthreadpool_mutex_lock(&threadpool->completion_mutex);
+-#endif  // !PTHREADPOOL_USE_FUTEX
+-
+     for (size_t iter = 0; num_recruited_threads != expected; iter++) {
+       // Just spin for the first few iterations.
+       if (iter < PTHREADPOOL_SPIN_WAIT_ITERATIONS) {
+@@ -196,18 +192,25 @@
+ #if PTHREADPOOL_USE_FUTEX
+         futex_wait(&threadpool->num_recruited_threads, num_recruited_threads);
+ #else
+-        pthreadpool_cond_wait(&threadpool->completion_condvar,
+-                              &threadpool->completion_mutex);
++        // Take the mutex only to sleep. The condition is re-checked under it
++        // because the signalling thread changes the counter before it takes
++        // the mutex, so a change made after the spin is seen here and a
++        // signal sent after this check reaches the wait. The mutex is not
++        // held while spinning, so a spinning thread never delays the
++        // signalling thread or the other waiters.
++        pthreadpool_mutex_lock(&threadpool->completion_mutex);
++        if (pthreadpool_load_acquire_uint32_t(
++                &threadpool->num_recruited_threads) != expected) {
++          pthreadpool_cond_wait(&threadpool->completion_condvar,
++                                &threadpool->completion_mutex);
++        }
++        pthreadpool_mutex_unlock(&threadpool->completion_mutex);
+ #endif  // PTHREADPOOL_USE_FUTEX
+       }
+       num_recruited_threads =
+           pthreadpool_load_acquire_uint32_t(&threadpool->num_recruited_threads);
+     }
+-
+-#if !PTHREADPOOL_USE_FUTEX
+-    pthreadpool_mutex_unlock(&threadpool->completion_mutex);
+   }
+-#endif  // !PTHREADPOOL_USE_FUTEX
+ }
+ 
+ static int32_t wait_on_num_active_threads(pthreadpool_t threadpool,
+@@ -216,10 +219,6 @@
+       pthreadpool_load_consume_int32_t(&threadpool->num_active_threads);
+ 
+   if (curr_active_threads <= 0) {
+-#if !PTHREADPOOL_USE_FUTEX
+-    pthreadpool_mutex_lock(&threadpool->num_active_threads_mutex);
+-#endif  // !PTHREADPOOL_USE_FUTEX
+-
+     for (size_t iter = 0; curr_active_threads <= 0; iter++) {
+       // Just spin for the first few iterations.
+       if (!(threadpool->flags & PTHREADPOOL_FLAG_DONT_SPIN_WORKERS) &&
+@@ -258,18 +257,23 @@
+         pthreadpool_log_debug(
+             "thread %u waiting on change in num active threads (curr=%i)...",
+             thread_id, curr_active_threads);
+-        pthreadpool_cond_wait(&threadpool->num_active_threads_condvar,
+-                              &threadpool->num_active_threads_mutex);
++        // Take the mutex only to sleep; see wait_on_num_recruited_threads.
++        // `pthreadpool_parallelize` stores `num_active_threads` before it
++        // takes the mutex to broadcast, so the re-check under the mutex sees
++        // a job started after the spin.
++        pthreadpool_mutex_lock(&threadpool->num_active_threads_mutex);
++        if (pthreadpool_load_consume_int32_t(&threadpool->num_active_threads) <=
++            0) {
++          pthreadpool_cond_wait(&threadpool->num_active_threads_condvar,
++                                &threadpool->num_active_threads_mutex);
++        }
++        pthreadpool_mutex_unlock(&threadpool->num_active_threads_mutex);
+ #endif  // PTHREADPOOL_USE_FUTEX
+       }
+ 
+       curr_active_threads =
+           pthreadpool_load_consume_int32_t(&threadpool->num_active_threads);
+     }
+-
+-#if !PTHREADPOOL_USE_FUTEX
+-    pthreadpool_mutex_unlock(&threadpool->num_active_threads_mutex);
+-#endif  // !PTHREADPOOL_USE_FUTEX
+   }
+ 
+   return curr_active_threads;
+@@ -279,11 +283,7 @@
+   int32_t work_is_done =
+       pthreadpool_exchange_acquire_uint32_t(&threadpool->work_is_done, 0);
+ 
+-#if !PTHREADPOOL_USE_FUTEX
+   if (!work_is_done) {
+-    pthreadpool_mutex_lock(&threadpool->completion_mutex);
+-#endif  // !PTHREADPOOL_USE_FUTEX
+-
+     for (size_t iter = 0; !work_is_done; iter++) {
+       // Just spin for the first few iterations.
+       if (iter < PTHREADPOOL_SPIN_WAIT_ITERATIONS) {
+@@ -295,19 +295,22 @@
+         futex_wait((pthreadpool_atomic_uint32_t*)&threadpool->work_is_done,
+                    work_is_done);
+ #else
+-        pthreadpool_cond_wait(&threadpool->completion_condvar,
+-                              &threadpool->completion_mutex);
++        // Take the mutex only to sleep; see wait_on_num_recruited_threads.
++        // `signal_work_is_done` sets the flag before it takes the mutex. The
++        // flag is only read here; the exchange below consumes it.
++        pthreadpool_mutex_lock(&threadpool->completion_mutex);
++        if (!pthreadpool_load_acquire_uint32_t(&threadpool->work_is_done)) {
++          pthreadpool_cond_wait(&threadpool->completion_condvar,
++                                &threadpool->completion_mutex);
++        }
++        pthreadpool_mutex_unlock(&threadpool->completion_mutex);
+ #endif  // PTHREADPOOL_USE_FUTEX
+       }
+ 
+       work_is_done =
+           pthreadpool_exchange_acquire_uint32_t(&threadpool->work_is_done, 0);
+     }
+-
+-#if !PTHREADPOOL_USE_FUTEX
+-    pthreadpool_mutex_unlock(&threadpool->completion_mutex);
+   }
+-#endif  // !PTHREADPOOL_USE_FUTEX
+ }
+ 
+ static void signal_num_recruited_threads(pthreadpool_t threadpool) {
+diff -ru a/src/threadpool-common.h new/src/threadpool-common.h
+--- a/src/threadpool-common.h	2026-11-10 10:49:11
++++ b/src/threadpool-common.h	2026-11-10 10:49:11
+@@ -47,6 +47,17 @@
+  * than we otherwise would. */
+ #define PTHREADPOOL_SPIN_YIELD_ITERATIONS 10
+ #define PTHREADPOOL_SPIN_PAUSE_ITERATIONS 100000
++#elif defined(__APPLE__)
++/* Apple has no futex: after the spin a worker sleeps on a condition variable
++ * and the main thread has to wake it for every parallel section. The GCD
++ * backend that this pool replaced on Apple never slept between the sections
++ * of one inference, so spin as long as Android does. pthreads.c spins without
++ * holding the mutex, so a long spin costs the other threads nothing.
++ * Overridable with -DPTHREADPOOL_SPIN_PAUSE_ITERATIONS=N. */
++#define PTHREADPOOL_SPIN_YIELD_ITERATIONS 0
++#ifndef PTHREADPOOL_SPIN_PAUSE_ITERATIONS
++#define PTHREADPOOL_SPIN_PAUSE_ITERATIONS 100000
++#endif
+ #else
+ 
+ #define PTHREADPOOL_SPIN_YIELD_ITERATIONS 0

@@ -142,6 +142,9 @@ jobs:
       - name: Patch apple_support so Objective-C compiles get the Xcode env
         run: sh scripts/patch_tf_apple_support.sh ~/tf-src
 
+      - name: Patch pthreadpool to spin longer on Apple (XNNPACK speed, 4.1.1)
+        run: sh scripts/patch_tf_pthreadpool.sh ~/tf-src
+
       - name: Patch GPU delegate to accept TRANSPOSE_CONV v4 (opt-in)
         if: needs.plan.outputs.metal_patch == 'true'
         run: |

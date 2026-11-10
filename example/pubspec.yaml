@@ -11,7 +11,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_litert: ^4.1.0
+  flutter_litert: ^4.1.1
   opencv_dart: ^2.2.2
   # Require the upstream fix for the hardcoded iOS 12 CMake target (#19). Leave
   # its iOS deployment_target hook setting unset: a value above Flutter's 15.0
