@@ -550,9 +550,24 @@ jobs:
         working-directory: example/play_services_test_host
         run: flutter analyze
 
+      # This is the first Gradle build of the job, so it downloads the NDK.
+      # As in build-android, that download can break off and leave a
+      # corrupted archive ("Error on ZipFile unknown archive"), which fails
+      # assembleDebug. Only in that case the partial NDK is purged and the
+      # build runs again, up to three attempts; any other build failure
+      # fails the step at once.
       - name: Build the Play services host APK
         working-directory: example/play_services_test_host
-        run: flutter build apk --debug
+        run: |
+          for attempt in 1 2 3; do
+            flutter build apk --debug 2>&1 | tee "$RUNNER_TEMP/host-build.log"
+            rc=${PIPESTATUS[0]}
+            [ "$rc" -eq 0 ] && exit 0
+            grep -q "preparing SDK package NDK" "$RUNNER_TEMP/host-build.log" || exit "$rc"
+            echo "::warning::the NDK download broke off in attempt $attempt (rc=$rc)"
+            rm -rf "$ANDROID_HOME"/ndk/* "$ANDROID_HOME"/.temp
+          done
+          exit "$rc"
 
       - name: Check the APK packages the Play services runtime only
         run: >-
@@ -608,8 +623,36 @@ jobs:
           # listen and flutter test waits for it without end. So the smoke
           # APK is uninstalled first (a new uid is not restricted), and
           # timeout ends that test run if it stalls all the same.
+          # The Play Store on this image can update itself and then Google
+          # Play services while the job runs (seen from 1 to 12 minutes
+          # after boot). While that update installs, Android stops Play
+          # services for 15 to 40 s and kills every app that has loaded code
+          # from it, this host included: that ended the release smoke app
+          # 2 s after launch in one run and failed attempt 1 of the first
+          # test in others. Disabling the Play Store prevents the update,
+          # but Play services downloads the runtime module through the
+          # store, about 80 s after boot, and the module then stays on the
+          # device across a Play services update. So the script waits until
+          # Play services reports the module (the query its client library
+          # uses), disables the Play Store, waits for an install the store
+          # had already handed to Android, and only then runs the tests and
+          # the smoke apps. If the module does not show up in 3 minutes,
+          # the store stays on for the first test and is disabled after it.
           script: >-
-            bash -c 'set +e; timeout 300 adb -s emulator-5554 shell am wait-for-broadcast-idle;
+            bash -c 'set +e;
+            settle() { for i in $(seq 1 36); do
+            [ "$(adb -s emulator-5554 shell dumpsys package installs | sed -n "/Active install sessions/,/Finalized install sessions/p" | grep -c mCommitted=true)" = 0 ] && break;
+            echo "waiting for an install that is under way"; sleep 5; done;
+            timeout 300 adb -s emulator-5554 shell am wait-for-broadcast-idle; };
+            storeoff() { adb -s emulator-5554 shell pm disable-user --user 0 com.android.vending ||
+            echo "::warning::could not disable the Play Store, a Play services update can still end a later step";
+            settle; };
+            ready=0; for i in $(seq 1 36); do
+            timeout 30 adb -s emulator-5554 shell content query --uri content://com.google.android.gms.chimera/api/com.google.android.gms.tflite_dynamite | grep -q " version=[1-9]" && ready=1 && break;
+            echo "waiting for Play services to download the runtime module"; sleep 5; done;
+            if [ "$ready" = 1 ]; then storeoff; else
+            echo "::warning::the runtime module is not on the device after 3 minutes, the Play Store stays on for the first test";
+            settle; fi;
             rc=1; for attempt in 1 2; do
             adb -s emulator-5554 logcat -c;
             timeout 1500 flutter test integration_test/play_services_runtime_test.dart -d emulator-5554 --timeout 900s; rc=$?;
@@ -619,6 +662,7 @@ jobs:
             adb -s emulator-5554 logcat -d | grep -E "flutter|LiteRt|litert|TfLite|tflite|Dynamite|Chimera|AndroidRuntime|FATAL" | tail -n 300;
             echo "::endgroup::";
             done; [ "$rc" -eq 0 ] || exit "$rc";
+            storeoff;
             bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600 &&
             adb -s emulator-5554 uninstall com.hugocornellier.flutter_litert_play_services_test_host &&
             env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto timeout -k 30 900 flutter test integration_test/auto_runtime_test.dart -d emulator-5554 --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices --timeout 600s &&
@@ -808,6 +852,14 @@ jobs:
           attempt_timeout=900
           cold_build_timeout=1800
           max=2
+          # flutter_tools reads the app's VM service URL from a simulator log
+          # stream that it starts together with `simctl launch`, then waits
+          # for the URL with no timeout. An app that printed the URL before
+          # the stream had connected left the launch silent until the
+          # watchdog fired. This xcrun stand-in holds the launch until the
+          # stream is connected and logs when that happened.
+          launch_gate="$GITHUB_WORKSPACE/scripts/ios_simulator_launch"
+          export IOS_LAUNCH_GATE_LOG="$RUNNER_TEMP/ios-launch-gate.log"
 
           run_ios_test() {
             test_file="$1"
@@ -821,7 +873,8 @@ jobs:
               timeout_marker="$RUNNER_TEMP/ios-timeout-$(basename "$test_file")-$attempt"
               rm -f "$timeout_marker"
               echo "::group::$test_file (attempt $attempt/$max)"
-              flutter test "$test_file" \
+              rm -f "$IOS_LAUNCH_GATE_LOG"
+              PATH="$launch_gate:$PATH" flutter test "$test_file" \
                 -d "$SIMULATOR_UDID" --timeout 600s &
               pid=$!
               ( sleep "$watchdog_timeout"
@@ -837,6 +890,7 @@ jobs:
               rc=$?
               kill -TERM "$watchdog" 2>/dev/null
               wait "$watchdog" 2>/dev/null
+              cat "$IOS_LAUNCH_GATE_LOG" 2>/dev/null
               if [ -f "$timeout_marker" ]; then
                 # Flutter may exit zero after handling SIGTERM. Preserve the
                 # timeout as a failure so a killed test can never go green.
