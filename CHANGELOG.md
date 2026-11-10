@@ -73,6 +73,19 @@ without a recent Visual C++ runtime. Android (LiteRT 2.3.2) and every
   downloads, and a download that cannot connect within 30 seconds or stalls
   for 60 seconds fails and is retried instead of hanging `pod install`.
 
+### Known issues
+
+* iOS: the `Interpreter` with the XNNPACK delegate is slower than in 4.0.0.
+  Measured on a physical iPhone with 4 threads, the same day and the same
+  build settings for both versions: the median over 28 models is 11% slower
+  and the total time 8% higher. Small models take about 0.5 to 0.9 ms more
+  per inference; large models 3 to 4 ms more. Results are unchanged. The
+  plain CPU path and the flex delegate show no difference beyond run-to-run
+  noise. The likely cause is the thread pool: TensorFlow 2.21 pins a newer
+  pthreadpool that no longer uses Grand Central Dispatch on Apple platforms.
+  The macOS library has the same change and was not measured, nor were Linux
+  and Windows. A fix is planned for 4.1.1.
+
 ## 4.0.0
 
 Moves the Android `Interpreter` from LiteRT 1.4.2 to LiteRT 2.x, so both
