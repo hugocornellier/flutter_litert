@@ -550,9 +550,24 @@ jobs:
         working-directory: example/play_services_test_host
         run: flutter analyze
 
+      # This is the first Gradle build of the job, so it downloads the NDK.
+      # As in build-android, that download can break off and leave a
+      # corrupted archive ("Error on ZipFile unknown archive"), which fails
+      # assembleDebug. Only in that case the partial NDK is purged and the
+      # build runs again, up to three attempts; any other build failure
+      # fails the step at once.
       - name: Build the Play services host APK
         working-directory: example/play_services_test_host
-        run: flutter build apk --debug
+        run: |
+          for attempt in 1 2 3; do
+            flutter build apk --debug 2>&1 | tee "$RUNNER_TEMP/host-build.log"
+            rc=${PIPESTATUS[0]}
+            [ "$rc" -eq 0 ] && exit 0
+            grep -q "preparing SDK package NDK" "$RUNNER_TEMP/host-build.log" || exit "$rc"
+            echo "::warning::the NDK download broke off in attempt $attempt (rc=$rc)"
+            rm -rf "$ANDROID_HOME"/ndk/* "$ANDROID_HOME"/.temp
+          done
+          exit "$rc"
 
       - name: Check the APK packages the Play services runtime only
         run: >-
