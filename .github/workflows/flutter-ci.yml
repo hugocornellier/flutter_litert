@@ -522,6 +522,8 @@ jobs:
   # only on a physical phone where Play services provides one.
   build-android-play-services:
     runs-on: ubuntu-24.04
+    # A stall must end the job in an hour, not at the 6 hour limit.
+    timeout-minutes: 60
     steps:
       # This job builds several APKs and runs an emulator, which can fill the
       # runner's disk. It does not use these preinstalled toolchains.
@@ -594,8 +596,21 @@ jobs:
           # then the host is rebuilt with flutterLitert.runtime=auto, which
           # must choose Play services here, and its debug and release APKs are
           # checked for both runtimes and run.
+          # flutter test starts the app right after it installs it. On an
+          # emulator still busy after its first boot, Android can handle the
+          # install broadcast seconds later, with two effects seen here.
+          # It restarts the activity under the running test, which failed
+          # attempt 1 in most runs: so the script first waits for the
+          # broadcast queue to drain, which makes that rarer but does not
+          # end it (attempt 2 covers the rest). And a debug APK installed over the
+          # release smoke APK, which has no INTERNET permission, starts
+          # before its uid is allowed sockets: the Dart VM service cannot
+          # listen and flutter test waits for it without end. So the smoke
+          # APK is uninstalled first (a new uid is not restricted), and
+          # timeout ends that test run if it stalls all the same.
           script: >-
-            bash -c 'set +e; rc=1; for attempt in 1 2; do
+            bash -c 'set +e; timeout 300 adb -s emulator-5554 shell am wait-for-broadcast-idle;
+            rc=1; for attempt in 1 2; do
             adb -s emulator-5554 logcat -c;
             timeout 1500 flutter test integration_test/play_services_runtime_test.dart -d emulator-5554 --timeout 900s; rc=$?;
             [ "$rc" -eq 0 ] && break;
@@ -605,7 +620,8 @@ jobs:
             echo "::endgroup::";
             done; [ "$rc" -eq 0 ] || exit "$rc";
             bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600 &&
-            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter test integration_test/auto_runtime_test.dart -d emulator-5554 --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices --timeout 600s &&
+            adb -s emulator-5554 uninstall com.hugocornellier.flutter_litert_play_services_test_host &&
+            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto timeout -k 30 900 flutter test integration_test/auto_runtime_test.dart -d emulator-5554 --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices --timeout 600s &&
             python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-debug.apk &&
             env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter build apk --release -t lib/release_smoke.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices &&
             python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-release.apk &&
