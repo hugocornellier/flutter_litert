@@ -93,11 +93,10 @@ packages:
   flutter_litert_flex:
     dependency: "direct main"
     description:
-      path: "."
-      ref: "1a6536cf301c8aea347cbc494153360951c8e5b1"
-      resolved-ref: "1a6536cf301c8aea347cbc494153360951c8e5b1"
-      url: "https://github.com/hugocornellier/flutter_litert_flex.git"
-    source: git
+      name: flutter_litert_flex
+      sha256: dd2fdcc67828eccff4f9cb82a080a742008a58778ad4890ff9a1918d046efe83
+      url: "https://pub.dev"
+    source: hosted
     version: "2.1.0"
   flutter_test:
     dependency: "direct dev"
