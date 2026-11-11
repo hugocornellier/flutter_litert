@@ -294,3 +294,74 @@ checked, and the script fails if the checkout does not fetch `apple_support`
 `build-tflite-ios.yml`, `build-coreml-ios.yml`, `build-metal-macos.yml`,
 `build-coreml-macos.yml` and `build-flex-ios.yml`, which all compile
 Objective-C(++) sources.
+
+## pthreadpool_apple_spin.patch
+
+Makes XNNPACK's thread pool on Apple platforms keep its workers awake between
+the parallel sections of one inference, as the Grand Central Dispatch backend
+did. Like `apple_support_objc_compile_actions.patch` it patches a Bazel
+dependency (`pthreadpool`, which TensorFlow also fetches for the CMake build),
+not the TensorFlow tree.
+
+**Why.** TF v2.21.0 pins pthreadpool `0e6ca13779b57d397a5ba6bfdcaa8a275bc8ea2e`,
+which removed the Grand Central Dispatch backend (`src/gcd.c`) that v2.20.0's pin
+used on iOS and macOS. Apple builds now use `src/pthreads.c`: a worker that
+finds no work spins `PTHREADPOOL_SPIN_PAUSE_ITERATIONS` times and then waits on
+a condition variable, and the main thread has to signal it for the next
+parallel section. `src/threadpool-common.h` sets that count to 100000 on
+Android and 1000 everywhere else, so on Apple the workers fall asleep between
+the operators of one inference and every operator pays a wake-up. On a
+physical iPhone 15 Pro with 4 XNNPACK threads this made the `Interpreter` in
+4.1.0 a median 11% slower than 4.0.0 over 28 models (total time +8%), while
+the same models at 1 thread were unchanged (median ratio 1.000), which is what
+isolates the thread pool. See the 4.1.0 "Known issues" and the 4.1.1 entry in
+`CHANGELOG.md` for the numbers.
+
+**What it does.** Three things, all only on the condition-variable backend
+(`PTHREADPOOL_USE_FUTEX 0`, which is what Apple builds use; the futex and
+Windows paths are untouched).
+
+1. `src/pthreads.c`: the three wait functions (`wait_on_num_recruited_threads`,
+   `wait_on_num_active_threads`, `wait_on_work_is_done`) spin without the pool
+   mutex. Upstream locks the mutex before the spin loop and holds it while
+   spinning, and the signalling side (`signal_num_active_threads`,
+   `signal_work_is_done`, `signal_num_recruited_threads`) locks the same mutex
+   to broadcast. So only one thread can spin at a time, the others block in
+   the kernel on the mutex, and the main thread's broadcast waits for the
+   spinner. With the upstream count of 1000 that costs little; with a longer
+   spin it serialises the pool (a first version of this patch that only raised
+   the count made the macOS probe models 2 to 5 times slower). The patch spins
+   on the atomic alone, and takes the mutex only to sleep: lock, re-check the
+   atomic, `cond_wait` if it is still unmet, unlock. The signallers update the
+   atomic before they take the mutex, so the re-check under the lock cannot
+   miss a wake-up.
+2. `src/pthreads.c`, `wait_on_work_is_done`: the main thread spins on a plain
+   acquire load of `work_is_done` and exchanges it back to 0 only once it has
+   seen it set. Upstream (and a second version of this patch) did the exchange
+   on every spin iteration. The last worker also finishes a section with an
+   exchange on that flag, and on the iPhone 15 Pro the worker lost that
+   contention for the whole spin: with the lock-free waits and a 100000 spin,
+   every parallel section took as long as the spin and the models ran 20 times
+   slower, while the same build was the fastest on the Mac. With the plain
+   load the phone runs the same 28 models a median 23 to 27% faster than the unpatched 4.1.0 build (total time 7 to 11% lower) and 13 to 18% faster than 4.0.0 (total 3 to 9% lower), 4 threads, two passes each; the 10000 spin is nearly as good (median 15 to 16% faster than unpatched), so the limit is not critical once the waits are plain loads.
+3. `src/threadpool-common.h`: an `#elif defined(__APPLE__)` branch with
+   `PTHREADPOOL_SPIN_PAUSE_ITERATIONS 100000` (overridable with
+   `-DPTHREADPOOL_SPIN_PAUSE_ITERATIONS=N`) and `PTHREADPOOL_SPIN_YIELD_ITERATIONS 0`,
+   so Apple spins as long as Android before a worker sleeps.
+
+Each spin iteration is one load and one `yield` instruction (100000 of them
+take about 60 microseconds on Apple silicon), so a worker that finds no more
+work spins for well under a millisecond after the last parallel section and
+then sleeps as before. CPU use between inferences is unchanged beyond that.
+
+**How it is applied.** `scripts/patch_tf_pthreadpool.sh <tf-src>` copies the
+patch into the checkout's `third_party/` and registers it twice: as
+`patch_file` on the `pthreadpool` archive in `tensorflow/workspace2.bzl` for the
+Bazel builds (iOS frameworks, macOS arm64 dylib), and as a `PATCH_COMMAND` on
+the `ExternalProject` in `tensorflow/lite/cmake/DownloadPThreadPool.cmake` for
+the CMake build (macOS x86_64 dylib). The archive's SHA-256 is still checked,
+and the script fails if the checkout pins a different pthreadpool commit, so a
+`TF_VERSION` bump has to re-check the patch. It runs after the TensorFlow clone
+in `build-tflite-ios.yml` and in both compile jobs of `build-tflite-c-macos.yml`.
+Linux and Windows builds are not patched: they keep the futex and Windows
+backends, which the GCD removal did not change.

@@ -85,6 +85,9 @@ jobs:
       - name: Re-pin the LLVM source archive checksum
         run: sh scripts/pin_tf_llvm_archive.sh tf-src
 
+      - name: Patch pthreadpool to spin longer on Apple (XNNPACK speed, 4.1.1)
+        run: sh scripts/patch_tf_pthreadpool.sh tf-src
+
       - name: Configure TensorFlow
         working-directory: tf-src
         run: |
@@ -153,6 +156,9 @@ jobs:
           git clone --depth 1 --branch "$TF_REF" \
             https://github.com/tensorflow/tensorflow.git tf-src
           git -C tf-src rev-parse HEAD
+
+      - name: Patch pthreadpool to spin longer on Apple (XNNPACK speed, 4.1.1)
+        run: sh scripts/patch_tf_pthreadpool.sh tf-src
 
       # Trap 2: make every translation unit agree on the real version.
       - name: Patch TFLite version defines

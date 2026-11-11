@@ -6,7 +6,7 @@ require 'digest'
 
 Pod::Spec.new do |s|
   s.name             = 'flutter_litert'
-  s.version          = '4.1.0'
+  s.version          = '4.1.1'
   s.summary          = 'LiteRT (formerly TensorFlow Lite) plugin for Flutter apps.'
   s.description      = <<-DESC
 LiteRT (formerly TensorFlow Lite) plugin for Flutter apps with bundled native
@@ -97,8 +97,8 @@ runtimes, classic delegates, and the CompiledModel API.
   unless File.exist?(marker) && coreml_has_npu && tflite_current
     puts '[flutter_litert] Downloading TensorFlow Lite iOS frameworks...'
     zip = File.join(framework_dir, '_tflite_ios.zip')
-    tflite_zip_sha256 = '2897e55a5a04ed9aeb2f63f8f3796737d5f351a7d4e3012a12ce4e52313695a3'
-    system("curl #{curl_options} 'https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0/ios-frameworks.zip' -o '#{zip}'")
+    tflite_zip_sha256 = 'd664f859c2d343ac2bb6482b0ae921a817e02c2f4f5130ed91b83ea36790158e'
+    system("curl #{curl_options} 'https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0-xnn1/ios-frameworks.zip' -o '#{zip}'")
     abort '[flutter_litert] ERROR: Failed to download TFLite iOS frameworks. Check your internet connection.' unless $?.success?
     verify_download.call(zip, tflite_zip_sha256, 'The TFLite iOS frameworks download')
     # Remove the old frameworks first so no file of an earlier release (or its
