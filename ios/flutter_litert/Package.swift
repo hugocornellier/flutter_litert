@@ -34,13 +34,13 @@ let package = Package(
         // scripts/wrap_litert_ios_frameworks.sh.)
         .binaryTarget(
             name: "TensorFlowLiteC",
-            url: "https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0/TensorFlowLiteC-spm.xcframework.zip",
-            checksum: "7008f7ed4dd01d2feddf9f45103df71cb157d9383c2964eef283ca6370b54cc2"
+            url: "https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0-xnn1/TensorFlowLiteC-spm.xcframework.zip",
+            checksum: "f3165e8f5c4a44fce74ed9ea33db0ced1394b4034d12cb06ac7f0ae0e4c0bdba"
         ),
         .binaryTarget(
             name: "TensorFlowLiteCMetal",
-            url: "https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0/TensorFlowLiteCMetal-spm.xcframework.zip",
-            checksum: "22543d2bed3e3f18d90026e21604e1a0e3c298daa5b4695791e806184378ed04"
+            url: "https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0-xnn1/TensorFlowLiteCMetal-spm.xcframework.zip",
+            checksum: "b0bfbdcfa8be4951d375dae6bfc614f80e5000758f48ff3d977dd640a862d02b"
         ),
         .binaryTarget(
             name: "TensorFlowLiteCCoreML",

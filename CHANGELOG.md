@@ -18,12 +18,13 @@ Fixes the iOS and macOS `Interpreter` slowdown with the XNNPACK delegate that
   instead of atomic exchanges (an exchange per spin iteration starved the
   worker that sets the flag on the iPhone), and spins as long as pthreadpool
   does on Android. Measured on a physical iPhone 15 Pro with 4 XNNPACK
-  threads over 28 models, same day and same build settings, two passes each:
-  4.1.0 was a median 7 to 9% slower than 4.0.0 (total +3 to +4%); 4.1.1 is a
-  median 13 to 18% faster than 4.0.0 (total 3 to 9% lower) and 23 to 27%
-  faster than 4.1.0 (total 7 to 11% lower), with 0 to 5 of the 28 models
-  slower than 4.0.0 by at most 3%. On an Apple silicon Mac (M-series, 4
-  threads, same 28 models) 4.1.1 is a median 22 to 23% faster than 4.1.0;
+  threads over 28 models, same day and same build settings, two rounds of
+  two passes each: 4.1.0 was a median 3 to 10% slower than 4.0.0 (total -1
+  to +5%); 4.1.1 is a median 13 to 23% faster than 4.0.0 (total 3 to 9%
+  lower) and 23 to 27% faster than 4.1.0 (total 7 to 11% lower), with 0 to 5
+  of the 28 models slower than 4.0.0 by at most 3%. On an Apple silicon Mac
+  (M-series, 4 threads, same 28 models) 4.1.1 is a median 18 to 26% faster
+  than 4.1.0;
   4.1.0 was not slower than 4.0.0 there (it was a median 16% faster, from the
   newer XNNPACK), so the macOS gain is on top of that. Results are unchanged. CPU use between inferences is unchanged: a worker
   spins for under a millisecond after the last parallel section before it

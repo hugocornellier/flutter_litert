@@ -26,8 +26,9 @@ name: Build TFLite C and Metal xcframeworks (iOS)
 # platform and minimum OS, embedded TF version, exported symbol diff, headers),
 # and the podspec's nmedit hide list is checked against the new TensorFlowLiteC.
 # The references are the frameworks flutter_litert ships today (release
-# tflite-ios-v2.21.0); the 2.21.0 build itself was checked against the 2.20.0
-# releases above.
+# tflite-ios-v2.21.0-xnn1, the 2.21.0 build with the pthreadpool patch); that
+# build was checked against tflite-ios-v2.21.0, which was checked against the
+# 2.20.0 releases above.
 # Outputs are Actions artifacts with .sha256 files. No release is created.
 
 on:
@@ -57,8 +58,8 @@ env:
   TF_VERSION: v2.21.0
   EXPECTED_TF_VERSION: 2.21.0
   BAZEL_VERSION: 7.7.0
-  REF_PODS_ZIP_URL: https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0/ios-frameworks.zip
-  REF_SPM_BASE_URL: https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0
+  REF_PODS_ZIP_URL: https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0-xnn1/ios-frameworks.zip
+  REF_SPM_BASE_URL: https://github.com/hugocornellier/flutter_litert/releases/download/tflite-ios-v2.21.0-xnn1
 
 jobs:
   plan:
@@ -314,7 +315,7 @@ jobs:
               2>&1 | tee ~/out/verify/compare-pods-TensorFlowLiteCCoreML.txt || status=1
           fi
           {
-            echo '### Comparison with the published tflite-ios-v2.21.0 frameworks'
+            echo '### Comparison with the published tflite-ios-v2.21.0-xnn1 frameworks'
             echo '```'
             grep -h -E '^(#####|=== slice|archs|size|--- .*\[|build version|global symbols|added|removed|version strings|Headers|Modules|bundle|RESULT|FAIL)' ~/out/verify/compare-*.txt
             echo '```'
