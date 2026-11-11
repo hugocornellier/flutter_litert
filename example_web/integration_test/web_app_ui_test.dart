@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_litert/src/compiled_model/compiled_model_web.dart'
     as cm_web;
 import 'package:flutter_litert_example_web/main.dart' as app;
