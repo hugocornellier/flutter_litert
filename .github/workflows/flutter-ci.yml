@@ -11,6 +11,8 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
+    # Takes 17 minutes, 23 at most in 83 runs.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
@@ -102,6 +104,8 @@ jobs:
 
   build-linux:
     runs-on: ubuntu-24.04
+    # Takes 8 minutes, 18 at most in 82 runs.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
@@ -187,6 +191,8 @@ jobs:
 
   build-windows:
     runs-on: windows-2022
+    # Takes 11 minutes, 13 at most in 77 runs.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
@@ -403,6 +409,9 @@ jobs:
 
   build-android:
     runs-on: ubuntu-24.04
+    # Takes 11 minutes, 23 at most in 84 runs. A stall must end here, not at
+    # the 6 hour limit.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -424,37 +433,52 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # The emulator step downloads these itself, once each, and a download
+      # that arrived broken failed 2 jobs before any test ran. Here each one
+      # gets three tries, and the emulator step finds them installed.
+      - name: Download the emulator and its system image
+        run: bash scripts/android_sdk_packages.sh emulator 'system-images;android-34;default;x86_64'
+
       # Runs real CompiledModel inference plus the classic Interpreter. Both
       # load from the one libLiteRt.so of the litert 2.x AAR on Android, and
       # interpreter_coexistence_test checks that they share it without
       # clashing. CompiledModel CPU and fallback-factory tests pass. The bundled x86_64 accelerator registers,
       # while direct combined and strict-GPU tests skip because emulators have
-      # no working OpenCL. Up to three attempts: Gradle's SDK-component install
-      # can receive a corrupted NDK archive ("Error on ZipFile unknown
-      # archive"), which fails assembleDebug; purging the partial NDK
-      # between attempts makes the retry re-download it cleanly.
+      # no working OpenCL.
+      #
+      # scripts/android_flutter_test.sh runs each suite: it ends a launch that
+      # installs the app and then starts no test, tries only such launches
+      # again, and builds again when Gradle's NDK download breaks off. A test
+      # that fails is not run again.
       - name: Run integration tests (Android emulator)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
           arch: x86_64
           profile: pixel_6
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           working-directory: example
-          # One line on purpose: the action runs each script line as its own
-          # sh command, which tears a multi-line loop apart.
+          # The action runs each script line as its own sh command and stops
+          # at the first one that fails.
           #
           # The two suites are separate `flutter test` invocations, not one
           # multi-file invocation: passing several integration_test files to a
           # single run only launches the app for the first one and then fails
           # the rest with "Unable to start the app on the device".
-          script: >-
-            bash -c 'set +e; rc=1; for attempt in 1 2 3; do
-            flutter test integration_test/compiled_model_test.dart -d emulator-5554 --timeout 600s &&
-            flutter test integration_test/interpreter_coexistence_test.dart -d emulator-5554 --timeout 600s; rc=$?;
-            [ "$rc" -eq 0 ] && break;
-            echo "::warning::Android integration tests attempt $attempt failed (rc=$rc)";
-            [ "$attempt" -lt 3 ] && rm -rf "$ANDROID_HOME"/ndk/* "$ANDROID_HOME"/.temp;
-            done; exit "$rc"'
+          script: |
+            bash ../scripts/android_flutter_test.sh integration_test/compiled_model_test.dart --timeout 600s
+            bash ../scripts/android_flutter_test.sh integration_test/interpreter_coexistence_test.dart --timeout 600s
+
+      # Kept when the job did not pass or an attempt had to be run again: the
+      # device log shows what the emulator did while flutter test was silent.
+      - name: Upload Android test logs
+        if: failure() || cancelled() || hashFiles('build/android-test-logs/retried') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-logs-${{ github.job }}
+          path: build/android-test-logs/
 
       # The default runtime must keep packaging LiteRT itself and never pull
       # in the Play services clients that flutterLitert.runtime=playServices
@@ -471,6 +495,9 @@ jobs:
   # no Google API, so the extra apps on the image do not change the result.
   build-android-api24:
     runs-on: ubuntu-24.04
+    # Takes 11 minutes, 13 at most in 13 runs; 4 more hung at `adb install`.
+    # A stall must end here, not at the 6 hour limit.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -492,7 +519,17 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # The same suites and retries as build-android.
+      # With three tries each, as in build-android.
+      - name: Download the emulator and its system image
+        run: bash scripts/android_sdk_packages.sh 'platforms;android-24' emulator 'system-images;android-24;google_apis;x86_64'
+
+      # The same suites as build-android, run the same way. No ram-size here,
+      # unlike the other emulator jobs: with 4096M this image never finished
+      # booting (9 of 9 jobs), with the AVD's own 1536M it did (8 of 8).
+      #
+      # One core, where the action gives two: on two cores `adb install`
+      # stopped for good in 12 of 54 jobs, after adb had sent the whole APK;
+      # on one core it did in none of 15, and the job takes as long.
       - name: Run integration tests (Android 7.0 emulator)
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -500,16 +537,22 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_6
+          cores: 1
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           working-directory: example
-          # One line on purpose, as in build-android.
-          script: >-
-            bash -c 'set +e; rc=1; for attempt in 1 2 3; do
-            flutter test integration_test/compiled_model_test.dart -d emulator-5554 --timeout 600s &&
-            flutter test integration_test/interpreter_coexistence_test.dart -d emulator-5554 --timeout 600s; rc=$?;
-            [ "$rc" -eq 0 ] && break;
-            echo "::warning::Android API 24 integration tests attempt $attempt failed (rc=$rc)";
-            [ "$attempt" -lt 3 ] && rm -rf "$ANDROID_HOME"/ndk/* "$ANDROID_HOME"/.temp;
-            done; exit "$rc"'
+          script: |
+            bash ../scripts/android_flutter_test.sh integration_test/compiled_model_test.dart --timeout 600s
+            bash ../scripts/android_flutter_test.sh integration_test/interpreter_coexistence_test.dart --timeout 600s
+
+      # Kept when the job did not pass or an attempt had to be run again: the
+      # device log shows what the emulator did while flutter test was silent.
+      - name: Upload Android test logs
+        if: failure() || cancelled() || hashFiles('build/android-test-logs/retried') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-logs-${{ github.job }}
+          path: build/android-test-logs/
 
   # flutterLitert.runtime=playServices (issue #23): LiteRT comes from Google
   # Play services instead of the APK. example/play_services_test_host is built
@@ -593,20 +636,34 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # With three tries each, as in build-android.
+      - name: Download the emulator and its system image
+        run: bash scripts/android_sdk_packages.sh emulator 'system-images;android-34;google_apis_playstore;x86_64'
+
       - name: Run Play services runtime integration tests (Android emulator)
         uses: reactivecircus/android-emulator-runner@v2
+        env:
+          # The debug APK of the host from the step above, later the one the
+          # first test built: the script installs it before each flutter
+          # test, for the reason given at `script`.
+          ANDROID_TEST_INSTALL_FIRST: build/app/outputs/flutter-apk/app-debug.apk
         with:
           api-level: 34
           target: google_apis_playstore
           arch: x86_64
           profile: pixel_6
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           working-directory: example/play_services_test_host
           # One line on purpose, as in build-android. The first LiteRT
           # initialization on a fresh emulator waits for Play services to
-          # download the runtime module and can stall, which is why a failed
-          # attempt dumps the LiteRT and Play services logcat before the retry.
-          # --timeout is enforced inside the app, so it cannot end an attempt
-          # that stalls there; timeout ends it after 25 minutes instead. Once
+          # download the runtime module and can stall, which is why
+          # scripts/android_flutter_test.sh prints the LiteRT and Play services
+          # logcat of a failed attempt and, for this test only, runs a second
+          # one. --timeout is enforced inside the app, so it cannot end an
+          # attempt that stalls there; the script ends it after 25 minutes
+          # instead, or after 3 minutes when no test started at all. Once
           # the tests pass, the release smoke APK runs on the same emulator,
           # then the host is rebuilt with flutterLitert.runtime=auto, which
           # must choose Play services here, and its debug and release APKs are
@@ -617,12 +674,19 @@ jobs:
           # It restarts the activity under the running test, which failed
           # attempt 1 in most runs: so the script first waits for the
           # broadcast queue to drain, which makes that rarer but does not
-          # end it (attempt 2 covers the rest). And a debug APK installed over the
-          # release smoke APK, which has no INTERNET permission, starts
+          # end it: 8 of 33 jobs still had a restart, and flutter test then
+          # waits, 25 minutes long when a test had already started. Every
+          # restart came when the app was not on the device before, so
+          # ANDROID_TEST_INSTALL_FIRST has the script install a debug APK of
+          # the host before flutter test and wait for the broadcasts again,
+          # which leaves flutter test an update to install (no restart in
+          # 13 jobs; attempt 2 stays for the rest). And a debug APK
+          # installed over the release smoke APK, which has no INTERNET
+          # permission, starts
           # before its uid is allowed sockets: the Dart VM service cannot
           # listen and flutter test waits for it without end. So the smoke
           # APK is uninstalled first (a new uid is not restricted), and
-          # timeout ends that test run if it stalls all the same.
+          # the script ends that test run if it stalls all the same.
           # The Play Store on this image can update itself and then Google
           # Play services while the job runs (seen from 1 to 12 minutes
           # after boot). While that update installs, Android stops Play
@@ -653,23 +717,24 @@ jobs:
             if [ "$ready" = 1 ]; then storeoff; else
             echo "::warning::the runtime module is not on the device after 3 minutes, the Play Store stays on for the first test";
             settle; fi;
-            rc=1; for attempt in 1 2; do
-            adb -s emulator-5554 logcat -c;
-            timeout 1500 flutter test integration_test/play_services_runtime_test.dart -d emulator-5554 --timeout 900s; rc=$?;
-            [ "$rc" -eq 0 ] && break;
-            echo "::warning::Play services integration tests attempt $attempt failed (rc=$rc)";
-            echo "::group::logcat after attempt $attempt";
-            adb -s emulator-5554 logcat -d | grep -E "flutter|LiteRt|litert|TfLite|tflite|Dynamite|Chimera|AndroidRuntime|FATAL" | tail -n 300;
-            echo "::endgroup::";
-            done; [ "$rc" -eq 0 ] || exit "$rc";
+            env ANDROID_TEST_ATTEMPTS=2 bash ../../scripts/android_flutter_test.sh integration_test/play_services_runtime_test.dart --timeout 900s || exit 1;
             storeoff;
             bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600 &&
             adb -s emulator-5554 uninstall com.hugocornellier.flutter_litert_play_services_test_host &&
-            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto timeout -k 30 900 flutter test integration_test/auto_runtime_test.dart -d emulator-5554 --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices --timeout 600s &&
+            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto ANDROID_TEST_ATTEMPT_LIMIT=900 bash ../../scripts/android_flutter_test.sh integration_test/auto_runtime_test.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices --timeout 600s &&
             python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-debug.apk &&
             env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter build apk --release -t lib/release_smoke.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices &&
             python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-release.apk &&
             bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600'
+
+      # Kept when the job did not pass or an attempt had to be run again: the
+      # device log shows what the emulator did while flutter test was silent.
+      - name: Upload Android test logs
+        if: failure() || cancelled() || hashFiles('build/android-test-logs/retried') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-logs-${{ github.job }}
+          path: build/android-test-logs/
 
   # The same host on an emulator image without Google Play services:
   # initializeAndroidRuntime() must fail promptly with both reasons instead of
@@ -678,6 +743,8 @@ jobs:
   # the integration test and in the release smoke APK.
   build-android-no-play-services:
     runs-on: ubuntu-24.04
+    # Takes 7 minutes, 9 at most in 39 runs.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -700,6 +767,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # With three tries each, as in build-android.
+      - name: Download the emulator and its system image
+        run: bash scripts/android_sdk_packages.sh emulator 'system-images;android-34;default;x86_64'
+
       - name: Run the no Play services integration test (Android emulator)
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -707,14 +778,26 @@ jobs:
           target: default
           arch: x86_64
           profile: pixel_6
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           working-directory: example/play_services_test_host
-          # One line on purpose, as in build-android.
-          script: >-
-            bash -c 'flutter test integration_test/no_play_services_test.dart -d emulator-5554 --timeout 600s &&
-            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter test integration_test/auto_runtime_test.dart -d emulator-5554 --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=bundled --timeout 600s &&
-            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter build apk --release -t lib/release_smoke.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=bundled &&
-            python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-release.apk &&
-            bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600'
+          # One sh command per line, as in build-android.
+          script: |
+            bash ../../scripts/android_flutter_test.sh integration_test/no_play_services_test.dart --timeout 600s
+            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto bash ../../scripts/android_flutter_test.sh integration_test/auto_runtime_test.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=bundled --timeout 600s
+            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter build apk --release -t lib/release_smoke.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=bundled
+            python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-release.apk
+            bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600
+
+      # Kept when the job did not pass or an attempt had to be run again: the
+      # device log shows what the emulator did while flutter test was silent.
+      - name: Upload Android test logs
+        if: failure() || cancelled() || hashFiles('build/android-test-logs/retried') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-logs-${{ github.job }}
+          path: build/android-test-logs/
 
   # Forward-compatibility guard for newer Android Gradle Plugin (AGP 9.x).
   # The example app pins AGP 8.11.1, so the build-android job above only ever
@@ -727,6 +810,8 @@ jobs:
   # and GPU accelerator).
   build-android-agp9:
     runs-on: ubuntu-24.04
+    # Takes 4 minutes, 7 at most in 86 runs.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
