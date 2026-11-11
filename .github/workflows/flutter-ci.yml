@@ -799,15 +799,16 @@ jobs:
           name: android-test-logs-${{ github.job }}
           path: build/android-test-logs/
 
-  # Forward-compatibility guard for newer Android Gradle Plugin (AGP 9.x).
-  # The example app pins AGP 8.11.1, so the build-android job above only ever
-  # exercises AGP 8. AGP 9 flips android.sourceset.disallowProvider to true and
-  # rejects passing a Provider to the legacy jniLibs SourceSet API, which broke
-  # consumers on AGP 9 (issue #14). This job rebuilds just the plugin module
-  # under AGP 9.x: no emulator and no app compile, but it both catches the
-  # configuration-time failure and asserts the native libraries still merge into
-  # the AAR (the CMake custom-ops lib plus the downloaded LiteRT Next runtime
-  # and GPU accelerator).
+  # Second Android Gradle Plugin version guard. The example app pins AGP 9.3.3
+  # and Gradle 9.5.0 (the versions Flutter 3.50 asks for), which the
+  # build-android job above exercises; this job moves every com.android plugin
+  # to AGP 9.2.1 on Gradle 9.6.1. AGP 9 flips android.sourceset.disallowProvider
+  # to true and rejects passing a Provider to the legacy jniLibs SourceSet API,
+  # which broke consumers on AGP 9 (issue #14). This job rebuilds just the
+  # plugin module under AGP 9.x: no emulator and no app compile, but it both
+  # catches the configuration-time failure and asserts the native libraries
+  # still merge into the AAR (the CMake custom-ops lib plus the downloaded
+  # LiteRT Next runtime and GPU accelerator).
   build-android-agp9:
     runs-on: ubuntu-24.04
     # Takes 4 minutes, 7 at most in 86 runs.
@@ -829,9 +830,9 @@ jobs:
       - name: Pin example Android toolchain to AGP 9.x / Gradle 9.x
         working-directory: example/android
         run: |
-          sed -i 's/id("com.android.application") version "[0-9.]*"/id("com.android.application") version "9.2.1"/' settings.gradle.kts
+          sed -i 's/id("\(com\.android\.[a-z-]*\)") version "[0-9.]*"/id("\1") version "9.2.1"/' settings.gradle.kts
           sed -i 's#gradle-[0-9.]*-all.zip#gradle-9.6.1-all.zip#' gradle/wrapper/gradle-wrapper.properties
-          echo "--- settings.gradle.kts ---"; grep -n "com.android.application" settings.gradle.kts
+          echo "--- settings.gradle.kts ---"; grep -n "com.android" settings.gradle.kts
           echo "--- gradle-wrapper.properties ---"; grep -n distributionUrl gradle/wrapper/gradle-wrapper.properties
 
       # The example's gradlew and gradle-wrapper.jar are gitignored, so a fresh
