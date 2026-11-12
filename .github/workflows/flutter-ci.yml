@@ -450,9 +450,21 @@ jobs:
       # installs the app and then starts no test, tries only such launches
       # again, and builds again when Gradle's NDK download breaks off. A test
       # that fails is not run again.
+      #
+      # The emulator action boots the emulator, sends one screen unlock key
+      # with no retry and only then runs `script`. On the Play Store image
+      # adbd can drop the connection just after the boot completes, and the
+      # step then fails with "error: closed" before any test ran (2 of about
+      # 240 Play services jobs by Nov 11, also seen upstream in
+      # ReactiveCircus/android-emulator-runner#489). The first script line
+      # writes a marker, so a failure without the marker happened before the
+      # tests: that one starts a second emulator, once, with a warning. A
+      # failure after the marker is a real one and fails the job unchanged.
       - name: Run integration tests (Android emulator)
+        id: emulator
+        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
-        with:
+        with: &build-android-emulator-with
           api-level: 34
           arch: x86_64
           profile: pixel_6
@@ -468,8 +480,29 @@ jobs:
           # single run only launches the app for the first one and then fails
           # the rest with "Unable to start the app on the device".
           script: |
+            touch "$RUNNER_TEMP/emulator-script-started"
             bash ../scripts/android_flutter_test.sh integration_test/compiled_model_test.dart --timeout 600s
             bash ../scripts/android_flutter_test.sh integration_test/interpreter_coexistence_test.dart --timeout 600s
+      - name: Check whether the emulator failed before the tests started
+        id: emulator_start
+        if: steps.emulator.outcome == 'failure'
+        run: |
+          if [ -e "$RUNNER_TEMP/emulator-script-started" ]; then
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Emulator start retried::the Android emulator step failed before the tests started (build-android), starting the emulator once more"
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run integration tests (Android emulator), second emulator start
+        id: emulator_retry
+        if: steps.emulator_start.outputs.retry == 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with: *build-android-emulator-with
+      - name: Fail the job when the emulator step failed
+        if: steps.emulator.outcome == 'failure' && steps.emulator_retry.outcome != 'success'
+        run: |
+          echo "::error::the Android emulator step failed (retry fired: ${{ steps.emulator_start.outputs.retry }})"
+          exit 1
 
       # Kept when the job did not pass or an attempt had to be run again: the
       # device log shows what the emulator did while flutter test was silent.
@@ -530,9 +563,13 @@ jobs:
       # One core, where the action gives two: on two cores `adb install`
       # stopped for good in 12 of 54 jobs, after adb had sent the whole APK;
       # on one core it did in none of 15, and the job takes as long.
+      #
+      # The emulator start retry is explained at build-android.
       - name: Run integration tests (Android 7.0 emulator)
+        id: emulator
+        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
-        with:
+        with: &build-android-api24-emulator-with
           api-level: 24
           target: google_apis
           arch: x86_64
@@ -542,8 +579,29 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           working-directory: example
           script: |
+            touch "$RUNNER_TEMP/emulator-script-started"
             bash ../scripts/android_flutter_test.sh integration_test/compiled_model_test.dart --timeout 600s
             bash ../scripts/android_flutter_test.sh integration_test/interpreter_coexistence_test.dart --timeout 600s
+      - name: Check whether the emulator failed before the tests started
+        id: emulator_start
+        if: steps.emulator.outcome == 'failure'
+        run: |
+          if [ -e "$RUNNER_TEMP/emulator-script-started" ]; then
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Emulator start retried::the Android emulator step failed before the tests started (build-android-api24), starting the emulator once more"
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run integration tests (Android 7.0 emulator), second emulator start
+        id: emulator_retry
+        if: steps.emulator_start.outputs.retry == 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with: *build-android-api24-emulator-with
+      - name: Fail the job when the emulator step failed
+        if: steps.emulator.outcome == 'failure' && steps.emulator_retry.outcome != 'success'
+        run: |
+          echo "::error::the Android emulator step failed (retry fired: ${{ steps.emulator_start.outputs.retry }})"
+          exit 1
 
       # Kept when the job did not pass or an attempt had to be run again: the
       # device log shows what the emulator did while flutter test was silent.
@@ -640,14 +698,18 @@ jobs:
       - name: Download the emulator and its system image
         run: bash scripts/android_sdk_packages.sh emulator 'system-images;android-34;google_apis_playstore;x86_64'
 
+      #
+      # The emulator start retry is explained at build-android.
       - name: Run Play services runtime integration tests (Android emulator)
+        id: emulator
+        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
-        env:
+        env: &build-android-play-services-emulator-env
           # The debug APK of the host from the step above, later the one the
           # first test built: the script installs it before each flutter
           # test, for the reason given at `script`.
           ANDROID_TEST_INSTALL_FIRST: build/app/outputs/flutter-apk/app-debug.apk
-        with:
+        with: &build-android-play-services-emulator-with
           api-level: 34
           target: google_apis_playstore
           arch: x86_64
@@ -703,7 +765,7 @@ jobs:
           # the smoke apps. If the module does not show up in 3 minutes,
           # the store stays on for the first test and is disabled after it.
           script: >-
-            bash -c 'set +e;
+            bash -c 'set +e; touch "$RUNNER_TEMP/emulator-script-started";
             settle() { for i in $(seq 1 36); do
             [ "$(adb -s emulator-5554 shell dumpsys package installs | sed -n "/Active install sessions/,/Finalized install sessions/p" | grep -c mCommitted=true)" = 0 ] && break;
             echo "waiting for an install that is under way"; sleep 5; done;
@@ -726,6 +788,27 @@ jobs:
             env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter build apk --release -t lib/release_smoke.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices &&
             python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-release.apk &&
             bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600'
+      - name: Check whether the emulator failed before the tests started
+        id: emulator_start
+        if: steps.emulator.outcome == 'failure'
+        run: |
+          if [ -e "$RUNNER_TEMP/emulator-script-started" ]; then
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Emulator start retried::the Android emulator step failed before the tests started (build-android-play-services), starting the emulator once more"
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run Play services runtime integration tests (Android emulator), second emulator start
+        id: emulator_retry
+        if: steps.emulator_start.outputs.retry == 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        env: *build-android-play-services-emulator-env
+        with: *build-android-play-services-emulator-with
+      - name: Fail the job when the emulator step failed
+        if: steps.emulator.outcome == 'failure' && steps.emulator_retry.outcome != 'success'
+        run: |
+          echo "::error::the Android emulator step failed (retry fired: ${{ steps.emulator_start.outputs.retry }})"
+          exit 1
 
       # Kept when the job did not pass or an attempt had to be run again: the
       # device log shows what the emulator did while flutter test was silent.
@@ -771,9 +854,13 @@ jobs:
       - name: Download the emulator and its system image
         run: bash scripts/android_sdk_packages.sh emulator 'system-images;android-34;default;x86_64'
 
+      #
+      # The emulator start retry is explained at build-android.
       - name: Run the no Play services integration test (Android emulator)
+        id: emulator
+        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
-        with:
+        with: &build-android-no-play-services-emulator-with
           api-level: 34
           target: default
           arch: x86_64
@@ -784,11 +871,32 @@ jobs:
           working-directory: example/play_services_test_host
           # One sh command per line, as in build-android.
           script: |
+            touch "$RUNNER_TEMP/emulator-script-started"
             bash ../../scripts/android_flutter_test.sh integration_test/no_play_services_test.dart --timeout 600s
             env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto bash ../../scripts/android_flutter_test.sh integration_test/auto_runtime_test.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=bundled --timeout 600s
             env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter build apk --release -t lib/release_smoke.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=bundled
             python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-release.apk
             bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600
+      - name: Check whether the emulator failed before the tests started
+        id: emulator_start
+        if: steps.emulator.outcome == 'failure'
+        run: |
+          if [ -e "$RUNNER_TEMP/emulator-script-started" ]; then
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Emulator start retried::the Android emulator step failed before the tests started (build-android-no-play-services), starting the emulator once more"
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run the no Play services integration test (Android emulator), second emulator start
+        id: emulator_retry
+        if: steps.emulator_start.outputs.retry == 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with: *build-android-no-play-services-emulator-with
+      - name: Fail the job when the emulator step failed
+        if: steps.emulator.outcome == 'failure' && steps.emulator_retry.outcome != 'success'
+        run: |
+          echo "::error::the Android emulator step failed (retry fired: ${{ steps.emulator_start.outputs.retry }})"
+          exit 1
 
       # Kept when the job did not pass or an attempt had to be run again: the
       # device log shows what the emulator did while flutter test was silent.
