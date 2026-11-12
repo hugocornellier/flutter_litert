@@ -418,6 +418,19 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+      # A fresh runner has no debug keystore. With AGP 9.3.3 the first debug
+      # build creates ~/.android/debug.keystore and later builds create and use
+      # ~/.config/.android/debug.keystore, so APKs from one job are signed with
+      # two different keys and installing the second fails with
+      # INSTALL_FAILED_UPDATE_INCOMPATIBLE. One keystore in both places keeps
+      # every build on the same key.
+      - name: Use one debug keystore for every build
+        run: |
+          mkdir -p ~/.android ~/.config/.android
+          [ -f ~/.android/debug.keystore ] || keytool -genkeypair -keystore ~/.android/debug.keystore \
+            -storepass android -keypass android -alias androiddebugkey \
+            -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 -noprompt
+          cp ~/.android/debug.keystore ~/.config/.android/debug.keystore
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -537,6 +550,14 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+      # One debug keystore for every build, explained at build-android.
+      - name: Use one debug keystore for every build
+        run: |
+          mkdir -p ~/.android ~/.config/.android
+          [ -f ~/.android/debug.keystore ] || keytool -genkeypair -keystore ~/.android/debug.keystore \
+            -storepass android -keypass android -alias androiddebugkey \
+            -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 -noprompt
+          cp ~/.android/debug.keystore ~/.config/.android/debug.keystore
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -638,6 +659,14 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+      # One debug keystore for every build, explained at build-android.
+      - name: Use one debug keystore for every build
+        run: |
+          mkdir -p ~/.android ~/.config/.android
+          [ -f ~/.android/debug.keystore ] || keytool -genkeypair -keystore ~/.android/debug.keystore \
+            -storepass android -keypass android -alias androiddebugkey \
+            -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 -noprompt
+          cp ~/.android/debug.keystore ~/.config/.android/debug.keystore
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -810,6 +839,16 @@ jobs:
           echo "::error::the Android emulator step failed (retry fired: ${{ steps.emulator_start.outputs.retry }})"
           exit 1
 
+      # The keystore step above exists to stop this; the watchdog rerun would
+      # otherwise hide it.
+      - name: Fail the job when an install was rejected for a different signature
+        if: ${{ !cancelled() }}
+        run: |
+          if grep -l INSTALL_FAILED_UPDATE_INCOMPATIBLE build/android-test-logs/*.log 2>/dev/null; then
+            echo "::error::INSTALL_FAILED_UPDATE_INCOMPATIBLE in the Android test logs: the APKs were signed with different debug keys"
+            exit 1
+          fi
+
       # Kept when the job did not pass or an attempt had to be run again: the
       # device log shows what the emulator did while flutter test was silent.
       - name: Upload Android test logs
@@ -834,6 +873,14 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+      # One debug keystore for every build, explained at build-android.
+      - name: Use one debug keystore for every build
+        run: |
+          mkdir -p ~/.android ~/.config/.android
+          [ -f ~/.android/debug.keystore ] || keytool -genkeypair -keystore ~/.android/debug.keystore \
+            -storepass android -keypass android -alias androiddebugkey \
+            -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 -noprompt
+          cp ~/.android/debug.keystore ~/.config/.android/debug.keystore
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
