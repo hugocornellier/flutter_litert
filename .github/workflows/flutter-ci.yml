@@ -1016,9 +1016,26 @@ jobs:
         working-directory: example
         run: flutter build apk --config-only --release
 
+      # This is the first Gradle build of the job, so it downloads the NDK
+      # AGP 9.2.1 builds with (28.2.13676358, not on the runner image). As in
+      # build-android and the Play services host build, that download can
+      # break off and leave a corrupted archive (on 2026-11-12 it took 9
+      # minutes and ended in "Archive is not a ZIP archive"), which fails the
+      # build. Only in that case the partial NDK is purged and the build runs
+      # again, up to three attempts; any other build failure fails the step
+      # at once.
       - name: Assemble plugin AAR under AGP 9 (regression guard for issue #14)
         working-directory: example/android
-        run: ./gradlew :flutter_litert:assembleRelease --stacktrace
+        run: |
+          for attempt in 1 2 3; do
+            ./gradlew :flutter_litert:assembleRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/agp9-build.log"
+            rc=${PIPESTATUS[0]}
+            [ "$rc" -eq 0 ] && exit 0
+            grep -q "preparing SDK package NDK" "$RUNNER_TEMP/agp9-build.log" || exit "$rc"
+            echo "::warning::the NDK download broke off in attempt $attempt (rc=$rc)"
+            rm -rf "$ANDROID_HOME"/ndk/* "$ANDROID_HOME"/.temp
+          done
+          exit "$rc"
 
       - name: Assert native libraries merged into the AGP 9 AAR
         run: |
