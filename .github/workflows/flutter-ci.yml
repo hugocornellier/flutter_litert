@@ -418,6 +418,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: gradle
       # A fresh runner has no debug keystore. With AGP 9.3.3 the first debug
       # build creates ~/.android/debug.keystore and later builds create and use
       # ~/.config/.android/debug.keystore, so APKs from one job are signed with
@@ -431,6 +432,10 @@ jobs:
             -storepass android -keypass android -alias androiddebugkey \
             -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 -noprompt
           cp ~/.android/debug.keystore ~/.config/.android/debug.keystore
+      # Gradle downloads come from the cache where it can, and plugins from
+      # Maven Central directly instead of through the plugin portal's redirect,
+      # which answered 429 or served nothing in two runs on 2026-11-12.
+      - uses: ./.github/actions/gradle-plugin-repositories
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -550,6 +555,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: gradle
       # One debug keystore for every build, explained at build-android.
       - name: Use one debug keystore for every build
         run: |
@@ -558,6 +564,8 @@ jobs:
             -storepass android -keypass android -alias androiddebugkey \
             -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 -noprompt
           cp ~/.android/debug.keystore ~/.config/.android/debug.keystore
+      # Gradle plugins from Maven Central directly, explained at build-android.
+      - uses: ./.github/actions/gradle-plugin-repositories
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -659,6 +667,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: gradle
       # One debug keystore for every build, explained at build-android.
       - name: Use one debug keystore for every build
         run: |
@@ -667,6 +676,8 @@ jobs:
             -storepass android -keypass android -alias androiddebugkey \
             -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 -noprompt
           cp ~/.android/debug.keystore ~/.config/.android/debug.keystore
+      # Gradle plugins from Maven Central directly, explained at build-android.
+      - uses: ./.github/actions/gradle-plugin-repositories
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -873,6 +884,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: gradle
       # One debug keystore for every build, explained at build-android.
       - name: Use one debug keystore for every build
         run: |
@@ -881,6 +893,8 @@ jobs:
             -storepass android -keypass android -alias androiddebugkey \
             -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 -noprompt
           cp ~/.android/debug.keystore ~/.config/.android/debug.keystore
+      # Gradle plugins from Maven Central directly, explained at build-android.
+      - uses: ./.github/actions/gradle-plugin-repositories
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
@@ -974,6 +988,9 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: gradle
+      # Gradle plugins from Maven Central directly, explained at build-android.
+      - uses: ./.github/actions/gradle-plugin-repositories
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
