@@ -802,8 +802,11 @@ jobs:
           # Play services reports the module (the query its client library
           # uses), disables the Play Store, waits for an install the store
           # had already handed to Android, and only then runs the tests and
-          # the smoke apps. If the module does not show up in 3 minutes,
-          # the store stays on for the first test and is disabled after it.
+          # the smoke apps. In 1 of 26 jobs on 2026-11-12 the module never
+          # came, and the tests then failed with "No acceptable module"
+          # errors that hid the cause. So the wait is 10 minutes, and a
+          # module that has not come by then fails this step, before any
+          # test runs, with a message that names it.
           script: >-
             bash -c 'set +e; touch "$RUNNER_TEMP/emulator-script-started";
             settle() { for i in $(seq 1 36); do
@@ -813,14 +816,12 @@ jobs:
             storeoff() { adb -s emulator-5554 shell pm disable-user --user 0 com.android.vending ||
             echo "::warning::could not disable the Play Store, a Play services update can still end a later step";
             settle; };
-            ready=0; for i in $(seq 1 36); do
+            ready=0; end=$(( $(date +%s) + 600 )); while [ "$(date +%s)" -lt "$end" ]; do
             timeout 30 adb -s emulator-5554 shell content query --uri content://com.google.android.gms.chimera/api/com.google.android.gms.tflite_dynamite | grep -q " version=[1-9]" && ready=1 && break;
             echo "waiting for Play services to download the runtime module"; sleep 5; done;
-            if [ "$ready" = 1 ]; then storeoff; else
-            echo "::warning::the runtime module is not on the device after 3 minutes, the Play Store stays on for the first test";
-            settle; fi;
-            env ANDROID_TEST_ATTEMPTS=2 bash ../../scripts/android_flutter_test.sh integration_test/play_services_runtime_test.dart --timeout 900s || exit 1;
+            [ "$ready" = 1 ] || { echo "::error::Play services never delivered tflite_dynamite in 10 min"; exit 1; };
             storeoff;
+            env ANDROID_TEST_ATTEMPTS=2 bash ../../scripts/android_flutter_test.sh integration_test/play_services_runtime_test.dart --timeout 900s || exit 1;
             bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600 &&
             adb -s emulator-5554 uninstall com.hugocornellier.flutter_litert_play_services_test_host &&
             env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto ANDROID_TEST_ATTEMPT_LIMIT=900 bash ../../scripts/android_flutter_test.sh integration_test/auto_runtime_test.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices --timeout 600s &&
