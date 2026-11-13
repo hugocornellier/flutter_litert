@@ -241,6 +241,9 @@ jobs:
   universal:
     needs: [arm64, x86_64]
     runs-on: ${{ inputs.arm64_runner || 'macos-15' }}
+    # Joins two slices with lipo and checks the result in a few minutes. A
+    # stall must end here, not at the 6 hour limit.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 

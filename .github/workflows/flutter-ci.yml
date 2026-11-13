@@ -8,9 +8,19 @@ on:
       - compiled-model
       - fix/wasm-ready-3.2.0
 
+# One Flutter version for every job, so a new stable release cannot change CI
+# between two runs of the same commit: Flutter 3.50.0 (2026-11-11) needed
+# AGP 9 and Gradle 9 changes before CI passed again. Raise it on purpose, in a
+# change of its own, when a new stable is out. mediapipe_flutter pins its
+# Flutter version the same way.
+env:
+  FLUTTER_VERSION: '3.50.0'
+
 jobs:
   build-macos:
-    runs-on: macos-latest
+    # macos-latest is macos-26 today and moves when GitHub retargets the
+    # label; a named image changes only when this line does.
+    runs-on: macos-26
     # Takes 17 minutes, 23 at most in 83 runs.
     timeout-minutes: 60
     steps:
@@ -18,6 +28,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Enable macOS desktop
@@ -111,6 +122,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install Linux desktop dependencies
@@ -198,6 +210,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install dependencies
@@ -255,6 +268,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install Flex integration host dependencies
@@ -323,6 +337,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install dependencies
@@ -439,6 +454,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install dependencies
@@ -569,6 +585,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install dependencies
@@ -681,6 +698,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install host dependencies
@@ -899,6 +917,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install host dependencies
@@ -995,6 +1014,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Install dependencies
@@ -1072,6 +1092,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Select Xcode 16.4

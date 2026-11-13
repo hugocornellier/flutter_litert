@@ -63,7 +63,9 @@ env:
 
 jobs:
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # Reads the inputs in seconds; a stall must not hold the 6 hour limit.
+    timeout-minutes: 5
     outputs:
       reuse: ${{ steps.plan.outputs.reuse }}
       metal_patch: ${{ steps.plan.outputs.metal_patch }}
