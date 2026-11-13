@@ -237,6 +237,35 @@ abstract class DownloadLitertJniTask : DefaultTask() {
     @get:Inject
     abstract val fileSystemOperations: FileSystemOperations
 
+    // Without timeouts a stalled connection hangs the build until whatever
+    // runs it gives up, and one dropped connection fails it. The Linux and
+    // Windows CMake builds try their downloads three times as well.
+    private fun downloadWithRetry(url: String, target: File) {
+        val attempts = 3
+        for (attempt in 1..attempts) {
+            try {
+                val connection = URI(url).toURL().openConnection().apply {
+                    connectTimeout = 30_000
+                    readTimeout = 60_000
+                }
+                connection.getInputStream().use { input ->
+                    target.outputStream().use { output -> input.copyTo(output) }
+                }
+                return
+            } catch (e: java.io.IOException) {
+                target.delete()
+                if (attempt == attempts) {
+                    throw GradleException(
+                        "[flutter_litert] Failed to download $url after $attempts attempts",
+                        e
+                    )
+                }
+                logger.warn("[flutter_litert] Download of $url failed ($e); retrying")
+                Thread.sleep(5_000L * attempt)
+            }
+        }
+    }
+
     @TaskAction
     fun download() {
         val version = litertVersion.get()
@@ -271,9 +300,7 @@ abstract class DownloadLitertJniTask : DefaultTask() {
             fileSystemOperations.delete {
                 delete(aar)
             }
-            URI(url).toURL().openStream().use { input ->
-                aar.outputStream().use { output -> input.copyTo(output) }
-            }
+            downloadWithRetry(url, aar)
             fileSystemOperations.copy {
                 from(archiveOperations.zipTree(aar)) {
                     // Android emulators do not provide working OpenCL. If this
