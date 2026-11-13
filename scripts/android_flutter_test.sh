@@ -15,10 +15,13 @@
 #   - flutter does not find the device although adb answers, and gives up in
 #     2 seconds (once in about 95 jobs).
 # Here every attempt has a hard limit, and a watchdog ends an attempt that
-# prints no test line soon after the APK is built. Only those launch failures
-# and the device that was not found are tried again; a failure after a test
-# has started is a real result and fails the script, unless
-# ANDROID_TEST_ATTEMPTS allows more.
+# prints no test line soon after the APK is built. By default nothing is tried
+# again, except a build whose NDK download broke off: a launch failure, a
+# device that was not found and a failed test all fail the script. The push and
+# PR workflow (flutter-ci.yml) runs with these defaults, so a flaky test shows
+# up red instead of passing on a second attempt. ANDROID_TEST_LAUNCH_ATTEMPTS
+# and ANDROID_TEST_ATTEMPTS allow more attempts; only device-tests-manual.yml
+# sets them.
 #
 # Environment:
 #   ANDROID_TEST_SERIAL           device, default emulator-5554
@@ -26,7 +29,8 @@
 #                                 line, default 180 (a healthy launch takes
 #                                 under 20)
 #   ANDROID_TEST_ATTEMPT_LIMIT    seconds for one whole attempt, default 1500
-#   ANDROID_TEST_LAUNCH_ATTEMPTS  attempts while no test has started, default 3
+#   ANDROID_TEST_LAUNCH_ATTEMPTS  attempts while no test has started or flutter
+#                                 did not find the device, default 1
 #   ANDROID_TEST_ATTEMPTS         attempts for a failure after a test started,
 #                                 default 1
 #   ANDROID_TEST_INSTALL_FIRST    an APK of the same app to install before
@@ -48,7 +52,7 @@ flutter_args=("$@")
 serial=${ANDROID_TEST_SERIAL:-emulator-5554}
 launch_limit=${ANDROID_TEST_LAUNCH_LIMIT:-180}
 attempt_limit=${ANDROID_TEST_ATTEMPT_LIMIT:-1500}
-launch_attempts=${ANDROID_TEST_LAUNCH_ATTEMPTS:-3}
+launch_attempts=${ANDROID_TEST_LAUNCH_ATTEMPTS:-1}
 test_attempts=${ANDROID_TEST_ATTEMPTS:-1}
 install_first=${ANDROID_TEST_INSTALL_FIRST:-}
 log_dir=${ANDROID_TEST_LOG_DIR:-${GITHUB_WORKSPACE:-$PWD}/build/android-test-logs}
@@ -252,7 +256,7 @@ while :; do
     # failed answer makes it report no device.
     device_failures=$((device_failures + 1))
     : > "$log_dir/retried"
-    if [ "$device_failures" -ge 3 ]; then
+    if [ "$device_failures" -ge "$launch_attempts" ]; then
       echo "::error::$name: flutter did not find $serial on $device_failures attempts (rc=$rc)"
       break
     fi
