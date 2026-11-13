@@ -74,7 +74,7 @@ jobs:
       - name: Download and patch coremltools proto imports
         run: |
           cd /tmp
-          curl -L -o coremltools.tar.gz https://github.com/apple/coremltools/archive/8.0.tar.gz
+          curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o coremltools.tar.gz https://github.com/apple/coremltools/archive/8.0.tar.gz
           mkdir -p coremltools-local
           tar xzf coremltools.tar.gz -C coremltools-local --strip-components=1
 

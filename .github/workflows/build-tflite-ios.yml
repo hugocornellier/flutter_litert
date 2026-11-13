@@ -269,10 +269,10 @@ jobs:
       - name: Download the published references
         run: |
           mkdir -p ~/ref/pods ~/ref/spm
-          curl -fsSL -o ~/ref/ios-frameworks.zip "$REF_PODS_ZIP_URL"
+          curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o ~/ref/ios-frameworks.zip "$REF_PODS_ZIP_URL"
           unzip -q ~/ref/ios-frameworks.zip -d ~/ref/pods
           for name in TensorFlowLiteC TensorFlowLiteCMetal; do
-            curl -fsSL -o ~/ref/$name-spm.xcframework.zip "$REF_SPM_BASE_URL/$name-spm.xcframework.zip"
+            curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o ~/ref/$name-spm.xcframework.zip "$REF_SPM_BASE_URL/$name-spm.xcframework.zip"
             unzip -q ~/ref/$name-spm.xcframework.zip -d ~/ref/spm
           done
           shasum -a 256 ~/ref/*.zip

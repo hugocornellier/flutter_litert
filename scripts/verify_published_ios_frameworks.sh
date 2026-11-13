@@ -37,6 +37,13 @@ NPU_SYMBOL="FlutterTfLiteCoreMlNpuDelegateCreate"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# GitHub release downloads sometimes reset or answer 5xx. Retry those, with the
+# podspec's timeouts so a stalled download fails instead of hanging the job.
+fetch() {
+  curl -fsSL --connect-timeout 30 --speed-limit 1024 --speed-time 60 \
+    --retry 3 --retry-delay 5 --retry-all-errors -o "$1" "$2"
+}
+
 failures=0
 fail() { echo "  FAIL: $*"; failures=$((failures + 1)); }
 
@@ -88,7 +95,7 @@ if [ -z "$pods_url" ]; then
   fail "could not resolve the ios-frameworks.zip URL from $PODSPEC"
 else
   echo "  url: $pods_url"
-  curl -fsSL -o "$WORK/pods.zip" "$pods_url" || fail "download failed: $pods_url"
+  fetch "$WORK/pods.zip" "$pods_url" || fail "download failed: $pods_url"
   if [ -s "$WORK/pods.zip" ]; then
     assert_podspec_pin tflite_zip_sha256 "$WORK/pods.zip" "ios-frameworks.zip"
     mkdir -p "$WORK/pods" && unzip -qo "$WORK/pods.zip" -d "$WORK/pods"
@@ -101,7 +108,7 @@ if [ -z "$litert_url" ]; then
   fail "could not resolve the litert-ios-frameworks.zip URL from $PODSPEC"
 else
   echo "  url: $litert_url"
-  curl -fsSL -o "$WORK/litert.zip" "$litert_url" || fail "download failed: $litert_url"
+  fetch "$WORK/litert.zip" "$litert_url" || fail "download failed: $litert_url"
   if [ -s "$WORK/litert.zip" ]; then
     assert_podspec_pin litert_zip_sha256 "$WORK/litert.zip" "litert-ios-frameworks.zip"
   fi
@@ -131,7 +138,7 @@ else
   while IFS=$'\t' read -r name url checksum; do
     [ -n "$name" ] || continue
     out="$WORK/$name.zip"
-    if ! curl -fsSL -o "$out" "$url"; then
+    if ! fetch "$out" "$url"; then
       fail "swiftpm $name: download failed ($url)"
       continue
     fi

@@ -82,11 +82,11 @@ jobs:
           if ! command -v bazelisk >/dev/null 2>&1; then
             if [ "$FLEX_OS" = "windows" ]; then
               mkdir -p "$HOME/bin"
-              curl -fsSL -o "$HOME/bin/bazelisk.exe" \
+              curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "$HOME/bin/bazelisk.exe" \
                 https://github.com/bazelbuild/bazelisk/releases/download/v1.27.0/bazelisk-windows-amd64.exe
             else
               mkdir -p "$HOME/bin"
-              curl -fsSL -o "$HOME/bin/bazelisk" \
+              curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "$HOME/bin/bazelisk" \
                 https://github.com/bazelbuild/bazelisk/releases/download/v1.27.0/bazelisk-linux-amd64
               chmod +x "$HOME/bin/bazelisk"
             fi
@@ -103,7 +103,7 @@ jobs:
               # The runner's LLVM 20 clashes with the Windows 10.0.26100 SDK
               # (_m_prefetchw "has a different language linkage"), and VS
               # 2022's STL needs Clang 19 or newer, so use LLVM 19.1.7.
-              curl -fsSL -o "$RUNNER_TEMP/llvm-19.exe" \
+              curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o "$RUNNER_TEMP/llvm-19.exe" \
                 https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/LLVM-19.1.7-win64.exe
               powershell -NoProfile -Command "Start-Process -Wait -FilePath '$(cygpath -w "$RUNNER_TEMP/llvm-19.exe")' -ArgumentList '/S','/D=C:\llvm19'"
               /c/llvm19/bin/clang-cl.exe --version
