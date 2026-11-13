@@ -4,7 +4,10 @@ description: >-
   which sends Kotlin's artifacts on to Maven Central by redirect; runs failed
   when that redirect answered 429 or served nothing (2026-11-12). An init
   script makes every Gradle build on the runner resolve plugins from Google's
-  Maven and Maven Central first.
+  Maven and Maven Central first. Plugins that only the portal has, such as
+  kotlin-dsl, still come from the portal, so Gradle also retries a failed
+  download longer than its default, and the Gradle distributions, NDK and
+  CMake the builds use are downloaded with retries before Gradle needs them.
 runs:
   using: composite
   steps:
@@ -21,3 +24,40 @@ runs:
             }
         }
         SCRIPT
+    # Gradle tries a failed download 3 times with 125 ms between the first
+    # two, so a portal hiccup of a few seconds fails the build: a run on
+    # 2026-11-13 failed on "Plugin [id: 'org.gradle.kotlin.kotlin-dsl',
+    # version: '6.5.7'] was not found", a plugin only the portal serves.
+    # These are the values open-telemetry/opentelemetry-java sets for the same
+    # Maven Central flakiness. They apply to every Gradle build on the runner,
+    # Flutter's own included build too.
+    - name: Retry Gradle downloads longer
+      shell: bash
+      run: |
+        mkdir -p ~/.gradle
+        cat >> ~/.gradle/gradle.properties <<'PROPS'
+        systemProp.org.gradle.internal.http.connectionTimeout=120000
+        systemProp.org.gradle.internal.http.socketTimeout=120000
+        systemProp.org.gradle.internal.repository.max.retries=10
+        systemProp.org.gradle.internal.repository.initial.backoff=500
+        PROPS
+    # Flutter's gradlew downloads the Gradle distribution once, with no retry;
+    # a 504 from github.com failed a run that way (2026-11-05). The script
+    # puts the distribution where gradlew looks for it, with retries.
+    - name: Download the Gradle distributions the examples use
+      shell: bash
+      run: >-
+        scripts/gradle_distribution.sh
+        example/android/gradle/wrapper/gradle-wrapper.properties
+        example/play_services_test_host/android/gradle/wrapper/gradle-wrapper.properties
+    # Each Android build's first Gradle run installs the NDK and CMake
+    # through the Android Gradle plugin, which tries once; a download that
+    # broke off failed the build ("Error reading Zip content",
+    # "Archive is not a ZIP archive", 2026-11-03, 2026-11-12, 2026-11-13) and
+    # the job built again. Installed here with the retries the emulator
+    # packages get, the plugin finds them and downloads nothing. NDK
+    # 28.2.13676358 is flutter.ndkVersion of Flutter 3.50.0 and what AGP 9.2.1
+    # builds the plugin with; CMake 3.22.1 is the plugin's default CMake.
+    - name: Install the NDK and CMake the Android builds use
+      shell: bash
+      run: bash scripts/android_sdk_packages.sh 'ndk;28.2.13676358' 'cmake;3.22.1'
