@@ -109,7 +109,7 @@ String _reportCell(Map<String, Object?>? row) {
 /// Describes where a merged run came from, for the report's opening line.
 ///
 /// The device comes from the shard metadata records rather than a fixed name,
-/// because the workflow runs on whichever device model it was given. When no
+/// because a Test Lab run can use any device model. When no
 /// shard recorded a device, the description names only Test Lab.
 String matrixReportSource(List<Map<String, Object?>> shardMeta) {
   final devices = <String>{};
