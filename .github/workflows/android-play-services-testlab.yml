@@ -5,6 +5,8 @@ name: Android Play services runtime (Firebase Test Lab)
 # services, the closest CI gets to what users run: the runtime module is
 # downloaded on first use. Play services gives the default panther (Pixel 7,
 # API 33) no GPU accelerator, so the GPU test skips there as on the emulator.
+# It runs only when started by hand: each run uses the project's daily
+# physical-device quota.
 on:
   workflow_dispatch:
     inputs:
@@ -18,14 +20,6 @@ on:
         required: true
         default: '33'
         type: string
-  pull_request:
-    paths:
-      - android/**
-      - lib/**
-      - src/**
-      - scripts/check_android_runtime_apk.py
-      - example/play_services_test_host/**
-      - .github/workflows/android-play-services-testlab.yml
 
 permissions:
   contents: read
@@ -39,8 +33,6 @@ jobs:
     name: Play services runtime on physical Android
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    # Fork pull requests get no secrets, so they cannot reach Test Lab.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     env:
       FIREBASE_PROJECT_ID: flutter-litert
       DEVICE_MODEL: ${{ inputs.device_model || 'panther' }}

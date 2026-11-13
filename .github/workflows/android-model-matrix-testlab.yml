@@ -67,20 +67,6 @@ on:
         default: true
         type: boolean
 
-  # workflow_dispatch is only guaranteed once this file reaches the default
-  # branch. This guarded one-shot path lets the feature branch collect its first
-  # dataset; later pushes run only when their commit message deliberately keeps
-  # the [run android matrix] marker.
-  push:
-    branches:
-      - feature/npu
-    paths:
-      - .github/workflows/android-model-matrix-testlab.yml
-      - example/integration_test/android_model_matrix_test.dart
-      - example/tool/android_model_matrix_manifest.dart
-      - example/tool/merge_android_model_matrix_results.dart
-      - example/tool/stage_android_model_matrix_assets.dart
-
 permissions:
   contents: read
 
@@ -90,9 +76,7 @@ concurrency:
 
 jobs:
   matrix:
-    if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.confirm_physical_runs) ||
-      (github.event_name == 'push' && contains(github.event.head_commit.message, '[run android matrix]'))
+    if: inputs.confirm_physical_runs
     name: 29 models × Interpreter/CompiledModel × CPU/GPU/NPU
     runs-on: ubuntu-latest
     timeout-minutes: 330
