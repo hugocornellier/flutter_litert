@@ -56,8 +56,8 @@ jobs:
           git clone --depth 1 --branch $TF_VERSION \
             https://github.com/tensorflow/tensorflow.git ~/tf-src
 
-      - name: Re-pin the LLVM source archive checksum
-        run: sh scripts/pin_tf_llvm_archive.sh ~/tf-src
+      - name: Take the LLVM source archive from bazel's repository cache
+        run: bash scripts/use_tf_repo_cache.sh ~/tf-src
 
       - name: Patch apple_support so Objective-C compiles get the Xcode env
         run: sh scripts/patch_tf_apple_support.sh ~/tf-src
