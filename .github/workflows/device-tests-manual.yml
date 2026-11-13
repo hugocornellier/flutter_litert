@@ -1,0 +1,517 @@
+name: device tests (manual)
+
+# Device tests that used to run in the push and PR workflow (flutter-ci.yml,
+# "build") and failed there too often on their first attempt. They are not
+# part of the required CI: they run only when someone starts this workflow by
+# hand, and nothing waits for them. They are kept here as they were, with the
+# setup and the in-job retries that hid their failures, so the tests can be run
+# or reworked later.
+#
+# First-attempt results in the "build" workflow, 43 runs from 2026-11-03 to
+# 2026-11-13 (34 on branches and main, 9 on ci/deep-base 0d1603b9):
+#   - android-play-services-emulator (play_services_runtime_test on the Play
+#     Store emulator image): failed its first attempt in 23 of 43 runs. 21 of
+#     them passed only on the in-job second attempt (for example 41916170348,
+#     42689413598, 42844224889); 2 failed both (42634587959, 42760356531).
+#   - ios-simulator (compiled_model_test, ios_compiled_model_npu_test,
+#     interpreter_delegate_fallback_test, interpreter_coexistence_test): a
+#     first attempt timed out (exit 124) or the app failed to launch in 9 of
+#     37 runs. 6 passed on the in-job second attempt (for example 41757619947,
+#     42613755130, 42828367702), 2 timed out twice (42634587959, 42760356531),
+#     and in 43490419083 the app was "unknown to FrontBoard" at launch.
+#   - android-api24-emulator (compiled_model_test and
+#     interpreter_coexistence_test on Android 7.0): hung until the job was
+#     cancelled in 2 of 23 runs (42555284941, and 42937112518 after 6 hours).
+#
+# The Android jobs set ANDROID_TEST_LAUNCH_ATTEMPTS to 3, which
+# scripts/android_flutter_test.sh used by default before: a launch that
+# installs the app and starts no test, or a device flutter did not find, is
+# tried again up to three times. flutter-ci.yml leaves it at 1.
+#
+# Emulator start retry: the emulator action boots the emulator, sends one
+# screen unlock key with no retry and only then runs `script`. On the Play
+# Store image adbd can drop the connection just after the boot completes, and
+# the step then fails with "error: closed" before any test ran (2 of about 240
+# Play services jobs by Nov 11, also seen upstream in
+# ReactiveCircus/android-emulator-runner#489). The first script line writes a
+# marker, so a failure without the marker happened before the tests: that one
+# starts a second emulator, once, with a warning. A failure after the marker
+# is a real one and fails the job unchanged.
+on:
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: '3.50.0'
+
+jobs:
+  # build-android (flutter-ci.yml) on the oldest Android the plugin supports
+  # (minSdk 24), where libLiteRt.so must still load and run both APIs. The
+  # image is google_apis x86_64 (revision 27 in the SDK index) rather than
+  # default x86_64, whose last revision (8) is years older; the bundled
+  # runtime uses no Google API, so the extra apps on the image do not change
+  # the result.
+  android-api24-emulator:
+    runs-on: ubuntu-24.04
+    env:
+      ANDROID_TEST_LAUNCH_ATTEMPTS: 3
+    # Takes 11 minutes, 13 at most in 13 runs; 4 more hung at `adb install`.
+    # A stall must end here, not at the 6 hour limit.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: gradle
+      # One debug keystore for every build, explained at build-android in
+      # flutter-ci.yml.
+      - name: Use one debug keystore for every build
+        run: |
+          mkdir -p ~/.android ~/.config/.android
+          [ -f ~/.android/debug.keystore ] || keytool -genkeypair -keystore ~/.android/debug.keystore \
+            -storepass android -keypass android -alias androiddebugkey \
+            -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 -noprompt
+          cp ~/.android/debug.keystore ~/.config/.android/debug.keystore
+      # Gradle plugins from Maven Central directly, explained at build-android
+      # in flutter-ci.yml.
+      - uses: ./.github/actions/gradle-plugin-repositories
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Enable KVM for hardware-accelerated emulation
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # With three tries each, as in build-android in flutter-ci.yml.
+      - name: Download the emulator and its system image
+        run: bash scripts/android_sdk_packages.sh 'platforms;android-24' emulator 'system-images;android-24;google_apis;x86_64'
+
+      # The same suites as build-android in flutter-ci.yml, run the same way.
+      # No ram-size here, unlike the other emulator jobs: with 4096M this image never finished
+      # booting (9 of 9 jobs), with the AVD's own 1536M it did (8 of 8).
+      #
+      # One core, where the action gives two: on two cores `adb install`
+      # stopped for good in 12 of 54 jobs, after adb had sent the whole APK;
+      # on one core it did in none of 15, and the job takes as long.
+      #
+      # The emulator start retry is explained at the top of this file.
+      - name: Run integration tests (Android 7.0 emulator)
+        id: emulator
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with: &api24-emulator-with
+          api-level: 24
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          cores: 1
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          working-directory: example
+          script: |
+            touch "$RUNNER_TEMP/emulator-script-started"
+            bash ../scripts/android_flutter_test.sh integration_test/compiled_model_test.dart --timeout 600s
+            bash ../scripts/android_flutter_test.sh integration_test/interpreter_coexistence_test.dart --timeout 600s
+      - name: Check whether the emulator failed before the tests started
+        id: emulator_start
+        if: steps.emulator.outcome == 'failure'
+        run: |
+          if [ -e "$RUNNER_TEMP/emulator-script-started" ]; then
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Emulator start retried::the Android emulator step failed before the tests started (android-api24-emulator), starting the emulator once more"
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run integration tests (Android 7.0 emulator), second emulator start
+        id: emulator_retry
+        if: steps.emulator_start.outputs.retry == 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with: *api24-emulator-with
+      - name: Fail the job when the emulator step failed
+        if: steps.emulator.outcome == 'failure' && steps.emulator_retry.outcome != 'success'
+        run: |
+          echo "::error::the Android emulator step failed (retry fired: ${{ steps.emulator_start.outputs.retry }})"
+          exit 1
+
+      # Kept when the job did not pass or an attempt had to be run again: the
+      # device log shows what the emulator did while flutter test was silent.
+      - name: Upload Android test logs
+        if: failure() || cancelled() || hashFiles('build/android-test-logs/retried') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-logs-${{ github.job }}
+          path: build/android-test-logs/
+
+  # flutterLitert.runtime=playServices (issue #23): LiteRT comes from Google
+  # Play services instead of the APK. example/play_services_test_host is built
+  # with that property: a small app that sets the mode in its own
+  # gradle.properties and holds the Play services tests, apart from the main
+  # example and its bundled-runtime suites. The APK checks also run in
+  # flutter-ci.yml; here the integration test then runs on an emulator image with the Play Store,
+  # where Play services downloads its LiteRT module on first use. Emulators
+  # have no Play services GPU accelerator, so the GPU tests skip here; they run
+  # only on a physical phone where Play services provides one.
+  android-play-services-emulator:
+    runs-on: ubuntu-24.04
+    env:
+      ANDROID_TEST_LAUNCH_ATTEMPTS: 3
+    # A stall must end the job in an hour, not at the 6 hour limit.
+    timeout-minutes: 60
+    steps:
+      # This job builds several APKs and runs an emulator, which can fill the
+      # runner's disk. It does not use these preinstalled toolchains.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: gradle
+      # One debug keystore for every build, explained at build-android in
+      # flutter-ci.yml.
+      - name: Use one debug keystore for every build
+        run: |
+          mkdir -p ~/.android ~/.config/.android
+          [ -f ~/.android/debug.keystore ] || keytool -genkeypair -keystore ~/.android/debug.keystore \
+            -storepass android -keypass android -alias androiddebugkey \
+            -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 -noprompt
+          cp ~/.android/debug.keystore ~/.config/.android/debug.keystore
+      # Gradle plugins from Maven Central directly, explained at build-android
+      # in flutter-ci.yml.
+      - uses: ./.github/actions/gradle-plugin-repositories
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install host dependencies
+        working-directory: example/play_services_test_host
+        run: flutter pub get
+
+      - name: Analyze the host
+        working-directory: example/play_services_test_host
+        run: flutter analyze
+
+      # The shared Gradle action installed the NDK already. Should a Flutter
+      # or AGP update want another one, this first Gradle build downloads it,
+      # and that download can break off and leave a corrupted archive ("Error
+      # on ZipFile unknown archive"), which fails assembleDebug. Only in that
+      # case the partial NDK is purged and the build runs again, up to three
+      # attempts; any other build failure fails the step at once.
+      - name: Build the Play services host APK
+        working-directory: example/play_services_test_host
+        run: |
+          for attempt in 1 2 3; do
+            flutter build apk --debug 2>&1 | tee "$RUNNER_TEMP/host-build.log"
+            rc=${PIPESTATUS[0]}
+            [ "$rc" -eq 0 ] && exit 0
+            grep -q "preparing SDK package NDK" "$RUNNER_TEMP/host-build.log" || exit "$rc"
+            echo "::warning::the NDK download broke off in attempt $attempt (rc=$rc)"
+            rm -rf "$ANDROID_HOME"/ndk/* "$ANDROID_HOME"/.temp
+          done
+          exit "$rc"
+
+      - name: Check the APK packages the Play services runtime only
+        run: >-
+          python3 -I scripts/check_android_runtime_apk.py --runtime playServices
+          example/play_services_test_host/build/app/outputs/flutter-apk/app-debug.apk
+
+      # Release builds shrink the plugin's Java and Kotlin with R8, which the
+      # debug integration tests never see. lib/release_smoke.dart runs both
+      # runtimes once; it is launched on the emulator after the tests pass.
+      - name: Build the Play services release smoke APK (R8)
+        working-directory: example/play_services_test_host
+        run: flutter build apk --release -t lib/release_smoke.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices
+
+      - name: Check the release APK packages the Play services runtime only
+        run: >-
+          python3 -I scripts/check_android_runtime_apk.py --runtime playServices
+          example/play_services_test_host/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Enable KVM for hardware-accelerated emulation
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # With three tries each, as in build-android in flutter-ci.yml.
+      - name: Download the emulator and its system image
+        run: bash scripts/android_sdk_packages.sh emulator 'system-images;android-34;google_apis_playstore;x86_64'
+
+      # The emulator start retry is explained at the top of this file.
+      - name: Run Play services runtime integration tests (Android emulator)
+        id: emulator
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        env: &play-services-emulator-env
+          # The debug APK of the host from the step above, later the one the
+          # first test built: the script installs it before each flutter
+          # test, for the reason given at `script`.
+          ANDROID_TEST_INSTALL_FIRST: build/app/outputs/flutter-apk/app-debug.apk
+        with: &play-services-emulator-with
+          api-level: 34
+          target: google_apis_playstore
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          working-directory: example/play_services_test_host
+          # One line on purpose, as in build-android in flutter-ci.yml. The
+          # first LiteRT initialization on a fresh emulator waits for Play
+          # services to download the runtime module and can stall, which is why
+          # scripts/android_flutter_test.sh prints the LiteRT and Play services
+          # logcat of a failed attempt and, for this test only, runs a second
+          # one. --timeout is enforced inside the app, so it cannot end an
+          # attempt that stalls there; the script ends it after 25 minutes
+          # instead, or after 3 minutes when no test started at all. Once
+          # the tests pass, the release smoke APK runs on the same emulator,
+          # then the host is rebuilt with flutterLitert.runtime=auto, which
+          # must choose Play services here, and its debug and release APKs are
+          # checked for both runtimes and run.
+          # flutter test starts the app right after it installs it. On an
+          # emulator still busy after its first boot, Android can handle the
+          # install broadcast seconds later, with two effects seen here.
+          # It restarts the activity under the running test, which failed
+          # attempt 1 in most runs: so the script first waits for the
+          # broadcast queue to drain, which makes that rarer but does not
+          # end it: 8 of 33 jobs still had a restart, and flutter test then
+          # waits, 25 minutes long when a test had already started. Every
+          # restart came when the app was not on the device before, so
+          # ANDROID_TEST_INSTALL_FIRST has the script install a debug APK of
+          # the host before flutter test and wait for the broadcasts again,
+          # which leaves flutter test an update to install (no restart in
+          # 13 jobs; attempt 2 stays for the rest). And a debug APK
+          # installed over the release smoke APK, which has no INTERNET
+          # permission, starts
+          # before its uid is allowed sockets: the Dart VM service cannot
+          # listen and flutter test waits for it without end. So the smoke
+          # APK is uninstalled first (a new uid is not restricted), and
+          # the script ends that test run if it stalls all the same.
+          # The Play Store on this image can update itself and then Google
+          # Play services while the job runs (seen from 1 to 12 minutes
+          # after boot). While that update installs, Android stops Play
+          # services for 15 to 40 s and kills every app that has loaded code
+          # from it, this host included: that ended the release smoke app
+          # 2 s after launch in one run and failed attempt 1 of the first
+          # test in others. Disabling the Play Store prevents the update,
+          # but Play services downloads the runtime module through the
+          # store, about 80 s after boot, and the module then stays on the
+          # device across a Play services update. So the script waits until
+          # Play services reports the module (the query its client library
+          # uses), disables the Play Store, waits for an install the store
+          # had already handed to Android, and only then runs the tests and
+          # the smoke apps. In 1 of 26 jobs on 2026-11-12 the module never
+          # came, and the tests then failed with "No acceptable module"
+          # errors that hid the cause. So the wait is 10 minutes, and a
+          # module that has not come by then fails this step, before any
+          # test runs, with a message that names it.
+          script: >-
+            bash -c 'set +e; touch "$RUNNER_TEMP/emulator-script-started";
+            settle() { for i in $(seq 1 36); do
+            [ "$(adb -s emulator-5554 shell dumpsys package installs | sed -n "/Active install sessions/,/Finalized install sessions/p" | grep -c mCommitted=true)" = 0 ] && break;
+            echo "waiting for an install that is under way"; sleep 5; done;
+            timeout 300 adb -s emulator-5554 shell am wait-for-broadcast-idle; };
+            storeoff() { adb -s emulator-5554 shell pm disable-user --user 0 com.android.vending ||
+            echo "::warning::could not disable the Play Store, a Play services update can still end a later step";
+            settle; };
+            ready=0; end=$(( $(date +%s) + 600 )); while [ "$(date +%s)" -lt "$end" ]; do
+            timeout 30 adb -s emulator-5554 shell content query --uri content://com.google.android.gms.chimera/api/com.google.android.gms.tflite_dynamite | grep -q " version=[1-9]" && ready=1 && break;
+            echo "waiting for Play services to download the runtime module"; sleep 5; done;
+            [ "$ready" = 1 ] || { echo "::error::Play services never delivered tflite_dynamite in 10 min"; exit 1; };
+            storeoff;
+            env ANDROID_TEST_ATTEMPTS=2 bash ../../scripts/android_flutter_test.sh integration_test/play_services_runtime_test.dart --timeout 900s || exit 1;
+            bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600 &&
+            adb -s emulator-5554 uninstall com.hugocornellier.flutter_litert_play_services_test_host &&
+            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto ANDROID_TEST_ATTEMPT_LIMIT=900 bash ../../scripts/android_flutter_test.sh integration_test/auto_runtime_test.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices --timeout 600s &&
+            python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-debug.apk &&
+            env ORG_GRADLE_PROJECT_flutterLitert.runtime=auto flutter build apk --release -t lib/release_smoke.dart --dart-define=FLUTTER_LITERT_EXPECT_RUNTIME=playServices &&
+            python3 -I ../../scripts/check_android_runtime_apk.py --runtime auto build/app/outputs/flutter-apk/app-release.apk &&
+            bash ../../scripts/android_release_smoke.sh build/app/outputs/flutter-apk/app-release.apk emulator-5554 600'
+      - name: Check whether the emulator failed before the tests started
+        id: emulator_start
+        if: steps.emulator.outcome == 'failure'
+        run: |
+          if [ -e "$RUNNER_TEMP/emulator-script-started" ]; then
+            echo "retry=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Emulator start retried::the Android emulator step failed before the tests started (android-play-services-emulator), starting the emulator once more"
+            echo "retry=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run Play services runtime integration tests (Android emulator), second emulator start
+        id: emulator_retry
+        if: steps.emulator_start.outputs.retry == 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        env: *play-services-emulator-env
+        with: *play-services-emulator-with
+      - name: Fail the job when the emulator step failed
+        if: steps.emulator.outcome == 'failure' && steps.emulator_retry.outcome != 'success'
+        run: |
+          echo "::error::the Android emulator step failed (retry fired: ${{ steps.emulator_start.outputs.retry }})"
+          exit 1
+
+      # The keystore step above exists to stop this; the watchdog rerun would
+      # otherwise hide it.
+      - name: Fail the job when an install was rejected for a different signature
+        if: ${{ !cancelled() }}
+        run: |
+          if grep -l INSTALL_FAILED_UPDATE_INCOMPATIBLE build/android-test-logs/*.log 2>/dev/null; then
+            echo "::error::INSTALL_FAILED_UPDATE_INCOMPATIBLE in the Android test logs: the APKs were signed with different debug keys"
+            exit 1
+          fi
+
+      # Kept when the job did not pass or an attempt had to be run again: the
+      # device log shows what the emulator did while flutter test was silent.
+      - name: Upload Android test logs
+        if: failure() || cancelled() || hashFiles('build/android-test-logs/retried') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-logs-${{ github.job }}
+          path: build/android-test-logs/
+
+  # The iOS example on a simulator: the four integration suites that
+  # build-ios in flutter-ci.yml ran before they moved here.
+  ios-simulator:
+    runs-on: macos-15
+    # Per-test, per-attempt timeouts and retries live in the test step below.
+    # This outer cap only bounds the complete four-test sequence.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Select Xcode 16.4
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          xcodebuild -version
+          test "$(xcodebuild -version | head -n 1)" = "Xcode 16.4"
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Stage patched Core ML framework for SwiftPM tests
+        run: |
+          ./scripts/use_local_coreml_xcframework.sh \
+            "$GITHUB_WORKSPACE/ios/TensorFlowLiteCCoreML.xcframework"
+
+      - name: Boot iOS simulator
+        run: |
+          UDID=$(xcrun simctl list devices available --json | python3 -c "
+          import json, sys
+          devices = json.load(sys.stdin)['devices']
+          iphones = [d for v in devices.values() for d in v if 'iPhone' in d['name']]
+          print(iphones[-1]['udid'])
+          ")
+          xcrun simctl boot "$UDID" || true
+          # Block until the simulator is fully booted before any app launch.
+          # Launching the test app on a not-yet-ready simulator was the cause of
+          # the connect-forever hangs (build succeeds, driver never attaches).
+          xcrun simctl bootstatus "$UDID" -b
+          open -a Simulator --args -CurrentDeviceUDID "$UDID" || true
+          echo "SIMULATOR_UDID=$UDID" >> "$GITHUB_ENV"
+
+      - name: Run integration tests on iOS simulator
+        working-directory: example
+        run: |
+          set +e
+          # Warm builds complete comfortably inside 900s, which bounds the
+          # damage when the simulator wedges on launch. The first suite also
+          # performs the cold Xcode build; two release-candidate runs showed
+          # that valid build exceeding 900s before a cached retry passed. Give
+          # only that first attempt 1800s so CI does not kill useful compiler
+          # work while every retry and later suite keeps the tighter bound.
+          attempt_timeout=900
+          cold_build_timeout=1800
+          max=2
+          # flutter_tools reads the app's VM service URL from a simulator log
+          # stream that it starts together with `simctl launch`, then waits
+          # for the URL with no timeout. An app that printed the URL before
+          # the stream had connected left the launch silent until the
+          # watchdog fired. This xcrun stand-in holds the launch until the
+          # stream is connected and logs when that happened.
+          launch_gate="$GITHUB_WORKSPACE/scripts/ios_simulator_launch"
+          export IOS_LAUNCH_GATE_LOG="$RUNNER_TEMP/ios-launch-gate.log"
+
+          run_ios_test() {
+            test_file="$1"
+            rc=1
+            for attempt in $(seq 1 "$max"); do
+              watchdog_timeout="$attempt_timeout"
+              if [ "$test_file" = "integration_test/compiled_model_test.dart" ] \
+                && [ "$attempt" -eq 1 ]; then
+                watchdog_timeout="$cold_build_timeout"
+              fi
+              timeout_marker="$RUNNER_TEMP/ios-timeout-$(basename "$test_file")-$attempt"
+              rm -f "$timeout_marker"
+              echo "::group::$test_file (attempt $attempt/$max)"
+              rm -f "$IOS_LAUNCH_GATE_LOG"
+              PATH="$launch_gate:$PATH" flutter test "$test_file" \
+                -d "$SIMULATOR_UDID" --timeout 600s &
+              pid=$!
+              ( sleep "$watchdog_timeout"
+                if kill -0 "$pid" 2>/dev/null; then
+                  touch "$timeout_marker"
+                  echo "::warning::$test_file exceeded ${watchdog_timeout}s; killing"
+                  kill -TERM "$pid" 2>/dev/null
+                  sleep 15
+                  kill -KILL "$pid" 2>/dev/null
+                fi ) &
+              watchdog=$!
+              wait "$pid"
+              rc=$?
+              kill -TERM "$watchdog" 2>/dev/null
+              wait "$watchdog" 2>/dev/null
+              cat "$IOS_LAUNCH_GATE_LOG" 2>/dev/null
+              if [ -f "$timeout_marker" ]; then
+                # Flutter may exit zero after handling SIGTERM. Preserve the
+                # timeout as a failure so a killed test can never go green.
+                rc=124
+              fi
+              rm -f "$timeout_marker"
+              echo "::endgroup::"
+              if [ "$rc" -eq 0 ]; then
+                echo "$test_file passed on attempt $attempt"
+                return 0
+              fi
+              echo "::warning::$test_file attempt $attempt failed/timed out (rc=$rc)"
+              if [ "$attempt" -lt "$max" ]; then
+                echo "Recycling simulator before retry"
+                # The watchdog kill above only reaches the flutter process;
+                # its xcodebuild/XCBBuildService children survive and keep
+                # DerivedData's build database locked, so without reaping
+                # them the retry dies on "unable to attach DB: database is
+                # locked ... two concurrent builds".
+                pkill -9 xcodebuild 2>/dev/null || true
+                pkill -9 -f XCBBuildService 2>/dev/null || true
+                xcrun simctl shutdown "$SIMULATOR_UDID" 2>/dev/null || true
+                xcrun simctl boot "$SIMULATOR_UDID" 2>/dev/null || true
+                xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+              fi
+            done
+            return "$rc"
+          }
+
+          run_ios_test integration_test/compiled_model_test.dart || exit $?
+          run_ios_test integration_test/ios_compiled_model_npu_test.dart || exit $?
+          run_ios_test integration_test/interpreter_delegate_fallback_test.dart || exit $?
+          run_ios_test integration_test/interpreter_coexistence_test.dart || exit $?

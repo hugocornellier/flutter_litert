@@ -26,10 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build tools
+      # With retries, time limits and a mirror fallback, as in flutter-ci.yml.
+      - name: Install ninja
+        uses: ./.github/actions/apt-install
+        with:
+          packages: ninja-build
+
+      - name: Show build tool versions
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build
           cmake --version
           ninja --version
           gcc --version

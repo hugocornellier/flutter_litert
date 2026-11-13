@@ -72,7 +72,8 @@ bash ../../scripts/android_release_smoke.sh \
   build/app/outputs/flutter-apk/app-release.apk <device>
 ```
 
-CI runs these in `.github/workflows/flutter-ci.yml` (emulators with and
-without Play services) and
-`.github/workflows/android-play-services-testlab.yml` (physical phone in
-Firebase Test Lab).
+CI runs the test without Play services on every push and pull request
+(`.github/workflows/flutter-ci.yml`, emulator). The Play services tests run
+only when started by hand: `.github/workflows/device-tests-manual.yml`
+(emulator with the Play Store). The Firebase Test Lab workflow for a physical
+phone was removed; run that test in Test Lab by hand.

@@ -14,18 +14,20 @@ recorded 3.x datasets (`ANDROID_*MODEL_MATRIX_RESULTS.json`) also measured
 the Galaxy S23 dataset has 13 cells per model and 377 rows. Each
 successful cell executes three finite, non-degenerate fixtures and compares
 every float output to the plain CPU Interpreter reference using
-`atol = 1e-4` and `rtol = 1%`. Warm-up and timed samples are configured by the
+`atol = 1e-4` and `rtol = 1%`. Warm-up and timed samples were configured by the
 workflow (5 and 15 by default).
 
 ## Firebase Test Lab execution
 
-[`android-model-matrix-testlab.yml`](../../.github/workflows/android-model-matrix-testlab.yml)
-pins the exact commits of the seven public model repositories, balances the 29
-models into five shards, and builds one arm64 APK per shard. A free virtual
-CPU-only smoke must pass before it submits the five physical runs. The
-`device_model` input picks the device: `dm1q` (Galaxy S23, the default),
-`caiman` (Pixel 9 Pro), or `a56x` (Galaxy A56). The `abi` input can switch the
-shards to the 32-bit `armeabi-v7a` build. On the Galaxy S23 the physical device
+The recorded datasets came from the `android-model-matrix-testlab.yml`
+workflow, which has since been removed from the repository; new runs are
+started in Firebase Test Lab by hand. That workflow pinned the exact commits of
+the seven public model repositories, balanced the 29 models into five shards,
+and built one arm64 APK per shard. A free virtual CPU-only smoke had to pass
+before it submitted the five physical runs. The `device_model` input picked the
+device: `dm1q` (Galaxy S23, the default), `caiman` (Pixel 9 Pro), or `a56x`
+(Galaxy A56). The `abi` input could switch the shards to the 32-bit
+`armeabi-v7a` build. On the Galaxy S23 the physical device
 supplies the Android GPU drivers and Snapdragon 8 Gen 2 HTP v73 NPU used by
 every shard. The merged report names the device recorded in the shard
 metadata.
@@ -44,7 +46,7 @@ drivers are thread-affine and the package documents mobile-accelerator
 
 ## Outputs
 
-Every workflow run uploads one artifact containing:
+Every workflow run uploaded one artifact containing:
 
 - `ANDROID_MODEL_MATRIX_RESULTS.json`: full metadata, references, accuracy
   cases, timing distributions, errors, and all 290 rows;
@@ -63,6 +65,6 @@ exports, which CompiledModel runs on CPU and GPU; see the 2026-09-24 update in
 [`doc/graph_shape_vs_delegate.md`](../../doc/graph_shape_vs_delegate.md). Move
 the two pins forward and re-run before quoting these rows.
 
-The workflow deliberately fails its final collection gate if any cell lacks a
-directly emitted row, but uploads the rectangular merged dataset first so a
-native crash remains diagnosable.
+The workflow deliberately failed its final collection gate if any cell lacked a
+directly emitted row, but uploaded the rectangular merged dataset first so a
+native crash remained diagnosable.

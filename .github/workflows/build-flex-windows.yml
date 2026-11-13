@@ -204,7 +204,7 @@ jobs:
         if: steps.dl.outcome == 'success'
         run: |
           mkdir -p old
-          curl -fsSL -o old/libtensorflowlite_flex-win.dll "$BASELINE_URL"
+          curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors -o old/libtensorflowlite_flex-win.dll "$BASELINE_URL"
           ( cd new && sha256sum -c libtensorflowlite_flex-win.dll.sha256 )
           cat new/build-info.txt
 

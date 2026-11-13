@@ -85,19 +85,39 @@ function(flutter_litert_fetch_lib path url sha)
     message(STATUS "flutter_litert: ${path} does not match the pinned SHA-256; replacing it")
     file(REMOVE "${path}")
   endif()
-  foreach(attempt RANGE 1 3)
+  # GitHub answers a release download with an error now and then, for seconds
+  # at a time: three attempts made back to back all failed in a Windows CI run
+  # on 2026-11-05. So the attempts are spaced 5, 10, 20 and 40 s apart, and a
+  # download that stalls for 60 s counts as failed instead of hanging the
+  # build. The hash is checked here rather than with EXPECTED_HASH: a failed
+  # EXPECTED_HASH download is a CMake error, which fails the configure step at
+  # its end even when a later attempt succeeds.
+  set(delay 5)
+  foreach(attempt RANGE 1 5)
     message(STATUS "flutter_litert: downloading ${url} (attempt ${attempt})")
-    file(DOWNLOAD "${url}" "${path}"
-      EXPECTED_HASH SHA256=${sha}
+    file(DOWNLOAD "${url}" "${path}.part"
       TLS_VERIFY ON
+      INACTIVITY_TIMEOUT 60
       STATUS dl_status)
     list(GET dl_status 0 dl_code)
     if(dl_code EQUAL 0)
-      return()
+      file(SHA256 "${path}.part" dl_sha)
+      if(dl_sha STREQUAL sha)
+        file(RENAME "${path}.part" "${path}")
+        return()
+      endif()
+      set(dl_msg "SHA-256 ${dl_sha}, expected ${sha}")
+    else()
+      list(GET dl_status 1 dl_msg)
     endif()
-    list(GET dl_status 1 dl_msg)
-    message(WARNING "flutter_litert: download failed (${dl_msg}); retrying")
-    file(REMOVE "${path}")
+    file(REMOVE "${path}.part")
+    if(attempt LESS 5)
+      message(WARNING "flutter_litert: download failed (${dl_msg}); retrying in ${delay} s")
+      execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep ${delay})
+      math(EXPR delay "${delay} * 2")
+    else()
+      message(WARNING "flutter_litert: download failed (${dl_msg})")
+    endif()
   endforeach()
   message(FATAL_ERROR "flutter_litert: could not download ${url}")
 endfunction()

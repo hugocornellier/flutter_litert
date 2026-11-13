@@ -29,6 +29,13 @@ jobs:
       - name: Install Bazelisk
         run: brew install bazelisk
 
+      # The runner's own python3 is newer than any version LiteRT has
+      # requirement lock files for, and the hermetic Python follows it.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Clone pinned LiteRT source
         run: |
           git clone --depth 1 --branch "$LITERT_VERSION" \
@@ -55,6 +62,7 @@ jobs:
             --cpu=darwin_arm64 \
             --local_ram_resources=HOST_RAM*0.7 \
             --jobs=4 \
+            --repo_env=HERMETIC_PYTHON_VERSION=3.11 \
             //tflite/delegates/coreml:tensorflow_lite_coreml_npu_dylib
 
       - name: Build LiteRT accelerator registration bridge
